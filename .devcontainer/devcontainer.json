@@ -8,6 +8,11 @@
     // optional but on-theme: enforce the vault's read-only nature at the mount level
     // (only if hellbox lives elsewhere; if it's inside the parent mount, skip this)
   ],
+  "features": {
+    // Node 20+ for the OpenSpec CLI (decision registry tooling)
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+  "postCreateCommand": "npm install -g @fission-ai/openspec",
   "containerEnv": {
     "EFTERSCRIPT_HELLBOX": "/workspaces/es/efterscript-hellbox"
   }

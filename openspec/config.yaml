@@ -1,0 +1,60 @@
+schema: spec-driven
+
+context: |
+  EfterScript: a memory-safe, embeddable interpreter for the PostScript
+  language in Rust (edition 2024 workspace), whose primary output is PDF.
+  Crates: ps-vm (scanner, object model, VM), ps-graphics (graphics state,
+  vector IR), ps-fonts, pdf-out (PDF serialisation, no PostScript
+  knowledge), remelt (distillation engine), platen (interactive session
+  front-end), efterscript-cli. Tools: psgen (property-based program
+  generator), difftest (semantic differential harness). Corpus under
+  corpus/ (unit inputs, generator seeds, text-based golden outputs).
+
+  Division of authority: the PostScript Language Reference (PLRM3) owns
+  language semantics and is cited ("per PLRM3 §3.7"), never restated or
+  paraphrased at length. The corpus owns behavioural truth: where a
+  scenario can be a corpus/unit/*.ps file, it is one. OpenSpec owns
+  architecture, policies, deviations (expected divergences), and scope.
+
+  IP rules: implement from the published specification and black-box
+  behavioural observation only. Never quote or closely paraphrase the
+  manual in code, comments, or specs. Never mention, reference, or take
+  code, tests, or examples from any other PostScript implementation.
+  Every source file starts with the SPDX header lines
+  "SPDX-FileCopyrightText: 2026 EfterScript contributors" and
+  "SPDX-License-Identifier: MIT". No new dependencies with copyleft terms
+  in library crates.
+
+  Trademarks: "PostScript" is Adobe's mark, used only nominatively
+  ("the PostScript language"). Never name a product, crate, binary, or
+  feature after an Adobe or Apple product. Distillation is the generic
+  term; the corresponding Adobe product name is not used as a noun.
+
+  Process: agents stage, humans commit — never run git commit, push,
+  merge, rebase, or tag. Do not cite internal planning documents or their
+  section numbers in repository files. Comments state constraints the code
+  cannot show; no narration. Test-driven: cargo test and clippy clean
+  before staging.
+
+rules:
+  proposal:
+    - Explain why the decision is hard to retrofit or why it matters now
+    - Include an Impact section naming affected crates
+  design:
+    - Record decisions and alternatives considered; architecture, not PLRM paraphrase
+    - Keep to a few pages; cite PLRM3 sections instead of restating them
+  specs:
+    - Write scenarios so each can become a corpus/unit/*.ps file or a Rust test
+    - Use SHALL for requirements
+  tasks:
+    - Group by module; each task leaves the workspace compiling and tests passing
+
+operations:
+  apply:
+    guidance:
+      - Read design.md fully before writing code and implement it faithfully
+      - If implementation shows the design is wrong, amend design.md and say so; never diverge silently
+      - Stage with git add when done; do not commit
+  archive:
+    guidance:
+      - Confirm openspec validate passes and all tasks are ticked before archiving
