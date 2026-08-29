@@ -1,0 +1,14 @@
+// efterscript/.devcontainer/devcontainer.json
+{
+  "name": "efterscript",
+  "image": "mcr.microsoft.com/devcontainers/rust:1",
+  "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/es,type=bind",
+  "workspaceFolder": "/workspaces/es/efterscript",
+  "mounts": [
+    // optional but on-theme: enforce the vault's read-only nature at the mount level
+    // (only if hellbox lives elsewhere; if it's inside the parent mount, skip this)
+  ],
+  "containerEnv": {
+    "EFTERSCRIPT_HELLBOX": "/workspaces/es/efterscript-hellbox"
+  }
+}
