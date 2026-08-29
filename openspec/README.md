@@ -1,6 +1,6 @@
 # OpenSpec — the project's decision registry
 
-This directory is the spec-driven-development registry (charter §8): change
+This directory is the spec-driven-development registry: change
 proposals, delta specs, and the expected-divergence records. It contains the
 project's *decisions*, not Adobe's text, so it survives publication.
 

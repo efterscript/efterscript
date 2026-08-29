@@ -11,4 +11,4 @@
 //! nothing is rasterized.
 //!
 //! Named for the letterpress practice of remelting hellbox lead into fresh
-//! type (charter §2.3): old type in, clean type out.
+//! type: old type in, clean type out.

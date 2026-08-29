@@ -1,7 +1,6 @@
 # Test corpus — public tier
 
-This directory holds only material we hold redistribution rights to (charter
-§9.1: the commit-time test). Encumbered material — licensed suites, real-world
+This directory holds only material we hold redistribution rights to (the commit-time test). Encumbered material — licensed suites, real-world
 driver harvests, reference outputs from commercial converters and printer hardware — live exclusively in the
 hellbox repo and never enters this history.
 
@@ -23,4 +22,4 @@ Rules:
   (Liberation 2.x / URW LGPL-lineage / TeX Gyre releases) or no-embed
   configurations, and document font provenance here.
 - A behavior covered only by hellbox data is the signal to author a clean-room
-  public-tier equivalent (§7.3).
+  public-tier equivalent.

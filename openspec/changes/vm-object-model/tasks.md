@@ -1,0 +1,41 @@
+# Tasks: vm-object-model
+
+## 1. Object type
+
+- [ ] 1.1 `Object` value: header layout, payload union, `Copy`, `size_of == 16` test
+- [ ] 1.2 Constructors and accessors per type; executable/literal and access bits
+- [ ] 1.3 `eq` semantics (identity for composites, cross-type numeric equality)
+
+## 2. Name table
+
+- [ ] 2.1 Interned atoms, append-only, stable ids
+- [ ] 2.2 Name length handling per PLRM3 implementation limits
+
+## 3. Arena and persistent slot map
+
+- [ ] 3.1 Array-mapped trie keyed by `u32` handle with path-copying insert/replace
+- [ ] 3.2 `Slot` variants and `Shared<T>` alias
+- [ ] 3.3 Allocation in the arena selected by `setglobal`
+- [ ] 3.4 Property tests: snapshot isolation, structural sharing, no cycles
+
+## 4. save / restore
+
+- [ ] 4.1 `SaveRecord` and the save stack with nesting limit
+- [ ] 4.2 `restore` validity checks (stack watermark scan, save-object liveness)
+- [ ] 4.3 Reversion, gstate depth, file closing, invalidation of newer saves
+- [ ] 4.4 Corpus files under `corpus/unit/vm/` for every scenario in the spec
+
+## 5. Global/local rule
+
+- [ ] 5.1 Store-time check shared by `put`, `def`, `putinterval`, `copy`, scanner
+- [ ] 5.2 Corpus files for `invalidaccess` cases
+
+## 6. Dictionaries and strings
+
+- [ ] 6.1 Insertion-ordered dict with `eq`-consistent hashing
+- [ ] 6.2 String storage, sub-interval aliasing tests
+
+## 7. Files
+
+- [ ] 7.1 File table and capability-issued stream trait
+- [ ] 7.2 `restore` closes entries above the watermark

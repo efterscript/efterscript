@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Virtual-printer session front-end (charter §5.6).
+//! Virtual-printer session front-end.
 //!
 //! An interactive PostScript session server: session mode with per-job
 //! encapsulation over a persistent parent VM, `exitserver`/`startjob`

@@ -4,7 +4,7 @@
 [package]
 name = "ps-fonts"
 description = "Type 1 / CFF / TrueType (Type 42) parsing, metrics, charstring-to-outline extraction, subsetting, and ToUnicode derivation"
-# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+# Private-phase name; published crates use the `efterscript-*` prefix.
 publish = false
 version.workspace = true
 edition.workspace = true

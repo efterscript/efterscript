@@ -4,7 +4,7 @@
 [package]
 name = "pdf-out"
 description = "Low-level PDF serialization: objects, xref, streams, compression. Zero PostScript knowledge."
-# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+# Private-phase name; published crates use the `efterscript-*` prefix.
 publish = false
 version.workspace = true
 edition.workspace = true

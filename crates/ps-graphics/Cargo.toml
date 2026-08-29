@@ -4,7 +4,7 @@
 [package]
 name = "ps-graphics"
 description = "Graphics-state machine producing a PDF-shaped, resolution-independent vector IR; sink traits for pluggable backends"
-# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+# Private-phase name; published crates use the `efterscript-*` prefix.
 publish = false
 version.workspace = true
 edition.workspace = true

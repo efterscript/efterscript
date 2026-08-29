@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Property-based PostScript program generator (charter §7.1).
+//! Property-based PostScript program generator.
 //!
 //! Generator seeds/specs live in `corpus/generated/`; bulk outputs are not
 //! committed.
