@@ -1,6 +1,10 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: 3
+% expect-output: /arraytype
+% expect-output: true
+% expect-output: 2
 % Scenario: braces build nested executable arrays.
 % Expect: prints 3, "/arraytype", "true", 2.
 {1 {2} add} dup length =

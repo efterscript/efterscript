@@ -17,7 +17,7 @@ use crate::ops::{self, Num};
 use crate::scanner::{Scan, ScanErrorKind, Scanner};
 use crate::source::{FileSource, Source, StringSource};
 
-fn scan_error(kind: ScanErrorKind) -> VmError {
+pub(crate) fn scan_error(kind: ScanErrorKind) -> VmError {
     match kind {
         ScanErrorKind::SyntaxError | ScanErrorKind::BinaryEncoding => VmError::SyntaxError,
         ScanErrorKind::LimitCheck => VmError::LimitCheck,
@@ -26,19 +26,46 @@ fn scan_error(kind: ScanErrorKind) -> VmError {
     }
 }
 
+// The job's source as the scanner sees it: the run file entry, plus the
+// borrowed source's promise of more bytes, which the entry cannot express.
+struct RunSource {
+    file: FileSource,
+    more: bool,
+}
+
+impl Source for RunSource {
+    fn peek(&mut self, memory: &mut Memory) -> Result<Option<u8>, VmError> {
+        self.file.peek(memory)
+    }
+
+    fn advance(&mut self, memory: &mut Memory) {
+        self.file.advance(memory);
+    }
+
+    fn position(&self, memory: &Memory) -> usize {
+        self.file.position(memory)
+    }
+
+    fn more_may_come(&self) -> bool {
+        self.more
+    }
+}
+
 enum LoopStep {
     Finished,
     Iterate {
         body: Object,
-        value: Option<Object>,
+        values: [Option<Object>; 2],
         operator: &'static str,
     },
+    Failed(VmError),
 }
 
 impl Interp {
     /// Executes `source` as a job: a run boundary and a `Source` frame are
     /// pushed and the loop runs until the boundary is reached again.
     pub fn run(&mut self, source: &mut dyn Source) -> Outcome {
+        self.discard_run_input();
         self.push_frame_unchecked(Frame::Marker(Marker::RunBoundary));
         self.push_frame_unchecked(Frame::Source(Box::new(SourceFrame {
             slot: SourceSlot::Run,
@@ -68,6 +95,12 @@ impl Interp {
                 }
                 Some(Frame::Proc { array, next }) => {
                     let (array, index) = (*array, *next);
+                    // An exhausted procedure needs no storage: `restore`
+                    // may already have discarded it.
+                    if index >= array.length().unwrap_or(0) {
+                        self.pop_frame();
+                        continue;
+                    }
                     let element = self
                         .mem
                         .array(array)
@@ -89,12 +122,31 @@ impl Interp {
                     }
                 }
                 Some(Frame::Source(frame)) => {
+                    if matches!(frame.slot, SourceSlot::Run) {
+                        if !self.mem.file_is_open(self.run_file) {
+                            self.pop_frame();
+                            continue;
+                        }
+                        if let Err(e) = self.pump_run_source(source) {
+                            self.raise(e, Object::null());
+                            continue;
+                        }
+                    }
+                    let Some(Frame::Source(frame)) = self.estack.last_mut() else {
+                        unreachable!("frame checked above");
+                    };
                     let SourceFrame { slot, scanner } = &mut **frame;
                     let dstack = &self.dstack;
                     let mut resolver =
                         |atom: Atom, mem: &mut Memory| lookup_in(dstack, mem, Object::name(atom));
                     let result = match slot {
-                        SourceSlot::Run => scanner.next(source, &mut self.mem, &mut resolver),
+                        SourceSlot::Run => {
+                            let mut run_source = RunSource {
+                                file: FileSource::new(self.run_file).expect("file"),
+                                more: source.more_may_come(),
+                            };
+                            scanner.next(&mut run_source, &mut self.mem, &mut resolver)
+                        }
                         SourceSlot::File { source, .. } => {
                             scanner.next(source, &mut self.mem, &mut resolver)
                         }
@@ -286,7 +338,7 @@ impl Interp {
                     }
                     LoopStep::Iterate {
                         body: *body,
-                        value: Some(value),
+                        values: [Some(value), None],
                         operator: "for",
                     }
                 }
@@ -298,32 +350,80 @@ impl Interp {
                     *remaining -= 1;
                     LoopStep::Iterate {
                         body: *body,
-                        value: None,
+                        values: [None, None],
                         operator: "repeat",
                     }
                 }
             }
             LoopFrame::Loop { body } => LoopStep::Iterate {
                 body: *body,
-                value: None,
+                values: [None, None],
                 operator: "loop",
             },
+            LoopFrame::ForAll {
+                body,
+                container,
+                next,
+            } => {
+                let index = *next as usize;
+                let element = match container.ty() {
+                    Type::Array | Type::PackedArray => {
+                        if index >= container.length().unwrap_or(0) as usize {
+                            Ok(None)
+                        } else {
+                            self.mem
+                                .array_get(*container, index)
+                                .map(|v| Some([Some(v), None]))
+                        }
+                    }
+                    Type::String => {
+                        if index >= container.length().unwrap_or(0) as usize {
+                            Ok(None)
+                        } else {
+                            self.mem
+                                .string_get(*container, index)
+                                .map(|b| Some([Some(Object::integer(i32::from(b))), None]))
+                        }
+                    }
+                    _ => self
+                        .mem
+                        .dict_entry_at(*container, index)
+                        .map(|entry| entry.map(|(k, v)| [Some(k), Some(v)])),
+                };
+                match element {
+                    Ok(None) => LoopStep::Finished,
+                    Ok(Some(values)) => {
+                        *next += 1;
+                        LoopStep::Iterate {
+                            body: *body,
+                            values,
+                            operator: "forall",
+                        }
+                    }
+                    Err(e) => LoopStep::Failed(e),
+                }
+            }
         };
         match step {
             LoopStep::Finished => {
                 self.pop_frame();
             }
+            LoopStep::Failed(e) => {
+                self.pop_frame();
+                let command = self.operator("forall").unwrap_or(Object::null());
+                self.raise(e, command);
+            }
             LoopStep::Iterate {
                 body,
-                value,
+                values,
                 operator,
             } => {
-                if let Some(value) = value
-                    && let Err(e) = self.push(value)
-                {
-                    let command = self.operator(operator).unwrap_or(Object::null());
-                    self.raise(e, command);
-                    return;
+                for value in values.into_iter().flatten() {
+                    if let Err(e) = self.push(value) {
+                        let command = self.operator(operator).unwrap_or(Object::null());
+                        self.raise(e, command);
+                        return;
+                    }
                 }
                 if let Err(e) = self.push_proc(body) {
                     self.raise(e, body);
@@ -450,6 +550,32 @@ impl Interp {
     /// The objects `execstack` reports, bottom first.
     pub(crate) fn exec_objects(&self) -> Vec<Object> {
         self.estack.iter().filter_map(Frame::object).collect()
+    }
+
+    /// Every object the execution stack still needs, for `restore`'s
+    /// check: loop bodies and containers count, an exhausted procedure
+    /// (typically the one that called `restore`) does not.
+    pub(crate) fn exec_references(&self) -> Vec<Object> {
+        let mut objects = Vec::new();
+        for frame in &self.estack {
+            match frame {
+                Frame::Object(object) => objects.push(*object),
+                Frame::Proc { array, next } => {
+                    if array.length().is_some_and(|len| *next < len) {
+                        objects.push(*array);
+                    }
+                }
+                Frame::Source(frame) => objects.extend(frame.slot.object()),
+                Frame::Loop(frame) => {
+                    objects.push(frame.body());
+                    if let LoopFrame::ForAll { container, .. } = frame {
+                        objects.push(*container);
+                    }
+                }
+                Frame::Stopped | Frame::Marker(_) => {}
+            }
+        }
+        objects
     }
 
     pub(crate) fn new_error(&self) -> bool {

@@ -1,0 +1,50 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: [-null- -null-]
+% expect-output: [1 2 3]
+% expect-output: 15
+% expect-output: 3
+% expect-output: (cd)
+% expect-output: (aXYdef)
+% expect-output: 1
+% expect-output: 2
+% expect-output: 1
+% expect-output: /b
+% expect-output: 97
+% expect-output: 98
+% expect-output: 3
+% expect-output: true
+% expect-output: (he)
+% expect-output: (l)
+% expect-output: (lo)
+% expect-output: false
+% expect-output: (hello)
+% expect-output: true
+% expect-output: (hel)
+% expect-output: (lo)
+% expect-output: /packedarraytype
+% expect-output: /packedarraytype
+% expect-output: /arraytype
+% expect-output: /arraytype
+% expect-output: /invalidaccess
+% Scenario: the array, packed-array, and string operators; forall runs as
+% a loop frame so exit leaves it; setpacking governs scanned procedures
+% only; a store into a global array of a local value is rejected.
+2 array ==
+[ 1 2 3 ] ==
+[ 4 5 6 ] aload pop add add =
+1 2 3 3 array astore length =
+(abcdef) 2 2 getinterval ==
+(abcdef) dup 1 (XY) putinterval ==
+[ 1 2 ] { = } forall
+<< /b 1 >> { = == } forall
+(ab) { = } forall
+[ 1 2 3 4 ] { dup 3 eq { exit } if pop } forall =
+(hello) (l) search dup = { == == == } { == } ifelse
+(hello) (x) search dup = { == == == } { == } ifelse
+(hello) (hel) anchorsearch dup = { == == } { == } ifelse
+1 2 2 packedarray type ==
+true setpacking { 1 } type == false setpacking [ 1 ] type == { 1 } type ==
+true setglobal 1 array false setglobal
+{ 0 (local) put } stopped pop $error /errorname get ==

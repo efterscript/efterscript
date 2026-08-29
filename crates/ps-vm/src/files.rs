@@ -21,6 +21,11 @@ pub trait Stream {
     /// Writes from `buf`, returning the count accepted.
     fn write(&mut self, buf: &[u8]) -> Result<usize, VmError>;
 
+    /// Pushes buffered output to its destination.
+    fn flush(&mut self) -> Result<(), VmError> {
+        Ok(())
+    }
+
     /// Called once when the file is closed.
     fn close(&mut self) -> Result<(), VmError> {
         Ok(())
@@ -144,6 +149,10 @@ impl FileTable {
 
     pub fn write(&mut self, handle: Handle, buf: &[u8]) -> Result<usize, VmError> {
         self.entry(handle)?.stream.write(buf)
+    }
+
+    pub fn flush(&mut self, handle: Handle) -> Result<(), VmError> {
+        self.entry(handle)?.stream.flush()
     }
 
     /// Closes the entry; closing an already closed or unknown file is not

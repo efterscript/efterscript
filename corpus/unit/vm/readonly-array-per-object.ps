@@ -1,6 +1,8 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: 1
+% expect-output: /invalidaccess
 % Scenario: readonly on an array leaves earlier copies writable.
 % Expect: prints "1" then "/invalidaccess".
 /a [0 0] def

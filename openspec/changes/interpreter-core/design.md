@@ -266,3 +266,83 @@ arithmetic, dictionary, control, and error operator groups.
 - **`countexecstack`/`execstack` report the counted frames' objects**, with
   a procedure shown as its unexecuted remainder; the job's own source has
   no object and is omitted.
+
+### Part 2
+
+Covers the array, type, VM, and file operator groups, the CLI, and the
+executable corpus.
+
+- **The job's source is read through a file-table entry.** `currentfile`
+  at the top level must return a file object whose reads share the
+  scanner's cursor, and the source handed to `run` is borrowed, so the loop
+  moves the bytes the source has available (`Source::drain_into`, one copy
+  for a slice) into a permanent entry opened at construction — the *run
+  file* — and scans from that entry; the borrowed source's
+  `more_may_come` is carried across so `NeedMore`/`resume` behave as in
+  part 1. `currentfile` returns the innermost `File` frame's object or, when
+  the innermost file frame is the `Run` slot, the run file. The entry is
+  older than every `save`, so `restore` never closes it; `closefile` on it
+  discards the unread remainder (the job ends when the scanner reaches the
+  end), and `run` discards whatever a `quit` left unread. Operator-level
+  reads (`readline`, `readstring`, …) cannot suspend: a chunked job source
+  that ends inside data an operator is reading sees end of file, which is
+  the session change's problem to solve if it needs to.
+- **`forall` is a `Loop` frame** (`LoopFrame::ForAll { body, container,
+  next }`) stepping by index, dictionaries through `Memory::dict_entry_at`
+  in insertion order, so `exit` and nesting work as for the other loops
+  and a container that becomes unreadable mid-loop raises with `forall`
+  as the command.
+- **`restore` scans the operand and dictionary stacks and
+  `Interp::exec_references`**: `Object` frames, procedures with elements
+  left, source objects, loop bodies, and `forall` containers. An exhausted
+  procedure is excluded — it is typically the one that called `restore` —
+  and the loop pops an exhausted `Proc` frame without touching storage, so
+  a body discarded by `restore` does not fault when revisited. `save`
+  records a graphics-state depth of 0 and `restore` ignores the depth it
+  returns; the graphics change will wire both.
+- **`setpacking` is a `Memory` flag the scanner honours**
+  (`Memory::alloc_procedure`), so it affects scanned procedures only; `]`
+  and `array` always build ordinary arrays, per PLRM3 §3.3.2, and
+  `packedarray` always builds packed ones. Since part 1's `bind` leaves
+  packed procedures untouched, a program that packs and binds gets
+  late-bound names; if a compatibility case needs binding into packed
+  procedures, `bind` is where to extend.
+- **`type` returns a literal name**, so `type ==` prints `/integertype`,
+  as the corpus expects.
+- **Access only tightens.** `readonly`/`executeonly`/`noaccess` on an
+  array, packed array, string, or file return a copy with the new
+  attribute (`invalidaccess` if it would loosen the current one); on a
+  dictionary they change the shared storage and return the same object.
+  `executeonly` rejects dictionaries with `typecheck`. `file` gives
+  read-mode files the read-only attribute, so `write` on them is
+  `invalidaccess`.
+- **Conversions**: `cvi`/`cvr` on a string scan one number token with the
+  scanner's own `parse_number` (whitespace trimmed; a non-number token is
+  `typecheck`, malformed input its scan error); `cvi` of a real outside the
+  integer range is `rangecheck`. `cvs` writes the `=` form. `cvrs` with
+  radix 10 is `cvs`; any other radix (2–36, else `rangecheck`) truncates a
+  real and prints the 32-bit two's-complement pattern in upper-case
+  digits. `cvn` interns through the name table, so a string over 127
+  bytes is `limitcheck`.
+- **`vmstatus` reports the save depth, the number of slots in both arenas
+  as "used", and a fixed 2^30 maximum**; memory is not metered yet.
+- **Standard files**: `%stdin` is the optional injected `Io::stdin` (absent
+  → `undefinedfilename`), `%stdout`/`%stderr` the part-1 streams; the mode
+  must agree with the direction (`invalidfileaccess`). Every other name goes
+  to the file capability. `Stream` gained a defaulted `flush`, which
+  `flush` and `flushfile` call; `flushfile` on an input file discards the
+  rest of it.
+- **`==` prints the syntactic form** through `ops::output::full`, which
+  recurses into arrays no deeper than 64 levels and prints `...` beyond, so
+  a self-containing array terminates; objects without read access print as
+  `--nostringval--`. `pstack` and `stack` print top-down.
+- **`eexec` raises `undefined`** so `errordict` sees the operator as the
+  offending command; the font change replaces the body.
+- **`difftest run`** treats each `% expect-output:` line as one output line
+  (joined with newlines, trailing newline included); a job's output must
+  therefore end in a newline to be expressible, which every corpus file
+  does by ending with `=` or `==`. `% expect-error:` compares only the
+  error name of the outcome.
+- **The CLI injects host stdin as `%stdin`** alongside stdout and stderr;
+  exit status is 0 for `Ok` (including after `quit`), 1 for `Error`, 2 for
+  usage and unreadable input.

@@ -1,0 +1,60 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: /integertype
+% expect-output: /realtype
+% expect-output: /stringtype
+% expect-output: /nametype
+% expect-output: /booleantype
+% expect-output: /nulltype
+% expect-output: /marktype
+% expect-output: /arraytype
+% expect-output: /dicttype
+% expect-output: /operatortype
+% expect-output: true
+% expect-output: false
+% expect-output: false
+% expect-output: true
+% expect-output: false
+% expect-output: false
+% expect-output: false
+% expect-output: /invalidaccess
+% expect-output: 3
+% expect-output: -3
+% expect-output: 42
+% expect-output: 35.0
+% expect-output: 5.0
+% expect-output: /abc
+% expect-output: true
+% expect-output: (1.5)
+% expect-output: (abc)
+% expect-output: (xy)
+% expect-output: (true)
+% expect-output: (5.0)
+% expect-output: (--nostringval--)
+% expect-output: (FF)
+% expect-output: (FFFFFFFF)
+% expect-output: (1010)
+% expect-output: (1.9)
+% expect-output: (Z)
+% expect-output: /rangecheck
+% expect-output: /typecheck
+% expect-output: /rangecheck
+% Scenario: type, attribute, and conversion operators; cvs formats reals
+% as = does; cvrs takes radix 2 through 36; readonly on an array yields a
+% new object while on a dictionary it changes the shared storage.
+1 type == 1.0 type == (a) type == /a type == true type ==
+null type == mark type == [ ] type == 1 dict type == /add load type ==
+/a cvx xcheck = /a xcheck = { 1 } cvlit xcheck =
+[ 1 ] readonly dup rcheck = wcheck =
+(abc) executeonly dup rcheck = wcheck =
+{ [ 1 ] noaccess 0 get } stopped pop $error /errorname get ==
+3.7 cvi = -3.7 cvi = (42) cvi = (3.5e1) cvr = 5 cvr =
+(abc) cvn == (abc) cvx cvn xcheck =
+1.5 10 string cvs == /abc 10 string cvs == (xy) 10 string cvs ==
+true 10 string cvs == 5.0 10 string cvs == { } 20 string cvs ==
+255 16 10 string cvrs == -1 16 10 string cvrs == 10 2 10 string cvrs ==
+1.9 10 10 string cvrs == 35 36 3 string cvrs ==
+{ 1e10 cvi } stopped pop $error /errorname get ==
+{ (abc) cvi } stopped pop $error /errorname get ==
+{ 12345 2 string cvs } stopped pop $error /errorname get ==

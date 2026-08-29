@@ -8,8 +8,8 @@
 
 use proptest::prelude::*;
 use ps_vm::{
-    Access, Capture, ChunkSource, Config, ErrorSummary, Interp, Io, Limits, Object, Outcome,
-    SliceSource, Type, VmError,
+    Access, Capabilities, Capture, ChunkSource, Config, ErrorSummary, FileCapability, Interp, Io,
+    Limits, Object, Outcome, SliceSource, Stream, Type, VmError,
 };
 
 // --- helpers ---------------------------------------------------------------
@@ -449,12 +449,10 @@ fn bind_leaves_read_only_procedures_and_survives_cycles() {
     assert!(items[1].eq(interp.operator("add").unwrap()));
     assert_eq!(interp.memory().array(inner).unwrap()[0].ty(), Type::Name);
     assert_eq!(
-        run_in(&mut interp, "/q { 1 } def /q load readonly"),
-        Outcome::Error(ErrorSummary {
-            name: "undefined".into(),
-            command: "readonly".into()
-        })
+        run_in(&mut interp, "/q { 1 } def /q load readonly bind 0 get"),
+        Outcome::Ok
     );
+    assert_eq!(top(&interp).as_i32(), Some(1));
 }
 
 #[test]
@@ -766,6 +764,551 @@ fn definitions_persist_across_runs() {
     assert_eq!(run_in(&mut interp, "/v 41 def"), Outcome::Ok);
     assert_eq!(run_in(&mut interp, "v 1 add"), Outcome::Ok);
     assert_eq!(ints(&interp), [42]);
+}
+
+// --- part 2: arrays, strings, types, VM, files ------------------------------------
+
+/// An injected input stream over fixed bytes.
+struct Input(Vec<u8>, usize);
+
+impl Stream for Input {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
+        let n = buf.len().min(self.0.len() - self.1);
+        buf[..n].copy_from_slice(&self.0[self.1..self.1 + n]);
+        self.1 += n;
+        Ok(n)
+    }
+
+    fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+        Err(VmError::InvalidAccess)
+    }
+}
+
+/// A file capability answering one name with fixed bytes and recording
+/// what was written to it.
+struct OneFile {
+    name: &'static str,
+    content: &'static [u8],
+    written: Capture,
+}
+
+impl FileCapability for OneFile {
+    fn open(&mut self, name: &[u8], mode: &[u8]) -> Result<Box<dyn Stream>, VmError> {
+        if name != self.name.as_bytes() {
+            return Err(VmError::UndefinedFileName);
+        }
+        match mode {
+            b"r" => Ok(Box::new(Input(self.content.to_vec(), 0))),
+            b"w" => Ok(Box::new(self.written.clone())),
+            _ => Err(VmError::InvalidFileAccess),
+        }
+    }
+}
+
+fn run_with(io: Io, file: Option<Box<dyn FileCapability>>, program: &str) -> (Interp, Outcome) {
+    let config = Config {
+        io,
+        capabilities: Capabilities { file },
+        ..Default::default()
+    };
+    let mut interp = Interp::with_config(config);
+    let outcome = run_in(&mut interp, program);
+    (interp, outcome)
+}
+
+// array-and-string-operators.ps
+#[test]
+fn array_and_string_operators() {
+    let (interp, outcome, out, _) = run(
+        "3 array dup length exch 0 get [ 1 2 ] length 1 2 2 array astore aload pop \
+         (abcdef) 2 3 getinterval (abc) dup 1 (Z) putinterval [ 1 2 3 ] 1 1 getinterval \
+         (hello) (l) search { pop pop pop 1 } { pop 0 } ifelse (hello) (lo) anchorsearch \
+         { pop pop 1 } { pop 0 } ifelse 3 string length 1 2 2 packedarray length \
+         [ 1 2 ] { == } forall (ab) { = } forall << /k 1 >> { == == } forall",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(out.text(), "1\n2\n97\n98\n1\n/k\n");
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_i32(), Some(3));
+    assert_eq!(stack[1].ty(), Type::Null);
+    assert_eq!(stack[2].as_i32(), Some(2));
+    assert_eq!(stack[3].as_i32(), Some(1));
+    assert_eq!(stack[4].as_i32(), Some(2));
+    assert_eq!(interp.memory().string(stack[5]), Some(&b"cde"[..]));
+    assert_eq!(interp.memory().string(stack[6]), Some(&b"aZc"[..]));
+    assert_eq!(interp.memory().array(stack[7]).unwrap().len(), 1);
+    assert_eq!(stack[8].as_i32(), Some(1));
+    assert_eq!(stack[9].as_i32(), Some(0));
+    assert_eq!(stack[10].as_i32(), Some(3));
+    assert_eq!(stack[11].as_i32(), Some(2));
+    assert_eq!(stack.len(), 12);
+
+    let (interp, outcome, _, _) = run("(hello) (l) search");
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(interp.memory().string(stack[0]), Some(&b"lo"[..]));
+    assert_eq!(interp.memory().string(stack[1]), Some(&b"l"[..]));
+    assert_eq!(interp.memory().string(stack[2]), Some(&b"he"[..]));
+    assert_eq!(stack[3].as_bool(), Some(true));
+    let (interp, _, _, _) = run("(hello) (lo) anchorsearch (hello) () anchorsearch");
+    let stack = interp.ostack();
+    assert_eq!(interp.memory().string(stack[0]), Some(&b"hello"[..]));
+    assert_eq!(stack[1].as_bool(), Some(false));
+    assert_eq!(interp.memory().string(stack[2]), Some(&b"hello"[..]));
+    assert_eq!(interp.memory().string(stack[3]), Some(&b""[..]));
+    assert_eq!(stack[4].as_bool(), Some(true));
+
+    let (interp, _, _, _) = run("[ 1 2 3 4 ] { dup 3 eq { exit } if pop } forall");
+    assert_eq!(ints(&interp), [3]);
+    let (interp, _, _, _) = run("0 [ 1 2 3 ] { add } forall 0 (abc) { add } forall");
+    assert_eq!(ints(&interp), [6, 294]);
+    let (interp, _, _, _) = run("[ ] { 1 } forall 0 dict { 1 } forall 7");
+    assert_eq!(ints(&interp), [7]);
+
+    for (program, error) in [
+        ("-1 array", "rangecheck"),
+        ("70000 string", "limitcheck"),
+        ("1 ]", "unmatchedmark"),
+        ("1 2 array astore", "stackunderflow"),
+        ("(abc) 2 3 getinterval", "rangecheck"),
+        ("[ 1 ] 0 (a) putinterval", "typecheck"),
+        ("1 { } forall", "typecheck"),
+        ("[ 1 ] noaccess { } forall", "invalidaccess"),
+        ("[ 1 ] noaccess aload", "invalidaccess"),
+        ("[ 1 ] readonly 0 1 getinterval 0 2 put", "invalidaccess"),
+        ("[ (x) true setglobal ]", "invalidaccess"),
+        (
+            "true setglobal 1 array false setglobal 0 (x) put",
+            "invalidaccess",
+        ),
+        ("(a) 1 search", "typecheck"),
+    ] {
+        let (_, outcome, _, _) = run(program);
+        assert_eq!(error_name(&outcome), Some(error), "{program}");
+    }
+    let (interp, outcome, _, _) = run("1 2 mark 3 4 ]");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(interp.ostack().len(), 3);
+    assert_eq!(interp.memory().array(top(&interp)).unwrap().len(), 2);
+}
+
+#[test]
+fn setpacking_governs_scanned_procedures() {
+    let (interp, outcome, _, _) = run(
+        "currentpacking true setpacking currentpacking { 1 } [ 1 ] 1 1 packedarray false setpacking { 1 }",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_bool(), Some(false));
+    assert_eq!(stack[1].as_bool(), Some(true));
+    assert_eq!(stack[2].ty(), Type::PackedArray);
+    assert!(stack[2].is_executable());
+    assert_eq!(stack[2].access(), Some(Access::ReadOnly));
+    assert_eq!(stack[3].ty(), Type::Array);
+    assert_eq!(stack[4].ty(), Type::PackedArray);
+    assert!(stack[4].is_literal());
+    assert_eq!(stack[5].ty(), Type::Array);
+    let (interp, _, _, _) = run("true setpacking { 1 2 add } exec { 3 } exec");
+    assert_eq!(ints(&interp), [3, 3]);
+    assert!(interp.memory().current_packing());
+}
+
+// type-and-conversion.ps
+#[test]
+fn type_attribute_and_conversion_operators() {
+    let (_, outcome, out, _) = run(
+        "1 type == 1.5 type == (a) type == /a type == true type == null type == mark type == \
+         [ ] type == { } type == 1 2 1 packedarray type == 1 dict type == /add load type == \
+         currentfile type == save type == 1 type xcheck =",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "/integertype\n/realtype\n/stringtype\n/nametype\n/booleantype\n/nulltype\n/marktype\n\
+         /arraytype\n/arraytype\n/packedarraytype\n/dicttype\n/operatortype\n/filetype\n\
+         /savetype\nfalse\n"
+    );
+
+    let (interp, _, _, _) = run(
+        "/a cvx xcheck /a xcheck { } cvlit xcheck (a) cvx xcheck 1 cvx xcheck \
+         [ 1 ] readonly dup rcheck exch wcheck [ 1 ] executeonly dup rcheck exch wcheck \
+         [ 1 ] noaccess rcheck (a) rcheck 1 dict readonly rcheck 1 dict readonly wcheck \
+         1 dict dup noaccess pop rcheck",
+    );
+    let bools: Vec<bool> = interp
+        .ostack()
+        .iter()
+        .map(|o| o.as_bool().unwrap())
+        .collect();
+    assert_eq!(
+        bools,
+        [
+            true, false, false, true, true, true, false, false, false, false, true, true, false,
+            false
+        ]
+    );
+
+    let (interp, outcome, _, _) = run(
+        "3.7 cvi -3.7 cvi (42) cvi ( 42 ) cvi (16#ff) cvi 2147483647 cvi \
+         (3.5e1) cvr 5 cvr 2.5 cvr (1.) cvr",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(
+        stack[..6]
+            .iter()
+            .map(|o| o.as_i32().unwrap())
+            .collect::<Vec<_>>(),
+        [3, -3, 42, 42, 255, 2147483647]
+    );
+    assert_eq!(
+        stack[6..]
+            .iter()
+            .map(|o| o.as_f32().unwrap())
+            .collect::<Vec<_>>(),
+        [35.0, 5.0, 2.5, 1.0]
+    );
+
+    let (interp, outcome, _, _) = run("(abc) cvn (abc) cvx cvn /abc");
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert!(stack[0].eq(stack[2]));
+    assert!(stack[0].is_literal());
+    assert!(stack[1].eq(stack[2]));
+    assert!(stack[1].is_executable());
+
+    let (_, outcome, out, _) = run(
+        "1.5 10 string cvs == -7 10 string cvs == /abc 10 string cvs == (xy) 10 string cvs == \
+         true 10 string cvs == 5.0 10 string cvs == { } 20 string cvs == /add load 10 string cvs == \
+         null 20 string cvs == 2147483648.0 20 string cvs ==",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "(1.5)\n(-7)\n(abc)\n(xy)\n(true)\n(5.0)\n(--nostringval--)\n(add)\n(--nostringval--)\n(2147483648.0)\n"
+    );
+    let (interp, _, _, _) = run("(abcdef) 10 string cvs dup length");
+    assert_eq!(top(&interp).as_i32(), Some(6));
+    assert_eq!(
+        interp.memory().string(interp.ostack()[0]),
+        Some(&b"abcdef"[..])
+    );
+
+    let (_, outcome, out, _) = run(
+        "255 16 10 string cvrs == -1 16 10 string cvrs == 10 2 10 string cvrs == \
+         1.9 10 10 string cvrs == 35 36 3 string cvrs == 0 8 3 string cvrs == \
+         255.9 16 4 string cvrs == -7 10 4 string cvrs ==",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "(FF)\n(FFFFFFFF)\n(1010)\n(1.9)\n(Z)\n(0)\n(FF)\n(-7)\n"
+    );
+
+    for (program, error) in [
+        ("1e10 cvi", "rangecheck"),
+        ("(abc) cvi", "typecheck"),
+        ("(1 2) cvi", "typecheck"),
+        ("(]) cvi", "typecheck"),
+        ("null cvi", "typecheck"),
+        ("null cvr", "typecheck"),
+        ("12345 2 string cvs", "rangecheck"),
+        ("1 1 3 string cvrs", "rangecheck"),
+        ("1 37 3 string cvrs", "rangecheck"),
+        ("256 16 1 string cvrs", "rangecheck"),
+        ("1 readonly", "typecheck"),
+        ("1 dict executeonly", "typecheck"),
+        ("[ 1 ] executeonly readonly", "invalidaccess"),
+        ("1 dict noaccess readonly", "invalidaccess"),
+        ("1 rcheck", "typecheck"),
+        ("(abc) readonly dup 0 65 put", "invalidaccess"),
+        ("(abc) noaccess cvn", "invalidaccess"),
+        ("(abc) 1 cvs", "typecheck"),
+    ] {
+        let (_, outcome, _, _) = run(program);
+        assert_eq!(error_name(&outcome), Some(error), "{program}");
+    }
+    let long = format!("({}) cvn", "x".repeat(128));
+    let (_, outcome, _, _) = run(&long);
+    assert_eq!(error_name(&outcome), Some("limitcheck"));
+    let (interp, _, _, _) = run("(abc) readonly (abc) executeonly noaccess");
+    assert_eq!(interp.ostack()[0].access(), Some(Access::ReadOnly));
+    assert_eq!(interp.ostack()[1].access(), Some(Access::None));
+}
+
+// save-restore-exec-stack.ps
+#[test]
+fn vm_operators() {
+    let (interp, outcome, out, _) = run("/a [ 1 2 3 ] def save a 0 9 put restore a 0 get = \
+         true setglobal /g [ 1 ] def currentglobal false setglobal save g 0 2 put restore g 0 get = \
+         save [ 1 2 ] exch { restore } stopped pop $error /errorname get == exch pop restore \
+         [ 1 ] gcheck 1 gcheck true setglobal [ 1 ] gcheck false setglobal \
+         vmstatus pop pop save vmstatus pop pop exch restore");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(out.text(), "1\n2\n/invalidrestore\n");
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_bool(), Some(true));
+    assert_eq!(stack[1].as_bool(), Some(false));
+    assert_eq!(stack[2].as_bool(), Some(true));
+    assert_eq!(stack[3].as_bool(), Some(true));
+    assert_eq!(stack[4].as_i32(), Some(0));
+    assert_eq!(stack[5].as_i32(), Some(1));
+    assert_eq!(stack.len(), 6);
+
+    let (interp, outcome, _, _) = run("/r { restore 1 } def save r");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(ints(&interp), [1]);
+    let (_, outcome, _, _) = run("save (1 { restore } repeat) cvx exec");
+    assert_eq!(error_name(&outcome), Some("invalidrestore"));
+    let (_, outcome, _, _) = run("save 1 dict begin restore");
+    assert_eq!(error_name(&outcome), Some("invalidrestore"));
+    let (_, outcome, _, _) = run("save ({ restore } exec) cvx exec 2");
+    assert_eq!(error_name(&outcome), Some("invalidrestore"));
+    let (interp, outcome, _, _) = run("/s ({ restore } exec) def save s cvx exec 2");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(ints(&interp), [2]);
+    let (_, outcome, _, _) = run("1 restore");
+    assert_eq!(error_name(&outcome), Some("typecheck"));
+    let (_, outcome, _, _) = run("save dup restore restore");
+    assert_eq!(error_name(&outcome), Some("invalidrestore"));
+    let (_, outcome, _, _) = run("16 { save } repeat");
+    assert_eq!(error_name(&outcome), Some("limitcheck"));
+    let (_, outcome, _, _) = run("(x) setglobal");
+    assert_eq!(error_name(&outcome), Some("typecheck"));
+}
+
+// standard-files.ps, currentfile-reads-inline-data.ps
+#[test]
+fn standard_files_and_currentfile() {
+    let (_, outcome, out, err) = run(
+        "(%stdout) (w) file dup (via stdout\\n) writestring dup 65 write 10 write flush \
+         (%stderr) (w) file (oops\\n) writestring \
+         currentfile 40 string readline\nthe data line\n== = \
+         currentfile 5 string readstring\nXYZWV\n== = \
+         currentfile 3 string readhexstring\n41 4243\n== = \
+         currentfile token\n/tokenized\n== == \
+         currentfile read\nA= = \
+         currentfile currentfile eq = currentfile type == \
+         (12 ab) token { == == } if (   ) token = (%stdout) (w) file (%stdout) (w) file eq =",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "via stdout\nA\ntrue\nthe data line\ntrue\nXYZWV\ntrue\nABC\ntrue\n/tokenized\ntrue\n65\ntrue\n/filetype\n12\n(ab)\nfalse\ntrue\n"
+    );
+    assert_eq!(err.text(), "oops\n");
+
+    let (interp, outcome) = run_with(
+        Io::capture()
+            .0
+            .with_stdin(Input(b"7 (in)\nrest".to_vec(), 0)),
+        None,
+        "(%stdin) (r) file dup token pop exch dup token pop exch 10 string readline pop",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_i32(), Some(7));
+    assert_eq!(interp.memory().string(stack[1]), Some(&b"in"[..]));
+    assert_eq!(interp.memory().string(stack[2]), Some(&b""[..]));
+    assert_eq!(stack.len(), 3);
+    let (interp, outcome) = run_with(
+        Io::capture().0.with_stdin(Input(b"ab".to_vec(), 0)),
+        None,
+        "(%stdin) (r) file dup read pop exch dup read pop exch read",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(interp.ostack()[0].as_i32(), Some(97));
+    assert_eq!(interp.ostack()[1].as_i32(), Some(98));
+    assert_eq!(interp.ostack()[2].as_bool(), Some(false));
+
+    for (program, error) in [
+        ("(%stdin) (r) file", "undefinedfilename"),
+        ("(%stdout) (r) file", "invalidfileaccess"),
+        ("(%stderr) (x) file", "invalidfileaccess"),
+        ("(other) (r) file", "undefinedfilename"),
+        ("(%stdout) (w) file 256 write", "rangecheck"),
+        ("currentfile 65 write", "invalidaccess"),
+        ("currentfile 0 string readstring", "rangecheck"),
+        ("currentfile 2 string readline\nabc\n", "rangecheck"),
+        ("1 closefile", "typecheck"),
+        ("1 token", "typecheck"),
+        ("(x) 1 readline", "typecheck"),
+        ("currentfile (abc) readonly readline", "invalidaccess"),
+        ("eexec", "undefined"),
+        ("(}) token", "syntaxerror"),
+        ("currentfile token\n}", "syntaxerror"),
+        (
+            "(%stdout) (w) file dup closefile (x) writestring",
+            "ioerror",
+        ),
+    ] {
+        let (_, outcome, _, _) = run(program);
+        assert_eq!(error_name(&outcome), Some(error), "{program}");
+    }
+    let mut interp = Interp::new();
+    assert_eq!(
+        run_in(&mut interp, "(%stdout) (w) file"),
+        Outcome::Error(ErrorSummary {
+            name: "undefinedfilename".into(),
+            command: "file".into(),
+        })
+    );
+}
+
+#[test]
+fn readline_handles_line_endings_and_end_of_data() {
+    let (interp, outcome) = run_with(
+        Io::capture()
+            .0
+            .with_stdin(Input(b"a\r\nb\rc\nd".to_vec(), 0)),
+        None,
+        "/f (%stdin) (r) file def 4 { f 10 string readline } repeat f 10 string readline",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    let text = |o| String::from_utf8(interp.memory().string(o).unwrap().to_vec()).unwrap();
+    assert_eq!(text(stack[0]), "a");
+    assert_eq!(stack[1].as_bool(), Some(true));
+    assert_eq!(text(stack[2]), "b");
+    assert_eq!(text(stack[4]), "c");
+    assert_eq!(text(stack[6]), "d");
+    assert_eq!(stack[7].as_bool(), Some(false));
+    assert_eq!(text(stack[8]), "");
+    assert_eq!(stack[9].as_bool(), Some(false));
+    let (interp, _) = run_with(
+        Io::capture().0.with_stdin(Input(b"abcde".to_vec(), 0)),
+        None,
+        "(%stdin) (r) file dup 3 string readstring exch pop exch 3 string readstring",
+    );
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_bool(), Some(true));
+    assert_eq!(interp.memory().string(stack[1]), Some(&b"de"[..]));
+    assert_eq!(stack[2].as_bool(), Some(false));
+    let (interp, _) = run_with(
+        Io::capture().0.with_stdin(Input(b"4x1 42>".to_vec(), 0)),
+        None,
+        "(%stdin) (r) file 4 string readhexstring",
+    );
+    let stack = interp.ostack();
+    assert_eq!(interp.memory().string(stack[0]), Some(&b"\x41\x42"[..]));
+    assert_eq!(stack[1].as_bool(), Some(false));
+}
+
+#[test]
+fn files_open_through_the_capability_only() {
+    let written = Capture::new();
+    let capability = OneFile {
+        name: "data",
+        content: b"1 2 add\n(rest)",
+        written: written.clone(),
+    };
+    let (interp, outcome) = run_with(
+        Io::capture().0,
+        Some(Box::new(capability)),
+        "/f (data) (r) file def f token pop f token pop f token pop f cvx exec \
+         f 10 string readline (data) (w) file dup (out) writestring closefile \
+         { (data) (a) file } stopped { pop pop } if $error /errorname get \
+         { (nope) (r) file } stopped { pop pop } if $error /errorname get \
+         f closefile { f read } stopped { pop } if $error /errorname get",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(written.text(), "out");
+    let stack = interp.ostack();
+    assert_eq!(stack[0].as_i32(), Some(1));
+    assert_eq!(stack[1].as_i32(), Some(2));
+    assert_eq!(stack[2].ty(), Type::Name);
+    assert!(stack[2].is_executable());
+    assert_eq!(name_text(&interp, stack[2]), "add");
+    assert_eq!(interp.memory().string(stack[3]), Some(&b"rest"[..]));
+    assert_eq!(interp.memory().string(stack[4]), Some(&b""[..]));
+    assert_eq!(stack[5].as_bool(), Some(false));
+    assert_eq!(name_text(&interp, stack[6]), "invalidfileaccess");
+    assert_eq!(name_text(&interp, stack[7]), "undefinedfilename");
+    assert_eq!(name_text(&interp, stack[8]), "ioerror");
+    assert_eq!(stack.len(), 9);
+
+    let (interp, outcome) = run_with(
+        Io::capture().0,
+        Some(Box::new(OneFile {
+            name: "prog",
+            content: b"currentfile 10 string readline\ninline\n== 5",
+            written: Capture::new(),
+        })),
+        "(prog) (r) file cvx exec currentfile",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(interp.memory().string(stack[0]), Some(&b"inline"[..]));
+    assert_eq!(stack[1].as_i32(), Some(5));
+    assert!(stack[2].eq(interp.run_file()));
+    assert_eq!(stack.len(), 3);
+}
+
+#[test]
+fn the_run_file_is_the_job_source() {
+    let (interp, outcome, _, _) = run("currentfile currentfile closefile (unreached) =");
+    assert_eq!(outcome, Outcome::Ok);
+    assert!(top(&interp).eq(interp.run_file()));
+    assert!(interp.memory().file_is_open(interp.run_file()));
+
+    let mut interp = Interp::new();
+    assert_eq!(run_in(&mut interp, "1 quit 2 3"), Outcome::Ok);
+    assert_eq!(run_in(&mut interp, "4"), Outcome::Ok);
+    assert_eq!(ints(&interp), [1, 4]);
+    assert_eq!(run_in(&mut interp, "currentfile closefile 5"), Outcome::Ok);
+    assert_eq!(
+        run_in(&mut interp, "6 currentfile 8 string readline\n7 8\n"),
+        Outcome::Ok
+    );
+    let stack = interp.ostack();
+    assert_eq!(stack[2].as_i32(), Some(6));
+    assert_eq!(interp.memory().string(stack[3]), Some(&b"7 8"[..]));
+    assert_eq!(stack[4].as_bool(), Some(true));
+    assert_eq!(stack.len(), 5);
+    assert_eq!(
+        run_in(&mut interp, "save currentfile closefile"),
+        Outcome::Ok
+    );
+    assert_eq!(run_in(&mut interp, "restore 9"), Outcome::Ok);
+    assert_eq!(top(&interp).as_i32(), Some(9));
+
+    let (mut interp, _, _) = interp_with(Limits::default());
+    let mut source = ChunkSource::new();
+    source.append(b"currentfile 10 string readline\nabc\n(x");
+    assert_eq!(interp.run(&mut source), Outcome::Suspended);
+    source.append(b"y) 1");
+    source.finish();
+    assert_eq!(interp.resume(&mut source), Outcome::Ok);
+    let stack = interp.ostack();
+    assert_eq!(interp.memory().string(stack[0]), Some(&b"abc"[..]));
+    assert_eq!(stack[1].as_bool(), Some(true));
+    assert_eq!(interp.memory().string(stack[2]), Some(&b"xy"[..]));
+    assert_eq!(stack[3].as_i32(), Some(1));
+    assert_eq!(stack.len(), 4);
+}
+
+// captured-output.ps
+#[test]
+fn double_equals_pstack_and_stack() {
+    let (interp, outcome, out, _) = run(
+        "(a(b)\\\\\\n\\t\\001\\177) == /n == /n cvx == [ 1 (x) [ ] ] == { 1 [ 2 ] { } } == \
+         /add load == mark == null == 1 dict == currentfile == save == 1 2 == \
+         [ 1 ] noaccess == (x) executeonly == [ 1 ] executeonly ==",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "(a\\(b\\)\\\\\\n\\t\\001\\177)\n/n\nn\n[1 (x) []]\n{1 [ 2 ] {}}\n--add--\n-mark-\n-null-\n-dict-\n-file-\n-save-\n2\n--nostringval--\n--nostringval--\n--nostringval--\n"
+    );
+    assert_eq!(interp.ostack().len(), 1);
+    let (interp, outcome, out, _) = run("1 (a) /b [ 1 ] pstack stack count");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(out.text(), "[1]\n/b\n(a)\n1\n--nostringval--\nb\na\n1\n");
+    assert_eq!(top(&interp).as_i32(), Some(4));
+    let (_, outcome, out, _) = run("/a [ 1 ] def a 0 a put a ==");
+    assert_eq!(outcome, Outcome::Ok);
+    assert!(out.text().starts_with("[[[["));
+    assert!(out.text().contains("..."));
 }
 
 // --- property test: random control nesting ---------------------------------------

@@ -99,6 +99,25 @@ pub enum LoopFrame {
     Loop {
         body: Object,
     },
+    /// `forall` over an array, packed array, string, or dictionary; `next`
+    /// is the element or entry index to visit.
+    ForAll {
+        body: Object,
+        container: Object,
+        next: u32,
+    },
+}
+
+impl LoopFrame {
+    /// The procedure the loop runs.
+    pub fn body(&self) -> Object {
+        match self {
+            LoopFrame::For { body, .. }
+            | LoopFrame::Repeat { body, .. }
+            | LoopFrame::Loop { body }
+            | LoopFrame::ForAll { body, .. } => *body,
+        }
+    }
 }
 
 /// Barriers on the execution stack. `Interrupt` and `Timeout` are reserved

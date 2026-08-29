@@ -7,7 +7,7 @@
 
 use crate::error::VmError;
 use crate::interp::Interp;
-use crate::object::{Object, Type};
+use crate::object::{Access, Object, Type};
 
 op_table! { OPS {
     "print" => print, [String];
@@ -53,6 +53,85 @@ pub fn brief(i: &Interp, object: Object) -> Vec<u8> {
             ),
         Type::String => i.mem.string(object).map(<[u8]>::to_vec).unwrap_or_default(),
         _ => b"--nostringval--".to_vec(),
+    }
+}
+
+/// Nesting beyond this prints `...` instead of descending, so a self-
+/// containing array terminates and the host stack stays bounded.
+const MAX_PRINT_DEPTH: usize = 64;
+
+/// The text `==` writes for an object: its syntactic form where one
+/// exists, a bracketed type name otherwise.
+pub fn full(i: &Interp, object: Object) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_full(i, object, &mut out, 0);
+    out
+}
+
+fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize) {
+    match object.ty() {
+        Type::Name => {
+            if object.is_literal() {
+                out.push(b'/');
+            }
+            out.extend(i.mem.name_text(object.as_name().expect("name")));
+        }
+        Type::String => match i.mem.string(object) {
+            Some(bytes) if object.access().unwrap_or_default() <= Access::ReadOnly => {
+                out.push(b'(');
+                for &b in bytes {
+                    match b {
+                        b'(' | b')' | b'\\' => out.extend([b'\\', b]),
+                        b'\n' => out.extend(b"\\n"),
+                        b'\r' => out.extend(b"\\r"),
+                        b'\t' => out.extend(b"\\t"),
+                        0x08 => out.extend(b"\\b"),
+                        0x0C => out.extend(b"\\f"),
+                        0x20..=0x7E => out.push(b),
+                        _ => out.extend(format!("\\{b:03o}").into_bytes()),
+                    }
+                }
+                out.push(b')');
+            }
+            _ => out.extend(b"--nostringval--"),
+        },
+        Type::Array | Type::PackedArray => {
+            if depth >= MAX_PRINT_DEPTH {
+                out.extend(b"...");
+                return;
+            }
+            match i.mem.array(object) {
+                Some(items) if object.access().unwrap_or_default() <= Access::ReadOnly => {
+                    let (open, close) = if object.is_executable() {
+                        (b'{', b'}')
+                    } else {
+                        (b'[', b']')
+                    };
+                    out.push(open);
+                    for (k, &item) in items.iter().enumerate() {
+                        if k > 0 {
+                            out.push(b' ');
+                        }
+                        write_full(i, item, out, depth + 1);
+                    }
+                    out.push(close);
+                }
+                _ => out.extend(b"--nostringval--"),
+            }
+        }
+        Type::Operator => {
+            out.extend(b"--");
+            out.extend(brief(i, object));
+            out.extend(b"--");
+        }
+        Type::Dict => out.extend(b"-dict-"),
+        Type::File => out.extend(b"-file-"),
+        Type::Mark => out.extend(b"-mark-"),
+        Type::Null => out.extend(b"-null-"),
+        Type::Save => out.extend(b"-save-"),
+        Type::FontId => out.extend(b"-fontID-"),
+        Type::GState => out.extend(b"-gstate-"),
+        Type::Integer | Type::Real | Type::Boolean => out.extend(brief(i, object)),
     }
 }
 

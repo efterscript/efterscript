@@ -15,4 +15,5 @@ name = "efterscript"
 path = "src/main.rs"
 
 [dependencies]
+ps-vm.workspace = true
 remelt.workspace = true

@@ -78,6 +78,16 @@ pub trait Source {
     /// Whether end of input may be followed by more bytes later, in which
     /// case the scanner suspends mid-token instead of finishing.
     fn more_may_come(&self) -> bool;
+
+    /// Moves every currently available byte into `out`, leaving the cursor
+    /// at the end of what was available.
+    fn drain_into(&mut self, memory: &mut Memory, out: &mut Vec<u8>) -> Result<(), VmError> {
+        while let Some(byte) = self.peek(memory)? {
+            out.push(byte);
+            self.advance(memory);
+        }
+        Ok(())
+    }
 }
 
 /// A source over a byte slice.
@@ -114,6 +124,12 @@ impl Source for SliceSource<'_> {
 
     fn more_may_come(&self) -> bool {
         false
+    }
+
+    fn drain_into(&mut self, _: &mut Memory, out: &mut Vec<u8>) -> Result<(), VmError> {
+        out.extend_from_slice(self.remaining());
+        self.position = self.bytes.len();
+        Ok(())
     }
 }
 
@@ -281,6 +297,12 @@ impl Source for ChunkSource {
 
     fn more_may_come(&self) -> bool {
         !self.finished
+    }
+
+    fn drain_into(&mut self, _: &mut Memory, out: &mut Vec<u8>) -> Result<(), VmError> {
+        out.extend_from_slice(self.unread());
+        self.position = self.buffer.len();
+        Ok(())
     }
 }
 

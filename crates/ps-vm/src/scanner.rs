@@ -568,8 +568,8 @@ impl<'a> Scanner<'a> {
                                 return Err(self.fail(ScanErrorKind::SyntaxError, next, Some(b)));
                             };
                             let span = Span::new(frame.start, pos + 1);
-                            let array = match memory.alloc_array(frame.items) {
-                                Ok(array) => array.as_executable(),
+                            let array = match memory.alloc_procedure(frame.items) {
+                                Ok(array) => array,
                                 Err(e) => return Err(self.fail(e.into(), span, None)),
                             };
                             if let Some(scan) = self.emit(memory, array, span)? {

@@ -147,6 +147,11 @@ impl Dict {
         Some(value)
     }
 
+    /// The entry at `index` in insertion order.
+    pub fn entry_at(&self, index: usize) -> Option<(Object, Object)> {
+        self.entries.get(index).copied()
+    }
+
     /// Entries in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = (Object, Object)> + '_ {
         self.entries.iter().copied()

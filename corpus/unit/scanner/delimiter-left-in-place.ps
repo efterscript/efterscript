@@ -1,6 +1,9 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: abc
+% expect-output: (\\(x\\))
 % Scenario: a token ended by a delimiter leaves the delimiter unread.
-% Expect: prints "/abc" then "(x)" — the "(" begins the next token.
+% Expect: prints "abc" (the executable name) then "(\(x\))" — the "("
+% begins the remainder.
 (abc(x)) token pop == ==

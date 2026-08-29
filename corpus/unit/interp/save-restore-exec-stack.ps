@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 1
+% expect-output: /invalidrestore
+% expect-output: 2
+% expect-output: 0
+% expect-output: true
+% Scenario: restore from inside a procedure created before the save is
+% fine; a loop whose body was created after the save still references it
+% from the execution stack, so restore is rejected there; vmstatus reports
+% the save level and gcheck the allocation space.
+/r { restore 1 = } def
+save r
+save { (1 { restore } repeat) cvx exec } stopped pop $error /errorname get ==
+restore
+save 2 = restore
+vmstatus pop pop = 1 gcheck =

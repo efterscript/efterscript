@@ -1,7 +1,18 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: 0.001
+% expect-output: -1000.0
+% expect-output: 1.0
+% expect-output: 0.5
+% expect-output: 1.5
+% expect-output: 5
+% expect-output: 15
+% expect-output: 255
+% expect-output: -7
+% expect-output: 123
 % Scenario: integers, radix integers, and reals scan as numbers.
-% Expect: prints 123 -7 255 15 5 then 1.5 0.5 1.0 -1000.0 0.001.
+% Expect: the tokens are 123 -7 255 15 5 1.5 0.5 1.0 -1000.0 0.001; they are
+% printed from the top of the stack down.
 123 -7 16#ff 8#17 2#101 1.5 .5 1. -1e3 1E-3
 10 { = } repeat

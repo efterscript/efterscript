@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 5
+% expect-output: xy
+% expect-output: (a\\(b\\)\\n)
+% expect-output: 1.5
+% expect-output: /n
+% expect-output: {1 [ 2 ]}
+% expect-output: --add--
+% expect-output: -mark-
+% expect-output: -null-
+% expect-output: -dict-
+% expect-output: -file-
+% Scenario: print, =, and == write to the injected output stream; = uses
+% the cvs form and == the syntactic form (inside a procedure, [ and ] are
+% executable names, so they print as such).
+2 3 add = (x) print (y) =
+(a(b)\n) == 1.5 == /n == { 1 [ 2 ] } == /add load ==
+mark == null == 1 dict == currentfile ==

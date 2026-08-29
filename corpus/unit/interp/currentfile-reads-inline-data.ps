@@ -1,0 +1,39 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: a line of data
+% expect-output: true
+% expect-output: XYZWV
+% expect-output: true
+% expect-output: ABC
+% expect-output: true
+% expect-output: /tokenized
+% expect-output: true
+% expect-output: 65
+% expect-output: 12
+% expect-output: (ab)
+% expect-output: false
+% expect-output: true
+% expect-output: after
+% Scenario: currentfile at the top level is the job's own source; reads
+% through it continue exactly where the scanner stopped, so data placed
+% after an operator is consumed by that operator and not executed.
+currentfile 40 string readline
+a line of data
+= =
+currentfile 5 string readstring
+XYZWV
+= =
+currentfile 3 string readhexstring
+41 42 43
+= =
+currentfile token
+/tokenized
+= ==
+currentfile read
+A= =
+(12 ab) token { == == } if
+(   ) token =
+currentfile currentfile eq =
+(after) =

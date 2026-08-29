@@ -1,6 +1,16 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: 8
+% expect-output: 6
+% expect-output: 2
+% expect-output: 4
+% expect-output: 5
+% expect-output: 1
+% expect-output: true
+% expect-output: true
+% expect-output: 0
+% expect-output: 4
 % Scenario: every escape form in a literal string.
 % Expect: prints 8, 6, 2, 4, 5, 1 (the lengths), then true for each equality.
 (\n\r\t\b\f\\\(\)) length =

@@ -1,8 +1,11 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: 10
+% expect-output: 0
 % Scenario: names end at delimiters, and "/" alone is the empty name.
-% Expect: the procedure holds 9 elements: a [ b ] c {d} /e (f) / and /g.
+% Expect: the procedure holds 10 elements: a [ b ] c {d} /e (f) / and /g;
+% the empty name has length 0.
 {a[b]c{d}/e(f)/ /g%h
 } length =     % 10
 / length =     % 0

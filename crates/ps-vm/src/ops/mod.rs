@@ -88,13 +88,17 @@ macro_rules! op_table {
 }
 
 pub mod arith;
+pub mod array;
 pub mod control;
 pub mod dict;
 pub mod errors;
+pub mod file;
 pub mod output;
 pub mod stack;
+pub mod types;
+pub mod vm;
 
-// Part 2 appends its modules here; indices of earlier entries never move.
+// Later groups append here; indices of earlier entries never move.
 const MODULES: &[&[OpEntry]] = &[
     stack::OPS,
     arith::OPS,
@@ -103,6 +107,10 @@ const MODULES: &[&[OpEntry]] = &[
     output::OPS,
     errors::OPS,
     errors::HANDLERS,
+    array::OPS,
+    types::OPS,
+    vm::OPS,
+    file::OPS,
 ];
 
 /// The complete operator table, built on first use.

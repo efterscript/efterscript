@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: via stdout
+% expect-output: /undefinedfilename
+% expect-output: /undefined
+% expect-output: /invalidfileaccess
+% expect-output: 3
+% expect-output: 2
+% expect-output: 1
+% expect-output: done
+% Scenario: %stdout is the injected output stream; %stdin is absent when
+% none was injected; eexec is registered but not implemented; pstack
+% prints the operand stack top first and leaves it in place.
+(%stdout) (w) file dup (via stdout\n) writestring flush
+{ (%stdin) (r) file } stopped pop $error /errorname get ==
+{ eexec } stopped pop $error /errorname get ==
+{ (%stdout) (r) file } stopped pop $error /errorname get ==
+clear 1 2 3 pstack count 3 eq { (done) = } if

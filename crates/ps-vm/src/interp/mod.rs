@@ -7,14 +7,40 @@
 mod exec;
 mod frame;
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+
 use crate::error::VmError;
-use crate::files::FileCapability;
+use crate::files::{FileCapability, Stream};
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, Object, Type};
 use crate::ops::{self, Num, OpEntry};
 
+pub(crate) use exec::scan_error;
 pub use frame::{Frame, LoopFrame, Marker, SourceFrame, SourceSlot};
+
+// The file-table stream behind the job's source. The loop moves the bytes
+// of the source handed to `run` into this buffer before scanning, so the
+// scanner's cursor and `currentfile` reads share one file entry.
+#[derive(Clone, Default)]
+struct RunStream(Rc<RefCell<VecDeque<u8>>>);
+
+impl Stream for RunStream {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
+        let mut pending = self.0.borrow_mut();
+        let n = buf.len().min(pending.len());
+        for (slot, byte) in buf.iter_mut().zip(pending.drain(..n)) {
+            *slot = byte;
+        }
+        Ok(n)
+    }
+
+    fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+        Err(VmError::InvalidAccess)
+    }
+}
 
 /// Stack limits. The defaults are the PLRM3 Appendix B minimums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,8 +128,11 @@ pub struct Interp {
     pub(crate) estack: Vec<Frame>,
     limits: Limits,
     pub(crate) ops: &'static [OpEntry],
+    stdin: Option<Object>,
     stdout: Option<Object>,
     stderr: Option<Object>,
+    run_file: Object,
+    run_buffer: RunStream,
     #[allow(dead_code)]
     pub(crate) quirks: Quirks,
     pub(crate) dicts: StandardDicts,
@@ -140,8 +169,16 @@ impl Interp {
         } = config;
         let mut mem = Memory::new();
         mem.set_file_capability(capabilities.file);
+        let stdin = io
+            .stdin
+            .map(|s| mem.open_stream(s).with_access(Access::ReadOnly));
         let stdout = io.stdout.map(|s| mem.open_stream(s));
         let stderr = io.stderr.map(|s| mem.open_stream(s));
+        let run_buffer = RunStream::default();
+        let run_file = mem
+            .open_stream(Box::new(run_buffer.clone()))
+            .with_access(Access::ReadOnly)
+            .expect("file objects carry access");
         let ops = ops::table();
 
         mem.set_global(true);
@@ -172,8 +209,11 @@ impl Interp {
             estack: Vec::new(),
             limits,
             ops,
+            stdin: stdin.flatten(),
             stdout,
             stderr,
+            run_file,
+            run_buffer,
             quirks,
             dicts: StandardDicts {
                 systemdict,
@@ -299,6 +339,56 @@ impl Interp {
 
     pub fn stderr_file(&self) -> Option<Object> {
         self.stderr
+    }
+
+    /// The file object `%stdin` opens, if a stream was injected.
+    pub fn stdin_file(&self) -> Option<Object> {
+        self.stdin
+    }
+
+    /// The file object reading the job's source: what `currentfile` returns
+    /// at the top level of a run.
+    pub fn run_file(&self) -> Object {
+        self.run_file
+    }
+
+    /// `currentfile`: the file of the innermost file frame on the execution
+    /// stack, the job's own source when no file is being executed.
+    pub fn current_file(&self) -> Object {
+        self.estack
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
+                Frame::Source(frame) => match frame.slot {
+                    SourceSlot::File { object, .. } => Some(object),
+                    SourceSlot::Run => Some(self.run_file),
+                    SourceSlot::String(_) => None,
+                },
+                _ => None,
+            })
+            .unwrap_or(self.run_file)
+    }
+
+    /// Discards the unread remainder of the job's source: what `closefile`
+    /// on it means, and what keeps bytes a `quit` left behind from
+    /// preceding the next job. The entry itself stays open, so it is never
+    /// newer than a `save`.
+    pub(crate) fn discard_run_input(&mut self) {
+        self.run_buffer.0.borrow_mut().clear();
+        let _ = self.mem.file_read(self.run_file, &mut [0u8; 1]);
+    }
+
+    /// Moves the bytes `source` has available into the run file.
+    pub(crate) fn pump_run_source(
+        &mut self,
+        source: &mut dyn crate::source::Source,
+    ) -> Result<(), VmError> {
+        let mut bytes = Vec::new();
+        source.drain_into(&mut self.mem, &mut bytes)?;
+        if !bytes.is_empty() {
+            self.run_buffer.0.borrow_mut().extend(bytes);
+        }
+        Ok(())
     }
 
     /// A literal name object for `text`, which must fit the name limit.
@@ -503,10 +593,16 @@ impl Interp {
 
     // --- output --------------------------------------------------------------
 
-    fn write_all(&mut self, file: Option<Object>, mut bytes: &[u8]) -> Result<(), VmError> {
-        let Some(file) = file else {
-            return Ok(());
-        };
+    fn write_all(&mut self, file: Option<Object>, bytes: &[u8]) -> Result<(), VmError> {
+        match file {
+            Some(file) => self.write_file(file, bytes),
+            None => Ok(()),
+        }
+    }
+
+    /// Writes all of `bytes` to `file`; a stream that accepts nothing is
+    /// `ioerror`.
+    pub fn write_file(&mut self, file: Object, mut bytes: &[u8]) -> Result<(), VmError> {
         while !bytes.is_empty() {
             let n = self.mem.file_write(file, bytes)?;
             if n == 0 {

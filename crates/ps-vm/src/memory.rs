@@ -423,6 +423,7 @@ pub struct Memory {
     saves: Vec<SaveRecord>,
     next_save_serial: u32,
     allocate_global: bool,
+    packing: bool,
 }
 
 impl Default for Memory {
@@ -456,6 +457,7 @@ impl Memory {
             saves: Vec::new(),
             next_save_serial: 0,
             allocate_global: false,
+            packing: false,
         }
     }
 
@@ -542,6 +544,16 @@ impl Memory {
         self.allocate_global
     }
 
+    /// `setpacking`: whether the scanner builds procedures as packed arrays.
+    pub fn set_packing(&mut self, packing: bool) {
+        self.packing = packing;
+    }
+
+    /// `currentpacking`
+    pub fn current_packing(&self) -> bool {
+        self.packing
+    }
+
     pub fn current_space(&self) -> Space {
         if self.allocate_global {
             Space::Global
@@ -595,6 +607,17 @@ impl Memory {
     pub fn alloc_packed_array(&mut self, items: Vec<Object>) -> Result<Object, VmError> {
         check_store_into(self.current_space(), &items)?;
         Ok(self.current_arena().alloc_packed_array(items))
+    }
+
+    /// An executable array holding `items`, packed when the packing mode is
+    /// on: what the scanner produces for `{ … }`.
+    pub fn alloc_procedure(&mut self, items: Vec<Object>) -> Result<Object, VmError> {
+        let array = if self.packing {
+            self.alloc_packed_array(items)?
+        } else {
+            self.alloc_array(items)?
+        };
+        Ok(array.as_executable())
     }
 
     pub fn alloc_string(&mut self, bytes: Vec<u8>) -> Object {
@@ -655,6 +678,12 @@ impl Memory {
     pub fn file_write(&mut self, object: Object, buf: &[u8]) -> Result<usize, VmError> {
         let handle = Self::file_handle(object, Access::Unlimited)?;
         self.files.write(handle, buf)
+    }
+
+    /// `flushfile` on an output file.
+    pub fn flush_file(&mut self, object: Object) -> Result<(), VmError> {
+        let handle = Self::file_handle(object, Access::Unlimited)?;
+        self.files.flush(handle)
     }
 
     /// `closefile`
@@ -932,6 +961,16 @@ impl Memory {
     /// Entries in insertion order, for `forall`.
     pub fn dict_entries(&self, dict: Object) -> Result<Vec<(Object, Object)>, VmError> {
         Ok(self.readable_dict(dict, Access::ReadOnly)?.iter().collect())
+    }
+
+    /// The `index`th entry in insertion order; `None` past the end. Lets
+    /// `forall` step through a dictionary without copying it.
+    pub fn dict_entry_at(
+        &self,
+        dict: Object,
+        index: usize,
+    ) -> Result<Option<(Object, Object)>, VmError> {
+        Ok(self.readable_dict(dict, Access::ReadOnly)?.entry_at(index))
     }
 
     /// The access attribute, shared by every reference to the dictionary.

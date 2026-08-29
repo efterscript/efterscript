@@ -1,6 +1,9 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: undefinedresult
+% expect-output: div
 % Scenario: stopped catches an error and $error records it.
 % Expect: prints "true", "undefinedresult", "div".
 { 1 0 div } stopped =
