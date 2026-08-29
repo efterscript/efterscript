@@ -2,21 +2,21 @@
 
 ## 1. Object type
 
-- [ ] 1.1 `Object` value: header layout, payload union, `Copy`, `size_of == 16` test
-- [ ] 1.2 Constructors and accessors per type; executable/literal and access bits
-- [ ] 1.3 `eq` semantics (identity for composites, cross-type numeric equality)
+- [x] 1.1 `Object` value: header layout, payload union, `Copy`, `size_of == 16` test
+- [x] 1.2 Constructors and accessors per type; executable/literal and access bits
+- [x] 1.3 `eq` semantics (identity for composites, cross-type numeric equality)
 
 ## 2. Name table
 
-- [ ] 2.1 Interned atoms, append-only, stable ids
-- [ ] 2.2 Name length handling per PLRM3 implementation limits
+- [x] 2.1 Interned atoms, append-only, stable ids
+- [x] 2.2 Name length handling per PLRM3 implementation limits
 
 ## 3. Arena and persistent slot map
 
-- [ ] 3.1 Array-mapped trie keyed by `u32` handle with path-copying insert/replace
-- [ ] 3.2 `Slot` variants and `Shared<T>` alias
-- [ ] 3.3 Allocation in the arena selected by `setglobal`
-- [ ] 3.4 Property tests: snapshot isolation, structural sharing, no cycles
+- [x] 3.1 Array-mapped trie keyed by `u32` handle with path-copying insert/replace
+- [x] 3.2 `Slot` variants and `Shared<T>` alias
+- [x] 3.3 Allocation in the arena selected by `setglobal`
+- [x] 3.4 Property tests: snapshot isolation, structural sharing, no cycles
 
 ## 4. save / restore
 

@@ -11,3 +11,11 @@
 //! injected by the embedder.
 //!
 //! Independently useful as a PostScript scripting engine.
+
+pub mod memory;
+pub mod names;
+pub mod object;
+
+pub use memory::{Arena, Dict, GState, Memory, PersistentMap, Shared, Slot};
+pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
+pub use object::{Access, CompositeRef, Handle, Object, Space, Type};

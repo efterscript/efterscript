@@ -193,3 +193,30 @@ stream and the runtime share one representation with no conversion step.
   table owned by the graphics layer; decided when `ps-graphics` is designed.
 - Name-table reclamation for long-running sessions that generate names
   dynamically; measure before deciding.
+
+## 7. Implementation notes
+
+Recorded where the code departs from, or pins down, the text above.
+
+- **`Object::eq` decides only what the values alone can decide**: numbers
+  across integer/real, simple objects by payload, composites by identity
+  (space, handle, offset, length; attributes ignored). The `eq` operator's
+  comparison of string contents, and of a string against a name, needs
+  storage access and is layered on top of this in the operator layer, so the
+  object type stays free of any reference to `Memory`.
+- **The save object carries only the record's index.** A `Copy` value cannot
+  be invalidated in place, so validity is a property of the save stack and is
+  checked there; the payload has two spare words if a generation tag later
+  proves useful.
+- **A snapshot is a clone of the `Arena`**, not a separate `local_root` /
+  `local_next` pair: `Arena` is `Clone` and cloning it is O(1), so a
+  `SaveRecord` can hold an `Arena` directly. Same semantics, one fewer type.
+- **Packed arrays share the `Array` type tag** and are distinguished by the
+  packed bit, exactly as §2 describes. `Object::ty()` reports `PackedArray`
+  when the bit is set so the `type` operator needs no special case.
+- **The trie's root depth grows on demand** (a root at shift 0 addresses 32
+  handles; each growth adds five bits) rather than being fixed at seven
+  levels, so small jobs take short paths. A key beyond the current capacity
+  is a miss, never a panic.
+- **The name length limit is 127 bytes** (PLRM3 Appendix B); interning a
+  longer name returns an error the interpreter maps to `limitcheck`.
