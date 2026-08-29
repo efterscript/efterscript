@@ -33,11 +33,20 @@ pub trait FileCapability {
     fn open(&mut self, name: &[u8], mode: &[u8]) -> Result<Box<dyn Stream>, VmError>;
 }
 
+// The entry owns the one byte of lookahead the scanner may need, so a
+// `readstring` or `readline` after a token sees exactly the bytes the scanner
+// left unread.
+struct Entry {
+    stream: Box<dyn Stream>,
+    pushback: Option<u8>,
+    position: usize,
+}
+
 /// Open and closed file entries. Handles are never reused, so a file object
 /// that outlives its entry resolves to a closed file.
 #[derive(Default)]
 pub struct FileTable {
-    entries: Vec<Option<Box<dyn Stream>>>,
+    entries: Vec<Option<Entry>>,
 }
 
 impl fmt::Debug for FileTable {
@@ -66,7 +75,11 @@ impl FileTable {
 
     pub fn open(&mut self, stream: Box<dyn Stream>) -> Handle {
         let handle = Handle(self.watermark());
-        self.entries.push(Some(stream));
+        self.entries.push(Some(Entry {
+            stream,
+            pushback: None,
+            position: 0,
+        }));
         handle
     }
 
@@ -74,19 +87,63 @@ impl FileTable {
         matches!(self.entries.get(handle.0 as usize), Some(Some(_)))
     }
 
-    fn stream(&mut self, handle: Handle) -> Result<&mut dyn Stream, VmError> {
+    fn entry(&mut self, handle: Handle) -> Result<&mut Entry, VmError> {
         match self.entries.get_mut(handle.0 as usize) {
-            Some(Some(stream)) => Ok(stream.as_mut()),
+            Some(Some(entry)) => Ok(entry),
             _ => Err(VmError::IoError),
         }
     }
 
+    /// Reads into `buf`, starting with any byte the scanner peeked but did
+    /// not consume.
     pub fn read(&mut self, handle: Handle, buf: &mut [u8]) -> Result<usize, VmError> {
-        self.stream(handle)?.read(buf)
+        let entry = self.entry(handle)?;
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let mut n = 0;
+        if let Some(byte) = entry.pushback.take() {
+            buf[0] = byte;
+            n = 1;
+        }
+        n += entry.stream.read(&mut buf[n..])?;
+        entry.position += n;
+        Ok(n)
+    }
+
+    /// The next unread byte without consuming it; `None` at end of data.
+    pub fn peek(&mut self, handle: Handle) -> Result<Option<u8>, VmError> {
+        let entry = self.entry(handle)?;
+        if entry.pushback.is_none() {
+            let mut byte = [0u8; 1];
+            if entry.stream.read(&mut byte)? == 1 {
+                entry.pushback = Some(byte[0]);
+            }
+        }
+        Ok(entry.pushback)
+    }
+
+    /// Consumes the next unread byte, if any.
+    pub fn consume(&mut self, handle: Handle) -> Result<Option<u8>, VmError> {
+        let byte = self.peek(handle)?;
+        if byte.is_some() {
+            let entry = self.entry(handle)?;
+            entry.pushback = None;
+            entry.position += 1;
+        }
+        Ok(byte)
+    }
+
+    /// Bytes consumed from the stream so far, peeked bytes excluded.
+    pub fn position(&self, handle: Handle) -> Option<usize> {
+        match self.entries.get(handle.0 as usize) {
+            Some(Some(entry)) => Some(entry.position),
+            _ => None,
+        }
     }
 
     pub fn write(&mut self, handle: Handle, buf: &[u8]) -> Result<usize, VmError> {
-        self.stream(handle)?.write(buf)
+        self.entry(handle)?.stream.write(buf)
     }
 
     /// Closes the entry; closing an already closed or unknown file is not
@@ -97,7 +154,7 @@ impl FileTable {
             .get_mut(handle.0 as usize)
             .and_then(Option::take)
         {
-            Some(mut stream) => stream.close(),
+            Some(mut entry) => entry.stream.close(),
             None => Ok(()),
         }
     }
@@ -107,8 +164,8 @@ impl FileTable {
     pub fn close_from(&mut self, watermark: u32) -> Result<(), VmError> {
         let mut result = Ok(());
         for entry in self.entries.iter_mut().skip(watermark as usize) {
-            if let Some(mut stream) = entry.take()
-                && let Err(e) = stream.close()
+            if let Some(mut entry) = entry.take()
+                && let Err(e) = entry.stream.close()
                 && result.is_ok()
             {
                 result = Err(e);
@@ -218,6 +275,28 @@ mod tests {
         assert_eq!(t.write(h, b"x"), Err(VmError::IoError));
         assert_eq!(t.close(h), Ok(()));
         assert_eq!(t.close(Handle(42)), Ok(()));
+    }
+
+    #[test]
+    fn peek_and_consume_share_the_read_position() {
+        let mut t = FileTable::new();
+        let h = t.open(Box::new(Probe::with_input(b"ab\ncd")));
+        assert_eq!(t.position(h), Some(0));
+        assert_eq!(t.peek(h), Ok(Some(b'a')));
+        assert_eq!(t.peek(h), Ok(Some(b'a')));
+        assert_eq!(t.position(h), Some(0));
+        assert_eq!(t.consume(h), Ok(Some(b'a')));
+        assert_eq!(t.position(h), Some(1));
+        assert_eq!(t.peek(h), Ok(Some(b'b')));
+        let mut buf = [0u8; 4];
+        assert_eq!(t.read(h, &mut buf), Ok(4));
+        assert_eq!(&buf, b"b\ncd");
+        assert_eq!(t.position(h), Some(5));
+        assert_eq!(t.peek(h), Ok(None));
+        assert_eq!(t.consume(h), Ok(None));
+        assert_eq!(t.read(h, &mut []), Ok(0));
+        assert_eq!(t.position(Handle(9)), None);
+        assert_eq!(t.peek(Handle(9)), Err(VmError::IoError));
     }
 
     #[test]

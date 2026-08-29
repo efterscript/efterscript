@@ -1,0 +1,6 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a token ended by a delimiter leaves the delimiter unread.
+% Expect: prints "/abc" then "(x)" — the "(" begins the next token.
+(abc(x)) token pop == ==

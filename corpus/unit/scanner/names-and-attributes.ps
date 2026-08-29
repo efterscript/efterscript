@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a bare name is executable, /name is literal, and the four
+% bracket tokens are executable names.
+% Expect: prints "true" "false" then "true" four times.
+/abc cvx xcheck =
+/abc xcheck =
+{ [ ] << >> } { xcheck = } forall

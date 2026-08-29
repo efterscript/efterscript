@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: ASCII85 strings with z, whitespace, and partial final groups.
+% Expect: prints 0, 4, (Hello), (Hello ), 1, 255.
+<~~> length =
+<~z~> length =
+<~87cURDZ~> ==
+<~87 cU
+RD]i~> ==
+<~!!~> length =
+<~s8W-!~> 0 get =

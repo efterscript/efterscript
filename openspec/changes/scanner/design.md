@@ -131,3 +131,62 @@ dictionary stack); it is the scanner's only view of interpreter state.
   loop in the most fuzzed component, without prejudice to using it in tools.
 - **Scanner-owned buffers for files** — rejected: the file table owns the
   stream so `readline`, `readstring`, and the scanner share one position.
+
+## 7. Implementation notes
+
+Recorded where the code departs from, or pins down, the text above.
+
+- **`Source` methods take the `Memory`.** §2 lists `peek() / advance() /
+  position() / more_may_come()` without arguments, but a `StringSource` reads
+  a string object's bytes and a `FileSource` reads a file-table entry, both
+  of which live inside `Memory` — the same `Memory` the scanner allocates
+  through during the call. Holding a borrow of it inside the source would
+  make that impossible, so every method receives `&mut Memory` (`position`
+  takes `&Memory`) and `peek` returns `Result<Option<u8>, VmError>` so a
+  stream failure surfaces as `ScanErrorKind::Vm(IoError)`. `SliceSource` and
+  `ChunkSource` ignore the argument. The scanner core takes
+  `&mut dyn Source`: one instantiation, and the fuzz target and the
+  interpreter share it.
+- **The file table holds the lookahead byte.** `FileTable` entries gained a
+  one-byte pushback slot and a consumed-byte position; `read` drains the
+  pushback first. This is what makes the byte after `eexec` the first byte
+  `readstring` sees, without a scanner-owned buffer (§6, last item).
+  `Memory::files_mut` exposes the table for the source.
+- **`Scan::Token` carries `object` and `span` as named fields**, as §2
+  shows; `scan_all` is a convenience over a slice for tests and tooling.
+- **`ScanErrorKind` is `SyntaxError | LimitCheck | Undefined |
+  BinaryEncoding | Vm(VmError)`.** VM errors met while allocating or reading
+  (`invalidaccess` from the global/local rule, `ioerror` from a stream) are
+  wrapped rather than duplicated. `BinaryEncoding` maps to the name
+  `syntaxerror`, since that is what a program sees. Every error resets the
+  scanner (partial token and open procedures discarded); the source is left
+  just after the offending byte, or at end of input.
+- **Line ends inside literal strings are stored as the bytes read.** §3 lists
+  only `\` + line end (any of CR, LF, CR LF) as a continuation. No
+  normalisation of an unescaped CR or CR LF to LF is applied; that is a
+  behaviour the corpus does not pin down and would be a one-line change.
+- **Decisions the design left open, taken conservatively:**
+  a radix integer beyond 32 bits, a decimal integer whose real value
+  overflows `f32`, and a real that overflows `f32` are all `limitcheck`
+  rather than names; a signed radix form (`-16#ff`) is a name; lead bytes
+  128–159 are recognised only at token start, and inside a name or string
+  they are ordinary bytes; the procedure-nesting limit is 1000 and the
+  string-length limit is 65535 (PLRM3 Appendix B); a self-delimiting token
+  (`)`, `>`, `}`, `[`, `]`, `<<`, `>>`) consumes nothing after itself, so the
+  single-whitespace rule applies only to numbers and names.
+- **`%!` and `%%` comments are DSC only at the start of a line**, where the
+  start of the input counts as a line start; a comment ends at CR or LF and
+  that byte is consumed with it.
+- **The spec's ASCII85 scenario text was corrected**: `87cURD]i,"Ebo80`
+  decodes to `Hello World!` (the encoding of `Hello, World` would be
+  `87cURD_*#4DfTZ)`). The delta spec now states the true decoding.
+- **Error-scenario corpus files** put the malformed text inside a string
+  and `cvx exec` it under `stopped`, so the files themselves scan cleanly for
+  `parse-survival` while still exercising the scanner path at run time. The
+  binary-data-after-`eexec` position scenario has no corpus file (it needs
+  raw bytes and library-level position inspection) and is a Rust test only.
+- **The fuzz crate is excluded from the workspace** (`[workspace] exclude`)
+  because `libfuzzer-sys` needs nightly `cargo fuzz`; it type-checks on
+  stable. A proptest over random byte strings stands in for it on stable.
+- **`psgen` does not exist yet**, so the round-trip property test carries
+  its own small value strategy and serializer inside `ps-vm`'s tests.

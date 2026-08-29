@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: an integer literal outside 32-bit range becomes a real.
+% Expect: prints "/realtype", "true", "/integertype", "-1".
+2147483648 dup type == 2147483648.0 eq =
+-2147483648 type ==
+16#ffffffff =

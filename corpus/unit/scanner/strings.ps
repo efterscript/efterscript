@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: literal, hexadecimal, and ASCII85 strings.
+% Expect: prints (a\(b\)c), (A\n), (A@), (Hello World!).
+(a(b)c) ==
+(\101\n) ==
+<41 4> ==
+<~87cURD]i,"Ebo80~> ==

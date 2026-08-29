@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: an immediately evaluated name whose value is local cannot be
+% placed in a procedure being built in global VM.
+% Expect: prints "/invalidaccess".
+/v (local) def
+true setglobal
+{ ({ //v }) cvx exec } stopped pop
+false setglobal
+$error /errorname get ==

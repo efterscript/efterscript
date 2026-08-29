@@ -15,6 +15,9 @@ members = [
     "tools/difftest",
     "xtask",
 ]
+# The fuzz crate depends on libfuzzer-sys and builds only with nightly
+# `cargo fuzz`; keeping it out of the workspace keeps stable builds clean.
+exclude = ["crates/ps-vm/fuzz"]
 
 [workspace.package]
 version = "0.0.1"

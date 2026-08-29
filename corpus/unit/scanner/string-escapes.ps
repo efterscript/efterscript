@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: every escape form in a literal string.
+% Expect: prints 8, 6, 2, 4, 5, 1 (the lengths), then true for each equality.
+(\n\r\t\b\f\\\(\)) length =
+(\0\12\101x\1234) length =
+(\q\ ) length =
+(a\
+b\
+c\
+d) length =
+(x
+y
+z) length =
+(\400) length =
+(\q) (q) eq =
+(\400) (\000) eq =
+() length =           % 0
+(()()) length =       % 4

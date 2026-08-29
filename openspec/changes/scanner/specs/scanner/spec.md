@@ -35,7 +35,7 @@ and SHALL treat `[`, `]`, `<<`, and `>>` as executable names.
 
 - **GIVEN** the input `(a(b)c) (\101\n) <41 4> <~87cURD]i,"Ebo80~>`
 - **THEN** the tokens are literal strings `a(b)c`, `A` followed by newline,
-  `A@`, and `Hello, World`
+  `A@`, and `Hello World!`
 
 #### Scenario: Procedures
 

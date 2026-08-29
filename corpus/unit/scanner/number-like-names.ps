@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: tokens that only start like numbers are executable names.
+% Expect: prints "/nametype" six times; every token is executable.
+{ 123abc - . 1e 16# 37#1 } { type == } forall
+{ 123abc - . 1e 16# 37#1 } { xcheck = } forall   % true six times

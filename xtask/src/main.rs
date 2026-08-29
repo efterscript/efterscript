@@ -3,16 +3,25 @@
 
 //! Workspace automation, invoked as `cargo xtask <task>`.
 
-fn main() {
-    let task = std::env::args().nth(1);
-    match task.as_deref() {
+mod parse_survival;
+
+use std::process::ExitCode;
+
+fn usage() -> ExitCode {
+    eprintln!("usage: cargo xtask <task>");
+    eprintln!("tasks:");
+    eprintln!("  parse-survival    scan every corpus .ps file (and the private tier if set)");
+    ExitCode::from(2)
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("parse-survival") => parse_survival::run(&args[1..]),
         Some(t) => {
-            eprintln!("xtask: unknown task `{t}` (no tasks defined yet)");
-            std::process::exit(2);
+            eprintln!("xtask: unknown task `{t}`");
+            usage()
         }
-        None => {
-            eprintln!("usage: cargo xtask <task>");
-            std::process::exit(2);
-        }
+        None => usage(),
     }
 }

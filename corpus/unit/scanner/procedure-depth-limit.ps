@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: nesting deeper than the limit is a limitcheck at scan time.
+% Expect: prints "/limitcheck".
+/deep 1001 string 0 1 1000 { deep exch 123 put } for def   % 1001 "{" bytes
+/close 1001 string 0 1 1000 { close exch 125 put } for def % 1001 "}" bytes
+{ deep close 2 { cvx exec } repeat } stopped pop
+$error /errorname get ==

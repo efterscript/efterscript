@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a binary-encoding lead byte (128-159) is a distinct scan error
+% rather than a crash; the program sees syntaxerror.
+% Expect: prints "/syntaxerror".
+{ (\200) cvx exec } stopped pop
+$error /errorname get ==

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: hex strings ignore whitespace and pad an odd final digit.
+% Expect: prints (), (@), (ABC), (ABC), then 170 and 255.
+<> ==
+<4> ==
+<414243> ==
+<4
+1 4	2 4 3> ==
+<aAfF> dup 0 get = 1 get =

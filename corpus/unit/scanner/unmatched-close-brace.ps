@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a "}" without a matching "{" is a syntaxerror.
+% Expect: prints "/syntaxerror".
+{ (}) cvx exec } stopped pop
+$error /errorname get ==

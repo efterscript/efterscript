@@ -667,6 +667,12 @@ impl Memory {
         &self.files
     }
 
+    /// Raw access to the file table; the scanner's `FileSource` reads
+    /// through it so its cursor is the file's.
+    pub fn files_mut(&mut self) -> &mut FileTable {
+        &mut self.files
+    }
+
     fn interval(object: Object, ty: Type) -> Option<(Space, Handle, std::ops::Range<usize>)> {
         if object.ty() != ty && !(ty == Type::Array && object.ty() == Type::PackedArray) {
             return None;

@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: in global allocation mode the scanner allocates procedures and
+% strings in global VM.
+% Expect: prints "true" twice.
+true setglobal
+{(a)} dup gcheck = 0 get gcheck =
+false setglobal

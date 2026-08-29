@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: an immediately evaluated name with no definition is undefined.
+% Expect: prints "/undefined".
+{ (//nosuchname) cvx exec } stopped pop
+$error /errorname get ==

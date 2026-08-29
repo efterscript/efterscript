@@ -18,6 +18,8 @@ pub mod files;
 pub mod memory;
 pub mod names;
 pub mod object;
+pub mod scanner;
+pub mod source;
 
 pub use dict::Dict;
 pub use error::VmError;
@@ -27,3 +29,8 @@ pub use memory::{
 };
 pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
 pub use object::{Access, CompositeRef, Handle, Object, Space, Type};
+pub use scanner::{
+    DscObserver, MAX_PROC_DEPTH, MAX_STRING_LEN, Resolver, Scan, ScanError, ScanErrorKind, Scanner,
+    scan_all,
+};
+pub use source::{ChunkSource, FileSource, SliceSource, Source, Span, StringSource, line_of};
