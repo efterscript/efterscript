@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: global VM is unaffected by restore.
+% Expect: prints "2".
+true setglobal
+/g [1] def
+false setglobal
+save
+g 0 2 put
+restore
+g 0 get =                 % 2

@@ -220,3 +220,36 @@ Recorded where the code departs from, or pins down, the text above.
   is a miss, never a panic.
 - **The name length limit is 127 bytes** (PLRM3 Appendix B); interning a
   longer name returns an error the interpreter maps to `limitcheck`.
+- **The save object carries a serial number, not a stack position.** A
+  position would be reused by the next `save` after a `restore`, making a
+  stale save object valid again; a serial never repeats, and liveness is a
+  scan of the (at most 15-deep) save stack for that serial.
+- **`save` takes the graphics-state depth as an argument and `restore`
+  returns it.** No graphics stack exists in `ps-vm`; recording the depth in
+  the record and handing it back is all §3.2/§3.3 need from this crate, and
+  the owner of the stack does the popping.
+- **File objects carry the space bit of the arena selected when they were
+  opened**, so the global/local rule treats a file like any other composite,
+  while their handle indexes the file table rather than an arena. `restore`
+  closes every entry at or above the record's file watermark regardless of
+  space, and the stack scan treats a local file above the watermark as
+  `invalidrestore`, like any other newer local composite.
+- **Errors are a plain `VmError` enum** carrying the PostScript error name.
+  Operator-level distinctions the storage cannot make (`undefined` versus a
+  missing key for `known`) are left to the operator: `dict_get` returns
+  `Option`.
+- **Dictionary keys hash a reified `eq`.** Integer-valued reals in `i32`
+  range fold onto the integer; other reals key by bit pattern, so a NaN key
+  can be found again (the `eq` operator says NaN is not `eq` to itself, but
+  a key that can never be retrieved is worse than a benign departure) and
+  two large integers that `eq` compares equal through `f32` rounding remain
+  distinct keys. Both are outside any behaviour the corpus pins down.
+- **Access on dictionaries only tightens**, matching the object-level
+  operators: `dict_set_access` to a more permissive level is
+  `invalidaccess`.
+- **`Memory::alloc_array` and `alloc_packed_array` apply the global/local
+  rule** and so return `Result`; this is the scanner's storing path from
+  §3.4. `Arena::alloc_*` stay raw.
+- **The overflow-promotion scenario has a corpus file but no Rust test
+  yet**: integer arithmetic belongs to the operator layer, not to this
+  change's memory API.

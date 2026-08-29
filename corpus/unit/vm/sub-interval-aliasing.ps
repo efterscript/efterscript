@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: sub-intervals alias their parent.
+% Expect: prints "65" then "false".
+/s (abcdef) def
+/t s 2 3 getinterval def
+t 0 65 put
+s 2 get =                 % 65
+s t eq =                  % false

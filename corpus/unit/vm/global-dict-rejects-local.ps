@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: storing a local composite into a global dictionary.
+% Expect: prints "/invalidaccess" then "0".
+true setglobal
+/gd 1 dict def
+false setglobal
+/la [1] def
+{ gd /k la put } stopped pop
+$error /errorname get ==  % /invalidaccess
+gd length =               % 0, gd is unchanged

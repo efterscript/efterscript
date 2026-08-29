@@ -20,22 +20,22 @@
 
 ## 4. save / restore
 
-- [ ] 4.1 `SaveRecord` and the save stack with nesting limit
-- [ ] 4.2 `restore` validity checks (stack watermark scan, save-object liveness)
-- [ ] 4.3 Reversion, gstate depth, file closing, invalidation of newer saves
-- [ ] 4.4 Corpus files under `corpus/unit/vm/` for every scenario in the spec
+- [x] 4.1 `SaveRecord` and the save stack with nesting limit
+- [x] 4.2 `restore` validity checks (stack watermark scan, save-object liveness)
+- [x] 4.3 Reversion, gstate depth, file closing, invalidation of newer saves
+- [x] 4.4 Corpus files under `corpus/unit/vm/` for every scenario in the spec
 
 ## 5. Global/local rule
 
-- [ ] 5.1 Store-time check shared by `put`, `def`, `putinterval`, `copy`, scanner
-- [ ] 5.2 Corpus files for `invalidaccess` cases
+- [x] 5.1 Store-time check shared by `put`, `def`, `putinterval`, `copy`, scanner
+- [x] 5.2 Corpus files for `invalidaccess` cases
 
 ## 6. Dictionaries and strings
 
-- [ ] 6.1 Insertion-ordered dict with `eq`-consistent hashing
-- [ ] 6.2 String storage, sub-interval aliasing tests
+- [x] 6.1 Insertion-ordered dict with `eq`-consistent hashing
+- [x] 6.2 String storage, sub-interval aliasing tests
 
 ## 7. Files
 
-- [ ] 7.1 File table and capability-issued stream trait
-- [ ] 7.2 `restore` closes entries above the watermark
+- [x] 7.1 File table and capability-issued stream trait
+- [x] 7.2 `restore` closes entries above the watermark

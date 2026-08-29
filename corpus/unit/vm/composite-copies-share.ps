@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: composite copies share storage.
+% Expect: prints "true" then "7".
+/a [1 2 3] def
+a dup                     % b is a copy of the object a
+1 7 put                   % put through b
+a a eq =                  % true
+a 1 get =                 % 7

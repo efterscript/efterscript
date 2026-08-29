@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: readonly on an array leaves earlier copies writable.
+% Expect: prints "1" then "/invalidaccess".
+/a [0 0] def
+/b a readonly def
+a 0 1 put
+a 0 get =                 % 1
+{ b 0 1 put } stopped pop
+$error /errorname get ==  % /invalidaccess

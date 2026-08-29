@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: restore reverts local composite values.
+% Expect: prints "1".
+/a [1 2 3] def
+save
+a 0 9 put
+restore
+a 0 get =                 % 1

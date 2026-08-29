@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: forall visits dictionary entries in insertion order.
+% Expect: prints "/b" then "/a".
+<< /b 1 /a 2 >>
+{ pop == } forall         % /b then /a

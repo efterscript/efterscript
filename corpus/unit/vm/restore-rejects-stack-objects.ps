@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a local composite created after save and still on the operand
+% stack makes restore fail.
+% Expect: prints "/invalidrestore".
+save
+[1 2]                     % created after the save, left on the stack
+1 index                   % the save object
+{ restore } stopped pop
+$error /errorname get ==  % /invalidrestore

@@ -12,10 +12,18 @@
 //!
 //! Independently useful as a PostScript scripting engine.
 
+pub mod dict;
+pub mod error;
+pub mod files;
 pub mod memory;
 pub mod names;
 pub mod object;
 
-pub use memory::{Arena, Dict, GState, Memory, PersistentMap, Shared, Slot};
+pub use dict::Dict;
+pub use error::VmError;
+pub use files::{FileCapability, FileTable, Stream};
+pub use memory::{
+    Arena, GState, MAX_SAVE_DEPTH, Memory, PersistentMap, SaveRecord, Shared, Slot, check_store,
+};
 pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
 pub use object::{Access, CompositeRef, Handle, Object, Space, Type};

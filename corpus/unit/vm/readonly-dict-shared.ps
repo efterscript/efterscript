@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: readonly on a dictionary affects every reference.
+% Expect: prints "/invalidaccess".
+/d 2 dict def
+/e d def
+e readonly pop
+{ d /k 1 put } stopped pop
+$error /errorname get ==  % /invalidaccess

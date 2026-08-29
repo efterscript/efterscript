@@ -24,8 +24,9 @@ pub enum Space {
 /// Access attribute. The discriminants are ordered from most to least
 /// permissive so the values can be compared to answer "at least this
 /// permissive".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Access {
+    #[default]
     Unlimited = 0,
     ReadOnly = 1,
     ExecuteOnly = 2,
