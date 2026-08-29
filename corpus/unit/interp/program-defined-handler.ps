@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a program-defined errordict entry runs instead of the default
+% and execution continues after it.
+% Expect: prints "caught" then "42".
+errordict /undefined { pop (caught) print } put
+nosuchname
+42 =

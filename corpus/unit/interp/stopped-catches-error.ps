@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: stopped catches an error and $error records it.
+% Expect: prints "true", "undefinedresult", "div".
+{ 1 0 div } stopped =
+$error /errorname get =
+$error /command get =

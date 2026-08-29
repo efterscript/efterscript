@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: bind replaces names bound to operators and leaves other names.
+% Expect: prints "x" then "add".
+/x 1 def
+/p { x add } bind def
+/p load 0 get =
+/p load 1 get =

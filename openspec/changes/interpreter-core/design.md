@@ -175,3 +175,94 @@ persistent-VM shape is already what `Memory` provides.
   every control operator in the language.
 - **Bytecode compilation of procedures** — deferred; the frame design does
   not prevent a later tier from replacing `Proc` frames with compiled ones.
+
+## 11. Implementation notes
+
+Recorded where the code departs from, or pins down, the text above. Part 1
+covers state, loop, operator table, standard dictionaries, and the stack,
+arithmetic, dictionary, control, and error operator groups.
+
+- **The job's source is borrowed, not owned.** `Interp::run(&mut dyn
+  Source)` keeps the run boundary and a `Source` frame with a `Run` slot on
+  the execution stack, and the loop reads the source it was handed; on
+  `NeedMore` the frames and scanner state stay in place and
+  `Interp::resume(&mut dyn Source)` continues. `SliceSource` borrows its
+  bytes, so an owning frame would have forced every embedder to hand over a
+  `'static` source. Frames for strings and files (`exec` on either) own
+  their `StringSource`/`FileSource` as §3 describes.
+- **Only frames holding a program object count toward the execution-stack
+  limit** (`Object`, `Proc`, `Source`); `Loop`, `Stopped`, and `Marker`
+  frames are the interpreter's bookkeeping and each accompanies a counted
+  frame, so the stack stays bounded by roughly twice the limit. Counting
+  every frame would make the spec's 200-level loop nest (two frames per
+  level) exceed the Appendix B minimum of 250 that the same spec relies on.
+- **Recursion through a name is not tail-eliminated**: a `Proc` frame is
+  popped only when the loop revisits it exhausted, so `/f { f } def f`
+  reaches `execstackoverflow` as the spec requires instead of looping
+  forever on a flat stack.
+- **The offending object is pushed before the `errordict` entry runs**, as
+  PLRM3 §3.10 describes, which is what lets the spec's handler scenario
+  begin with `pop`. The default entries are internal operators (one per
+  error name, kept out of `systemdict`) that pop it, record `$error`, and
+  `stop`; the machinery's own pushes bypass the stack limits so a full
+  stack can still report its overflow. A `Marker::ErrorHandler` frame sits
+  under a running handler; when `MAX_NESTED_ERROR_HANDLERS` (16) of them
+  are live the next error records `$error` and unwinds to the run boundary
+  instead of nesting, so a handler that re-raises its own error cannot
+  loop.
+- **`stop` unwinds to the nearest `Stopped` frame or run boundary**,
+  whichever is closer; a nested `run` therefore acts as a job boundary and
+  never lets a `stop` escape into the embedder's outer frames. `exit`
+  treats `Stopped` and every marker as a barrier (`invalidexit`).
+- **Reporting happens only for a job ended by `stop`.** At the boundary
+  the loop checks `$error /newerror` only if `stop` unwound to it; a job
+  that caught its errors and finished normally is `Outcome::Ok`, and a bare
+  `stop` after a caught error reports that earlier error, which is the
+  job-server behaviour of PLRM3 §3.10. The `errordict /handleerror` entry
+  is run (so programs may replace it) and `newerror` is cleared afterwards.
+- **`handleerror` writes to the error stream**, as §6 and the spec say; the
+  list in §7 that puts it on `Io::stdout` is superseded. `Io` holds the two
+  streams the embedder injects, `Interp` registers them in the file table
+  at construction so part 2 can expose them as `%stdout`/`%stderr` file
+  objects, and `print`/`=` write through `Interp::write_stdout`.
+- **`Capabilities` is a construction-time bundle.** Its `file` capability
+  is installed into `Memory` (which already owned that slot); `Interp`
+  keeps no separate `caps` field until a capability exists that `Memory`
+  does not hold.
+- **Local standard dictionaries are inserted into `systemdict` raw.**
+  `userdict`, `errordict`, and `$error` live in local VM (a program in
+  local allocation mode must be able to store procedures into `errordict`)
+  while `systemdict` is global; the global/local rule would reject the
+  entries, but they predate every `save`, so nothing can dangle and the
+  insert bypasses the check. `systemdict` is then made read-only.
+- **The operator table is chained at first use** from each module's static
+  slice (`ops::table()`, an `OnceLock`); indices are stable for the
+  process, and part 2 appends its modules to `MODULES` without touching
+  earlier entries. The `op_table!` macro accepts non-capturing closures, so
+  the error handlers need no named function each.
+- **Polymorphic `get`, `put`, `length`, and `copy` are complete now**
+  (dictionary, array, string, and integer-count forms), since the memory
+  API already provides them; `<<`/`>>` are registered with the dictionary
+  group. `[`, `]`, `array`, and the rest of the array/string group remain
+  for part 2.
+- **`bind` descends only into executable arrays**, replaces names in
+  writable ones, and leaves read-only or packed procedures untouched
+  without error; it uses a work list and a visited set, so nesting depth
+  and self-reference are safe. It does not change access attributes.
+- **Numeric details pinned down**: integer `add`/`sub`/`mul` overflow
+  yields the `i64` result rounded to `f32`; `neg`/`abs` of the minimum
+  integer yield a real; `idiv` of the minimum integer by `-1` and any
+  division by zero are `undefinedresult`; non-finite real results are
+  `undefinedresult`; `sqrt`, `ln`, `log` outside their domain are
+  `rangecheck`; `bitshift` is logical and a shift of 32 or more clears the
+  value; `round` sends halves to the greater integer. `rand`/`srand`/
+  `rrand` are not registered yet.
+- **`=` formats integral reals with one decimal** (`5.0`) and other reals
+  with the shortest round-trip form; the full `cvs` rules come with the
+  type-conversion group.
+- **`quit` clears the whole execution stack** and sets a flag readable via
+  `Interp::has_quit`; the run returns `Outcome::Ok`, and the CLI decides
+  the exit code from the flag.
+- **`countexecstack`/`execstack` report the counted frames' objects**, with
+  a procedure shown as its unexecuted remainder; the job's own source has
+  no object and is omitted.

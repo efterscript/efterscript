@@ -1,0 +1,531 @@
+// SPDX-FileCopyrightText: 2026 EfterScript contributors
+// SPDX-License-Identifier: MIT
+
+//! The interpreter: stacks, the execution loop, name lookup, and the error
+//! machinery (PLRM3 §3.5, §3.10, §3.12).
+
+mod exec;
+mod frame;
+
+use crate::error::VmError;
+use crate::files::FileCapability;
+use crate::io::Io;
+use crate::memory::Memory;
+use crate::object::{Access, Object, Type};
+use crate::ops::{self, Num, OpEntry};
+
+pub use frame::{Frame, LoopFrame, Marker, SourceFrame, SourceSlot};
+
+/// Stack limits. The defaults are the PLRM3 Appendix B minimums.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub operand: usize,
+    pub dict: usize,
+    pub exec: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            operand: 500,
+            dict: 20,
+            exec: 250,
+        }
+    }
+}
+
+/// What the embedder grants a program; nothing else is reachable.
+#[derive(Default)]
+pub struct Capabilities {
+    pub file: Option<Box<dyn FileCapability>>,
+}
+
+/// Tolerance policy; empty until a change defines the first quirk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Quirks {}
+
+#[derive(Default)]
+pub struct Config {
+    pub limits: Limits,
+    pub io: Io,
+    pub capabilities: Capabilities,
+    pub quirks: Quirks,
+}
+
+/// The `$error` contents an uncaught error leaves behind, as text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorSummary {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    Error(ErrorSummary),
+    /// The job's source ended mid-token and may grow; `resume` continues.
+    Suspended,
+}
+
+/// Errors raised while that many `errordict` handlers are still running end
+/// the job instead of nesting further.
+pub const MAX_NESTED_ERROR_HANDLERS: usize = 16;
+
+#[derive(Clone, Copy, Debug)]
+pub struct StandardDicts {
+    pub systemdict: Object,
+    pub globaldict: Object,
+    pub userdict: Object,
+    pub errordict: Object,
+    /// `$error`
+    pub error: Object,
+    pub statusdict: Object,
+}
+
+// Literal names the machinery uses on every error.
+#[derive(Clone, Copy)]
+pub(crate) struct Atoms {
+    pub newerror: Object,
+    pub errorname: Object,
+    pub command: Object,
+    pub ostack: Object,
+    pub estack: Object,
+    pub dstack: Object,
+    pub recordstacks: Object,
+    pub handleerror: Object,
+}
+
+pub struct Interp {
+    pub(crate) mem: Memory,
+    pub(crate) ostack: Vec<Object>,
+    pub(crate) dstack: Vec<Object>,
+    pub(crate) estack: Vec<Frame>,
+    limits: Limits,
+    pub(crate) ops: &'static [OpEntry],
+    stdout: Option<Object>,
+    stderr: Option<Object>,
+    #[allow(dead_code)]
+    pub(crate) quirks: Quirks,
+    pub(crate) dicts: StandardDicts,
+    pub(crate) atoms: Atoms,
+    dstack_floor: usize,
+    exec_count: usize,
+    // Set by `stop` when it unwinds to the run boundary.
+    stopped: bool,
+    pending_error: Option<ErrorSummary>,
+    quit: bool,
+    #[cfg(debug_assertions)]
+    host_depth: u32,
+    #[cfg(debug_assertions)]
+    max_host_depth: u32,
+}
+
+impl Default for Interp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Interp {
+    pub fn new() -> Self {
+        Self::with_config(Config::default())
+    }
+
+    pub fn with_config(config: Config) -> Self {
+        let Config {
+            limits,
+            io,
+            capabilities,
+            quirks,
+        } = config;
+        let mut mem = Memory::new();
+        mem.set_file_capability(capabilities.file);
+        let stdout = io.stdout.map(|s| mem.open_stream(s));
+        let stderr = io.stderr.map(|s| mem.open_stream(s));
+        let ops = ops::table();
+
+        mem.set_global(true);
+        let systemdict = mem.new_dict(u32::try_from(ops.len()).unwrap_or(u32::MAX));
+        let globaldict = mem.new_dict(200);
+        let statusdict = mem.new_dict(16);
+        mem.set_global(false);
+        let userdict = mem.new_dict(200);
+        let errordict = mem.new_dict(32);
+        let error = mem.new_dict(16);
+
+        let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
+        let atoms = Atoms {
+            newerror: name("newerror"),
+            errorname: name("errorname"),
+            command: name("command"),
+            ostack: name("ostack"),
+            estack: name("estack"),
+            dstack: name("dstack"),
+            recordstacks: name("recordstacks"),
+            handleerror: name("handleerror"),
+        };
+
+        let mut interp = Interp {
+            mem,
+            ostack: Vec::new(),
+            dstack: vec![systemdict, globaldict, userdict],
+            estack: Vec::new(),
+            limits,
+            ops,
+            stdout,
+            stderr,
+            quirks,
+            dicts: StandardDicts {
+                systemdict,
+                globaldict,
+                userdict,
+                errordict,
+                error,
+                statusdict,
+            },
+            atoms,
+            dstack_floor: 3,
+            exec_count: 0,
+            stopped: false,
+            pending_error: None,
+            quit: false,
+            #[cfg(debug_assertions)]
+            host_depth: 0,
+            #[cfg(debug_assertions)]
+            max_host_depth: 0,
+        };
+        interp.populate();
+        interp
+    }
+
+    fn populate(&mut self) {
+        let dicts = self.dicts;
+        let ops = self.ops;
+        for (index, entry) in ops.iter().enumerate() {
+            let dict = if entry.internal {
+                dicts.errordict
+            } else {
+                dicts.systemdict
+            };
+            let key = self.intern(entry.name);
+            let op = Object::operator(u32::try_from(index).expect("table fits in u32"));
+            self.mem.dict_put(dict, key, op).expect("fresh dictionary");
+        }
+        // The standard dictionaries are entries of systemdict whatever VM
+        // they live in; they are older than any save, so the global/local
+        // rule has nothing to protect and the raw insert is used.
+        let constants = [
+            ("true", Object::boolean(true)),
+            ("false", Object::boolean(false)),
+            ("null", Object::null()),
+            ("languagelevel", Object::integer(2)),
+            ("systemdict", dicts.systemdict),
+            ("globaldict", dicts.globaldict),
+            ("userdict", dicts.userdict),
+            ("errordict", dicts.errordict),
+            ("$error", dicts.error),
+            ("statusdict", dicts.statusdict),
+        ];
+        for (name, value) in constants {
+            let key = self.intern(name);
+            self.mem
+                .dict_mut(dicts.systemdict)
+                .expect("systemdict exists")
+                .insert(key, value);
+        }
+        self.mem
+            .dict_set_access(dicts.systemdict, Access::ReadOnly)
+            .expect("systemdict exists");
+
+        let atoms = self.atoms;
+        for (key, value) in [
+            (atoms.newerror, Object::boolean(false)),
+            (atoms.errorname, Object::null()),
+            (atoms.command, Object::null()),
+            (atoms.recordstacks, Object::boolean(true)),
+        ] {
+            self.mem
+                .dict_put(dicts.error, key, value)
+                .expect("fresh dictionary");
+        }
+    }
+
+    // --- state -------------------------------------------------------------
+
+    pub fn memory(&self) -> &Memory {
+        &self.mem
+    }
+
+    pub fn memory_mut(&mut self) -> &mut Memory {
+        &mut self.mem
+    }
+
+    pub fn ostack(&self) -> &[Object] {
+        &self.ostack
+    }
+
+    pub fn dstack(&self) -> &[Object] {
+        &self.dstack
+    }
+
+    pub fn estack(&self) -> &[Frame] {
+        &self.estack
+    }
+
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    pub fn dicts(&self) -> StandardDicts {
+        self.dicts
+    }
+
+    /// Whether `quit` has been executed.
+    pub fn has_quit(&self) -> bool {
+        self.quit
+    }
+
+    /// The deepest nesting of the execution loop on the host stack seen so
+    /// far; stays at one unless `run` is called from within a stream.
+    #[cfg(debug_assertions)]
+    pub fn max_host_depth(&self) -> u32 {
+        self.max_host_depth
+    }
+
+    /// The file object behind `print` and `=`, if a stream was injected.
+    pub fn stdout_file(&self) -> Option<Object> {
+        self.stdout
+    }
+
+    pub fn stderr_file(&self) -> Option<Object> {
+        self.stderr
+    }
+
+    /// A literal name object for `text`, which must fit the name limit.
+    pub fn intern(&mut self, text: &str) -> Object {
+        self.mem
+            .intern(text.as_bytes())
+            .expect("interpreter names are short")
+    }
+
+    /// The operator object registered under `name` in `systemdict`.
+    pub fn operator(&self, name: &str) -> Option<Object> {
+        ops::find(name, false).map(Object::operator)
+    }
+
+    /// `def` into the current dictionary.
+    pub fn define(&mut self, name: &str, value: Object) -> Result<(), VmError> {
+        let key = self.intern(name);
+        let dict = self.current_dict();
+        self.mem.dict_put(dict, key, value)
+    }
+
+    // --- name lookup ---------------------------------------------------------
+
+    /// The value of `key` through the dictionary stack, top-down. String
+    /// keys must already have been converted with `Memory::dict_key`.
+    pub fn lookup(&self, key: Object) -> Option<Object> {
+        lookup_in(&self.dstack, &self.mem, key)
+    }
+
+    /// The topmost dictionary on the stack that defines `key`.
+    pub fn find_dict(&self, key: Object) -> Option<Object> {
+        self.dstack
+            .iter()
+            .rev()
+            .copied()
+            .find(|&d| self.mem.dict(d).is_some_and(|dict| dict.contains(key)))
+    }
+
+    pub fn current_dict(&self) -> Object {
+        *self.dstack.last().expect("permanent dictionaries")
+    }
+
+    pub(crate) fn errordict_get(&self, key: Object) -> Option<Object> {
+        self.mem.dict(self.dicts.errordict)?.get(key)
+    }
+
+    pub(crate) fn error_get(&self, key: Object) -> Option<Object> {
+        self.mem.dict(self.dicts.error)?.get(key)
+    }
+
+    pub(crate) fn error_put(&mut self, key: Object, value: Object) {
+        let _ = self.mem.dict_put(self.dicts.error, key, value);
+    }
+
+    // --- operand stack -------------------------------------------------------
+
+    pub fn push(&mut self, object: Object) -> Result<(), VmError> {
+        if self.ostack.len() >= self.limits.operand {
+            return Err(VmError::StackOverflow);
+        }
+        self.ostack.push(object);
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> Result<Object, VmError> {
+        self.ostack.pop().ok_or(VmError::StackUnderflow)
+    }
+
+    /// The object `n` below the top without popping it.
+    pub fn peek(&self, n: usize) -> Result<Object, VmError> {
+        self.ostack
+            .len()
+            .checked_sub(n + 1)
+            .map(|i| self.ostack[i])
+            .ok_or(VmError::StackUnderflow)
+    }
+
+    pub fn pop_int(&mut self) -> Result<i32, VmError> {
+        let object = self.peek(0)?;
+        let value = object.as_i32().ok_or(VmError::TypeCheck)?;
+        self.pop()?;
+        Ok(value)
+    }
+
+    pub fn pop_num(&mut self) -> Result<Num, VmError> {
+        let object = self.peek(0)?;
+        let value = Num::of(object).ok_or(VmError::TypeCheck)?;
+        self.pop()?;
+        Ok(value)
+    }
+
+    pub fn pop_bool(&mut self) -> Result<bool, VmError> {
+        let object = self.peek(0)?;
+        let value = object.as_bool().ok_or(VmError::TypeCheck)?;
+        self.pop()?;
+        Ok(value)
+    }
+
+    fn pop_typed(&mut self, accept: fn(Type) -> bool) -> Result<Object, VmError> {
+        let object = self.peek(0)?;
+        if !accept(object.ty()) {
+            return Err(VmError::TypeCheck);
+        }
+        self.pop()
+    }
+
+    pub fn pop_dict(&mut self) -> Result<Object, VmError> {
+        self.pop_typed(|t| t == Type::Dict)
+    }
+
+    /// An array or packed array.
+    pub fn pop_array(&mut self) -> Result<Object, VmError> {
+        self.pop_typed(|t| matches!(t, Type::Array | Type::PackedArray))
+    }
+
+    pub fn pop_string(&mut self) -> Result<Object, VmError> {
+        self.pop_typed(|t| t == Type::String)
+    }
+
+    // --- dictionary stack ----------------------------------------------------
+
+    /// `begin`
+    pub fn push_dict(&mut self, dict: Object) -> Result<(), VmError> {
+        if dict.ty() != Type::Dict {
+            return Err(VmError::TypeCheck);
+        }
+        if self.dstack.len() >= self.limits.dict {
+            return Err(VmError::DictStackOverflow);
+        }
+        self.dstack.push(dict);
+        Ok(())
+    }
+
+    /// `end`; the permanent dictionaries cannot be popped.
+    pub fn end_dict(&mut self) -> Result<Object, VmError> {
+        if self.dstack.len() <= self.dstack_floor {
+            return Err(VmError::DictStackUnderflow);
+        }
+        Ok(self.dstack.pop().expect("above the floor"))
+    }
+
+    pub(crate) fn dstack_floor(&self) -> usize {
+        self.dstack_floor
+    }
+
+    // --- execution stack -----------------------------------------------------
+
+    /// Number of frames counted toward the execution-stack limit.
+    pub fn exec_count(&self) -> usize {
+        self.exec_count
+    }
+
+    pub(crate) fn push_frame(&mut self, frame: Frame) -> Result<(), VmError> {
+        if frame.is_counted() && self.exec_count >= self.limits.exec {
+            return Err(VmError::ExecStackOverflow);
+        }
+        self.push_frame_unchecked(frame);
+        Ok(())
+    }
+
+    // For the run boundary and the error machinery, which must make
+    // progress even when the stack is full.
+    pub(crate) fn push_frame_unchecked(&mut self, frame: Frame) {
+        if frame.is_counted() {
+            self.exec_count += 1;
+        }
+        self.estack.push(frame);
+    }
+
+    pub(crate) fn pop_frame(&mut self) -> Option<Frame> {
+        let frame = self.estack.pop()?;
+        if frame.is_counted() {
+            self.exec_count -= 1;
+        }
+        Some(frame)
+    }
+
+    pub(crate) fn truncate_frames(&mut self, len: usize) {
+        while self.estack.len() > len {
+            self.pop_frame();
+        }
+    }
+
+    /// Arranges for `array` to run as a procedure; an empty one needs no
+    /// frame.
+    pub(crate) fn push_proc(&mut self, array: Object) -> Result<(), VmError> {
+        if array.length() == Some(0) {
+            return Ok(());
+        }
+        self.push_frame(Frame::Proc { array, next: 0 })
+    }
+
+    /// Executes `object` as `exec` would: a literal is pushed, anything else
+    /// runs next.
+    pub(crate) fn exec_indirect(&mut self, object: Object) -> Result<(), VmError> {
+        if object.is_literal() {
+            self.push(object)
+        } else {
+            self.push_frame(Frame::Object(object))
+        }
+    }
+
+    // --- output --------------------------------------------------------------
+
+    fn write_all(&mut self, file: Option<Object>, mut bytes: &[u8]) -> Result<(), VmError> {
+        let Some(file) = file else {
+            return Ok(());
+        };
+        while !bytes.is_empty() {
+            let n = self.mem.file_write(file, bytes)?;
+            if n == 0 {
+                return Err(VmError::IoError);
+            }
+            bytes = &bytes[n..];
+        }
+        Ok(())
+    }
+
+    pub fn write_stdout(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        self.write_all(self.stdout, bytes)
+    }
+
+    pub fn write_stderr(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        self.write_all(self.stderr, bytes)
+    }
+}
+
+pub(crate) fn lookup_in(dstack: &[Object], mem: &Memory, key: Object) -> Option<Object> {
+    dstack.iter().rev().find_map(|&d| mem.dict(d)?.get(key))
+}

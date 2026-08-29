@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: exit inside a procedure nested in a for loop leaves the loop.
+% Expect: prints "5" then "10" (the loop variable at exit and the sum so far).
+0 1 1 10 { dup 5 eq { exit } if add } for
+= =

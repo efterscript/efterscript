@@ -15,20 +15,29 @@
 pub mod dict;
 pub mod error;
 pub mod files;
+pub mod interp;
+pub mod io;
 pub mod memory;
 pub mod names;
 pub mod object;
+pub mod ops;
 pub mod scanner;
 pub mod source;
 
 pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
+pub use interp::{
+    Capabilities, Config, ErrorSummary, Frame, Interp, Limits, LoopFrame,
+    MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, Quirks, SourceFrame, SourceSlot, StandardDicts,
+};
+pub use io::{Capture, Io};
 pub use memory::{
     Arena, GState, MAX_SAVE_DEPTH, Memory, PersistentMap, SaveRecord, Shared, Slot, check_store,
 };
 pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
 pub use object::{Access, CompositeRef, Handle, Object, Space, Type};
+pub use ops::{Num, OpEntry, OpFn, Sig};
 pub use scanner::{
     DscObserver, MAX_PROC_DEPTH, MAX_STRING_LEN, Resolver, Scan, ScanError, ScanErrorKind, Scanner,
     scan_all,
