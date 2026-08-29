@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-cli"
+description = "PostScript-to-PDF command-line tool for EfterScript"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "efterscript"
+path = "src/main.rs"
+
+[dependencies]
+remelt.workspace = true

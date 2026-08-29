@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[alias]
+xtask = "run --package xtask --"

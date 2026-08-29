@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "platen"
+description = "Virtual-printer session front-end: printer identity, statusdict, query handling, back channel, job protocol framing"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+remelt.workspace = true

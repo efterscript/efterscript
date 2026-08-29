@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "psgen"
+description = "Property-based / randomized PostScript program generator (Csmith tradition) — unlimited clean-IP test cases"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

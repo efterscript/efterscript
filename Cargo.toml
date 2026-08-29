@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/ps-vm",
+    "crates/ps-graphics",
+    "crates/ps-fonts",
+    "crates/pdf-out",
+    "crates/remelt",
+    "crates/platen",
+    "crates/efterscript-cli",
+    "tools/psgen",
+    "tools/difftest",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/efterscript/efterscript"
+rust-version = "1.98"
+
+[workspace.dependencies]
+ps-vm = { path = "crates/ps-vm" }
+ps-graphics = { path = "crates/ps-graphics" }
+ps-fonts = { path = "crates/ps-fonts" }
+pdf-out = { path = "crates/pdf-out" }
+remelt = { path = "crates/remelt" }
+platen = { path = "crates/platen" }

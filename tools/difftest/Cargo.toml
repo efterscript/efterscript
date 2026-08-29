@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "difftest"
+description = "Differential test harness: compares output against golden references semantically (never byte-exact); pass / fail / expected-divergence verdicts"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

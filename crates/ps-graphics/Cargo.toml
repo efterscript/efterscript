@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "ps-graphics"
+description = "Graphics-state machine producing a PDF-shaped, resolution-independent vector IR; sink traits for pluggable backends"
+# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ps-vm.workspace = true

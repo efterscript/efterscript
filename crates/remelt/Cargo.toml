@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "remelt"
+description = "The distillation engine: drives the VM, consumes IR, applies policies (recompression, font embedding, color strategy, pdfmark), writes PDF"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ps-vm.workspace = true
+ps-graphics.workspace = true
+ps-fonts.workspace = true
+pdf-out.workspace = true

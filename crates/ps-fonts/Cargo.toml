@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "ps-fonts"
+description = "Type 1 / CFF / TrueType (Type 42) parsing, metrics, charstring-to-outline extraction, subsetting, and ToUnicode derivation"
+# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

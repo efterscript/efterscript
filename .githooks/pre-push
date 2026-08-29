@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+#
+# Refuse pushes made from inside an AI-agent shell (see pre-commit).
+
+if [ -n "$CLAUDECODE" ] || [ -n "$CLAUDE_CODE_ENTRYPOINT" ]; then
+    echo "pre-push: refusing — pushes from this repo are made by humans, not agents." >&2
+    exit 1
+fi
+exit 0

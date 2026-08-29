@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "ps-vm"
+description = "PostScript language VM: scanner, object model, stacks, dictionaries, save/restore, resources, error semantics; graphics operators dispatched behind a trait"
+# Private-phase name; published crates use the `efterscript-*` prefix (charter §2.3).
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
