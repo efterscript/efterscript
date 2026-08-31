@@ -107,3 +107,37 @@ pdf-out
 - **Compression via an external encoder** — rejected with the rest of the
   dependencies; stored blocks are correct today and the upgrade path stays
   internal.
+
+## 5. Implementation notes
+
+- **Builder closing is structural.** Containers are written through
+  closure-scoped builders: `Val::dict(f)` emits `<<`, runs `f` against a
+  borrowed `DictBuilder`, then emits `>>` itself (arrays likewise), so an
+  unclosed container is unrepresentable. A `Val` is a one-shot value sink —
+  every writing method consumes it — and one dropped unused writes `null`,
+  so a dangling key or empty object body degrades to valid output rather
+  than a panic or a malformed file.
+- **Canonical-form choices** left open by the spec delta, fixed here: reals
+  carry a leading zero (`0.5`, `0.0001`); `#xx` name escapes and
+  hexadecimal strings use uppercase digits; when six significant digits
+  cannot represent a real exactly, decimal-string rounding ties away from
+  zero. Non-finite reals have no PDF syntax: NaN serializes as `0` and
+  infinities clamp to the extreme finite `f32` values.
+- **Module layout deviation:** the catalog/page-tree convenience lives in
+  `pages.rs` (`PageTree`, `write_info`) rather than inside `doc.rs`. As a
+  sibling module it cannot see `Document`'s private internals, so the
+  compiler itself enforces "implemented only with the public primitives".
+- **Added primitive:** `Document::comment` writes a `%` comment line
+  between objects (printable ASCII only); the golden file uses it for its
+  self-describing `GENERATED-BY` marker.
+- **Assumptions verified against ISO 32000-1** (reviewed with the spec text
+  in hand): a NUL byte can never occur in a name (§7.3.5's definition
+  excludes character code 0), so the writer rejects it with
+  `Error::NulInName` rather than escaping it; cross-reference
+  entries use the CR LF two-byte terminator of §7.5.4; the binary-marker
+  comment uses the four bytes `E5 E6 F4 F2` (all ≥ 0x80, per the §7.5.2
+  recommendation); `Length` excludes the end-of-line bytes framing stream
+  data (§7.3.8).
+- **`$EFTERSCRIPT_PDF_CHECK`** is treated as a program path invoked with
+  the golden file as its single argument (exit 0 = pass), not as a shell
+  command line.
