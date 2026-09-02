@@ -14,6 +14,7 @@
 //! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate]
 //! font <n> <BaseName> [diff=[<code> /<name>…]]
 //! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
+//! font <n> embedded <type1|truetype> <FontName> glyphs=<count> enc=[<code> /<name>…]
 //! glyph /<name> <wx> <wy> [<llx> <lly> <urx> <ury>] {
 //!   <op>                              the glyph's procedure, indented
 //! }
@@ -25,7 +26,10 @@
 //! base font's built-in encoding (`/.notdef` where the program removed
 //! one); a Type 3 font lists the codes of the glyphs it captured, then
 //! one `glyph` block per captured glyph in name order, the box present
-//! for a `setcachedevice` glyph.
+//! for a `setcachedevice` glyph. An embedded font has no built-in
+//! encoding to differ from, so it lists every code that names a glyph,
+//! with the kind of program, its `FontName`, and how many glyphs it
+//! defines; the program's bytes never appear.
 //!
 //! Colour spaces are described by family: `DeviceGray`, `DeviceRGB`,
 //! `DeviceCMYK`, `Separation (<name>) alt=<space> tint=<len> bytes`,
@@ -60,6 +64,7 @@
 //! Every line ends in a newline; the dump of a page is a pure function of
 //! its value.
 
+use ps_fonts::ProgramKind;
 use ps_vm::{Bounds, ImageSpec, Matrix, Seg, SpaceSpec};
 
 use crate::ir::{FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page};
@@ -83,10 +88,10 @@ fn ps_string(bytes: &[u8]) -> String {
     out
 }
 
-/// A glyph name as `/name`, with the bytes that would end or confuse a
-/// token written as octal escapes.
-fn ps_name(bytes: &[u8]) -> String {
-    let mut out = String::from("/");
+/// A name's bytes with those that would end or confuse a token written
+/// as octal escapes.
+fn name_text(bytes: &[u8]) -> String {
+    let mut out = String::new();
     for &b in bytes {
         match b {
             b'!'..=b'~'
@@ -101,6 +106,11 @@ fn ps_name(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// A glyph name as `/name`.
+fn ps_name(bytes: &[u8]) -> String {
+    format!("/{}", name_text(bytes))
 }
 
 /// `code /name` pairs for the codes of `encoding` that `differs` selects.
@@ -171,6 +181,24 @@ fn font(index: usize, spec: &FontSpec) -> String {
                 out.push_str(&glyph(name, proc_));
             }
             out
+        }
+        FontSpec::Embedded {
+            kind,
+            font_name,
+            program,
+            encoding,
+            ..
+        } => {
+            let kind = match kind {
+                ProgramKind::Type1 => "type1",
+                ProgramKind::TrueType => "truetype",
+            };
+            let enc = code_names(encoding, |_, name| name.is_some());
+            format!(
+                "font {index} embedded {kind} {} glyphs={} enc=[{enc}]\n",
+                name_text(font_name),
+                program.glyph_count()
+            )
         }
     }
 }

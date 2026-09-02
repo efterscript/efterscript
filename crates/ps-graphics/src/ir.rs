@@ -12,9 +12,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::rc::Rc;
 
-use ps_fonts::StdFont;
+use ps_fonts::{Program, ProgramKind, StdFont};
 use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, Matrix, Seg, SpaceSpec, Span};
 
 pub use crate::state::FillRule;
@@ -62,8 +63,29 @@ pub struct GlyphProc {
     pub bbox: Option<Bounds>,
 }
 
+/// The program snapshot of an embedded font, shared with the VM; two
+/// references are equal when they are the same snapshot, which the VM
+/// builds once per font family.
+#[derive(Clone, Debug)]
+pub struct ProgramRef(pub Rc<Program>);
+
+impl PartialEq for ProgramRef {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Deref for ProgramRef {
+    type Target = Program;
+
+    fn deref(&self) -> &Program {
+        &self.0
+    }
+}
+
 /// A font a text operation draws with. Resident fonts carry no widths:
-/// they come from the metrics in `ps-fonts` by glyph name.
+/// they come from the metrics in `ps-fonts` by glyph name; an embedded
+/// font's come from its program.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FontSpec {
     /// One of the standard fourteen with the encoding in effect; glyph
@@ -77,12 +99,26 @@ pub enum FontSpec {
         encoding: GlyphNames,
         glyphs: BTreeMap<GlyphName, GlyphProc>,
     },
+    /// A Type 1 or Type 42 font the job defined, with its program.
+    /// `font_matrix` maps glyph space to text space: charstring units for
+    /// Type 1, the unit em for TrueType (the program's font units divided
+    /// by its units per em), the space every displacement is in.
+    Embedded {
+        family: u32,
+        kind: ProgramKind,
+        font_name: Vec<u8>,
+        font_matrix: Matrix,
+        program: ProgramRef,
+        encoding: GlyphNames,
+    },
 }
 
 impl FontSpec {
     pub fn encoding(&self) -> &GlyphNames {
         match self {
-            FontSpec::Resident { encoding, .. } | FontSpec::Type3 { encoding, .. } => encoding,
+            FontSpec::Resident { encoding, .. }
+            | FontSpec::Type3 { encoding, .. }
+            | FontSpec::Embedded { encoding, .. } => encoding,
         }
     }
 
@@ -90,7 +126,9 @@ impl FontSpec {
     pub fn font_matrix(&self) -> Matrix {
         match self {
             FontSpec::Resident { .. } => Matrix::scaling(0.001, 0.001),
-            FontSpec::Type3 { font_matrix, .. } => *font_matrix,
+            FontSpec::Type3 { font_matrix, .. } | FontSpec::Embedded { font_matrix, .. } => {
+                *font_matrix
+            }
         }
     }
 
@@ -99,9 +137,30 @@ impl FontSpec {
         self.encoding()[usize::from(code)].as_ref()
     }
 
+    /// The glyph an embedded font draws for `code`: the encoding's name
+    /// when the program has it, else the program's `.notdef`; `None` for
+    /// neither and for other kinds of font.
+    pub fn program_glyph(&self, code: u8) -> Option<Rc<ps_fonts::Glyph>> {
+        let FontSpec::Embedded { program, .. } = self else {
+            return None;
+        };
+        let lookup = |name: &[u8]| program.glyph(name).ok().flatten();
+        self.glyph_name(code)
+            .and_then(|name| lookup(name))
+            .or_else(|| lookup(b".notdef"))
+    }
+
     /// The displacement of `code` in glyph space as the font itself has
     /// it, zero for a code without a glyph.
     pub fn width(&self, code: u8) -> (f32, f32) {
+        if let FontSpec::Embedded { program, .. } = self {
+            let scale = program
+                .units_per_em()
+                .map_or(1.0, |units| 1.0 / f32::from(units));
+            return self
+                .program_glyph(code)
+                .map_or((0.0, 0.0), |g| (g.advance.0 * scale, g.advance.1 * scale));
+        }
         let Some(name) = self.glyph_name(code) else {
             return (0.0, 0.0);
         };
@@ -111,6 +170,7 @@ impl FontSpec {
                 .and_then(|name| base.width(name))
                 .map_or((0.0, 0.0), |w| (f32::from(w), 0.0)),
             FontSpec::Type3 { glyphs, .. } => glyphs.get(name).map_or((0.0, 0.0), |g| g.width),
+            FontSpec::Embedded { .. } => unreachable!("handled above"),
         }
     }
 }
@@ -291,6 +351,80 @@ mod tests {
         assert_eq!(resources.intern_space(&SpaceSpec::DeviceRGB), SpaceRef(0));
         assert_eq!(resources.intern_space(&sep.clone()), SpaceRef(1));
         assert_eq!(resources.color_spaces.len(), 2);
+    }
+
+    #[test]
+    fn embedded_fonts_measure_through_their_program_and_compare_by_snapshot() {
+        use ps_fonts::testing::{TrueTypeFont, Type1Font, rectangle};
+        let font = Type1Font::new("Syn")
+            .glyph("a", 600, &rectangle(0.0, 0.0, 500.0, 500.0))
+            .encode(97, "a");
+        let program = ProgramRef(Rc::new(font.program()));
+        let mut names: Vec<Option<Vec<u8>>> = vec![None; 256];
+        names[97] = Some(b"a".to_vec());
+        names[98] = Some(b"zz".to_vec());
+        let spec = FontSpec::Embedded {
+            family: 1,
+            kind: ProgramKind::Type1,
+            font_name: b"Syn".to_vec(),
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            program: program.clone(),
+            encoding: glyph_names(&names),
+        };
+        assert_eq!(spec.width(97), (600.0, 0.0));
+        assert_eq!(spec.width(98), (0.0, 0.0), "an unknown name draws .notdef");
+        assert_eq!(spec.width(99), (0.0, 0.0));
+        assert_eq!(spec.font_matrix(), Matrix::scaling(0.001, 0.001));
+        assert!(spec.program_glyph(97).is_some());
+        let same = FontSpec::Embedded {
+            family: 1,
+            kind: ProgramKind::Type1,
+            font_name: b"Syn".to_vec(),
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            program: ProgramRef(program.0.clone()),
+            encoding: glyph_names(&names),
+        };
+        assert_eq!(spec, same);
+        let rebuilt = FontSpec::Embedded {
+            family: 1,
+            kind: ProgramKind::Type1,
+            font_name: b"Syn".to_vec(),
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            program: ProgramRef(Rc::new(font.program())),
+            encoding: glyph_names(&names),
+        };
+        assert_ne!(spec, rebuilt, "a different snapshot is a different font");
+        let mut resources = Resources::default();
+        assert_eq!(resources.intern_font(spec.clone()), FontIndex(0));
+        assert_eq!(resources.intern_font(same), FontIndex(0));
+        assert_eq!(resources.intern_font(rebuilt), FontIndex(1));
+
+        let tt = TrueTypeFont::new(2048)
+            .glyph(
+                "a",
+                1024,
+                vec![vec![(0, 0, true), (10, 0, true), (10, 10, true)]],
+            )
+            .map(97, 1);
+        let spec = FontSpec::Embedded {
+            family: 2,
+            kind: ProgramKind::TrueType,
+            font_name: b"SynTT".to_vec(),
+            font_matrix: Matrix::IDENTITY,
+            program: ProgramRef(Rc::new(tt.program().unwrap())),
+            encoding: glyph_names(&names),
+        };
+        assert_eq!(spec.width(97), (0.5, 0.0), "units of the em");
+        assert_eq!(spec.width(99), (0.5, 0.0), ".notdef advances half an em");
+        assert_eq!(spec.program_glyph(200).unwrap().advance, (1024.0, 0.0));
+        assert!(helvetica_like().program_glyph(72).is_none());
+    }
+
+    fn helvetica_like() -> FontSpec {
+        FontSpec::Resident {
+            base: StdFont::Helvetica,
+            encoding: glyph_names(&[]),
+        }
     }
 
     #[test]

@@ -1,0 +1,122 @@
+%PDF-1.7
+%åæôò
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% GENERATED-BY: difftest --update-pdf
+3 0 obj
+<< /Length 142 >>
+stream
+BT
+/F0 1 Tf
+10 0 0 10 0 0 Tm
+<E9> Tj
+ET
+0 0 m
+5 0 m
+100 100 m
+100.2 100 m
+104.2 100 l
+104.2 104 l
+h
+101.7 105.2 m
+102.7 106.2 l
+h
+105 100 m
+f
+
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /Font << /F0 2 0 R >> >> /Contents 3 0 R >>
+endobj
+5 0 obj
+<< /Length 1507 /Length1 442 /Length2 532 /Length3 533 >>
+stream
+%!FontType1-1.0: BHEEPG+Syn
+11 dict begin
+/FontInfo 2 dict dup begin
+/ItalicAngle 0 def
+/isFixedPitch false def
+end readonly def
+/FontName /BHEEPG+Syn def
+/PaintType 0 def
+/FontType 1 def
+/FontMatrix [0.001 0 0 0.001 0 0] readonly def
+/FontBBox {0 0 750 750} readonly def
+/Encoding 256 array
+0 1 255 {1 index exch /.notdef put} for
+dup 97 /a put
+dup 98 /b put
+dup 101 /e put
+dup 233 /eacute put
+readonly def
+currentdict end
+currentfile eexec
+ÙÖoc;„j˜›™t°ŸÆÌDR•M:OÂrYi™º‡lÆ–\º±Ê[?"iO"v-æ#éÅSÄP•¤ò7ê’¸ÅaôµG7û"U`%ñèX³/‡’& 'ö-!>ˆƒd·)ÇƒôºÅŠQMM\‰_ş«Ã®^èƒFß…ş{³—T²-ò]‡7\Ï9:828îW>*E]2®˜ÒtÏÌ?&‡wÕj ¹|qº”Âr(ƒ³)tš<•ÿZ†í{‰ïnm‘ÛëéşÅË#{
+ÿ†¬®û9·É37±mxG	~àéåf€ÌgDûÃ„V‚/ƒÜÅmxèi=D?°iÈ„ÃÜ	Áá×Úu®{ì6Í!?°pšÉ.`´Oúè¢t»zÎLÙ÷2³{Cä¹7C ®Õ÷Á‘š’å‡3Ù^ÕLlò>”Œ“Y˜|€¬õ5çæş<èx%övÌBWZaCš8Ïh†w&4h”»åæà÷!`ÍÍVò‡-d¬úVáı}1KJ—¢-Úo%Ø„¨?:jvF`,:„ıpÎFV‰Åf.ñéP¸vPÍy×Êš^çR&î:‹«¡XÓ‡ãã\™}ìaËäBoğ½Dö7°&~ÛEÚ«fŠ'¦è_£XXË +„b­q}äy¡Ãhıæ•¡¤ïHù•c2P¿¢•‡ËÈ:ú(×BLÈ›¨
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000
+cleartomark
+
+endstream
+endobj
+6 0 obj
+<< /Type /FontDescriptor /FontName /BHEEPG+Syn /Flags 4 /FontBBox [ 0 0 750 750 ] /ItalicAngle 0 /Ascent 750 /Descent 0 /StemV 80 /FontFile 5 0 R >>
+endobj
+7 0 obj
+<< /Length 332 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<E9> <00E9>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+
+endstream
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /BHEEPG+Syn /FirstChar 233 /LastChar 233 /Widths [ 500 ] /Encoding << /Type /Encoding /Differences [ 233 /eacute ] >> /FontDescriptor 6 0 R /ToUnicode 7 0 R >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+9 0 obj
+<< /Producer (EfterScript 0.0.1) >>
+endobj
+xref
+0 10
+0000000000 65535 f
+0000002822 00000 n
+0000002606 00000 n
+0000000140 00000 n
+0000000333 00000 n
+0000000461 00000 n
+0000002059 00000 n
+0000002223 00000 n
+0000002881 00000 n
+0000002930 00000 n
+trailer
+<< /Size 10 /Root 8 0 R /Info 9 0 R >>
+startxref
+2981
+%%EOF

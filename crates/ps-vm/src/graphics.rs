@@ -12,7 +12,9 @@
 //! PostScript: procedure-driven work (image data, tint transforms) is
 //! resolved by the operators before the call.
 
-use ps_fonts::StdFont;
+use std::rc::Rc;
+
+use ps_fonts::{Program, ProgramKind, StdFont};
 
 use crate::error::VmError;
 
@@ -301,7 +303,7 @@ impl Glyph {
 
 /// Where a font instance's glyphs come from, as a backend recording text
 /// needs to know it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum FontSource {
     /// One of the standard fourteen; widths come from its metrics.
     Resident(StdFont),
@@ -314,6 +316,62 @@ pub enum FontSource {
         font_matrix: Matrix,
         font_bbox: Bounds,
     },
+    /// A Type 1 or Type 42 font the job defined, with the immutable
+    /// snapshot of its program: the backend reads it and never alters it.
+    /// `family` and `font_matrix` are as for Type 3; `font_name` is the
+    /// dictionary's `FontName`. Glyph displacements are in the space the
+    /// font matrix maps: charstring units for Type 1, the unit em for
+    /// Type 42 (the program's font units divided by its units per em).
+    Embedded {
+        family: u32,
+        kind: ProgramKind,
+        program: Rc<Program>,
+        font_matrix: Matrix,
+        font_name: Vec<u8>,
+    },
+}
+
+impl PartialEq for FontSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FontSource::Resident(a), FontSource::Resident(b)) => a == b,
+            (
+                FontSource::Type3 {
+                    family,
+                    font_matrix,
+                    font_bbox,
+                },
+                FontSource::Type3 {
+                    family: family2,
+                    font_matrix: matrix2,
+                    font_bbox: bbox2,
+                },
+            ) => family == family2 && font_matrix == matrix2 && font_bbox == bbox2,
+            (
+                FontSource::Embedded {
+                    family,
+                    kind,
+                    program,
+                    font_matrix,
+                    font_name,
+                },
+                FontSource::Embedded {
+                    family: family2,
+                    kind: kind2,
+                    program: program2,
+                    font_matrix: matrix2,
+                    font_name: name2,
+                },
+            ) => {
+                family == family2
+                    && kind == kind2
+                    && Rc::ptr_eq(program, program2)
+                    && font_matrix == matrix2
+                    && font_name == name2
+            }
+            _ => false,
+        }
+    }
 }
 
 /// What the VM tells the backend about a font instance before the first

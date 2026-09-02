@@ -448,3 +448,209 @@ fn a_nested_run_and_a_charwidth_glyph_keep_their_own_colour() {
     assert_eq!(*font, FontIndex(0));
     assert!(near(*matrix, [0.04, 0.0, 0.0, 0.04, 0.0, 0.0]));
 }
+
+// --- embedded fonts ------------------------------------------------------------------
+
+use ps_fonts::ProgramKind;
+use ps_fonts::testing::{corpus_truetype, corpus_type1};
+
+fn with_syn(program: &str) -> String {
+    format!("{}{program}", corpus_type1().pfa())
+}
+
+fn fills(page: &Page) -> Vec<Vec<Seg>> {
+    page.ops
+        .iter()
+        .filter_map(|o| match &o.op {
+            IrOp::Fill { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn seg_near(seg: &Seg, want: &Seg) -> bool {
+    match (seg, want) {
+        (Seg::Move(a), Seg::Move(b)) | (Seg::Line(a), Seg::Line(b)) => {
+            (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+        }
+        (Seg::Curve(a, b, c), Seg::Curve(d, e, f)) => [(a, d), (b, e), (c, f)]
+            .iter()
+            .all(|(p, q)| (p.x - q.x).abs() < 1e-3 && (p.y - q.y).abs() < 1e-3),
+        (Seg::Close, Seg::Close) => true,
+        _ => false,
+    }
+}
+
+fn path_near(path: &[Seg], want: &[Seg]) -> bool {
+    path.len() == want.len() && path.iter().zip(want).all(|(a, b)| seg_near(a, b))
+}
+
+// embedded-font-dump.ps
+#[test]
+fn an_embedded_font_is_one_resource_and_the_dump_lists_it_without_its_bytes() {
+    let run = exec(&with_syn(
+        "/Syn findfont 12 scalefont setfont 72 700 moveto (a) show showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    assert_eq!(page.resources.fonts.len(), 1);
+    assert!(matches!(
+        &page.resources.fonts[0],
+        FontSpec::Embedded { kind: ProgramKind::Type1, font_name, program, .. }
+            if font_name == b"Syn" && program.glyph_count() == 6
+    ));
+    let text = text_ops(page);
+    assert_eq!(text.len(), 1);
+    assert_eq!(text[0].0, FontIndex(0));
+    assert_eq!(
+        text[0].2,
+        [Glyph {
+            code: 97,
+            dx: 600.0,
+            dy: 0.0
+        }]
+    );
+    assert_eq!(
+        page.dump(),
+        "ir/1\npage 612 792\nresources:\n\
+         font 0 embedded type1 Syn glyphs=6 enc=[97 /a 98 /b 101 /e 233 /eacute]\n\
+         ops:\ntext 0 0.012 0 0 0.012 72 700 (a) 600 0\n"
+    );
+}
+
+// type1-embedded-two-pages.ps
+#[test]
+fn every_page_gets_its_own_resource_over_the_shared_snapshot() {
+    let run = exec(&with_syn(
+        "/Syn findfont 10 scalefont setfont 100 100 moveto (a) show showpage \
+         /Syn findfont 20 scalefont setfont 100 200 moveto (e) show showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.pages.len(), 2);
+    let (
+        FontSpec::Embedded { program: first, .. },
+        FontSpec::Embedded {
+            program: second, ..
+        },
+    ) = (
+        &run.pages[0].resources.fonts[0],
+        &run.pages[1].resources.fonts[0],
+    )
+    else {
+        panic!("embedded resources on both pages");
+    };
+    assert_eq!(first, second, "the same snapshot");
+    assert_eq!(
+        run.pages[0].resources.fonts[0],
+        run.pages[1].resources.fonts[0]
+    );
+}
+
+// charpath-fill.ps
+#[test]
+fn filling_a_charpath_records_one_fill_and_no_text() {
+    let run = exec(&with_syn(
+        "/Syn findfont 10 scalefont setfont 100 100 moveto (a) false charpath fill showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    assert!(text_ops(page).is_empty());
+    let fills = fills(page);
+    assert_eq!(fills.len(), 1);
+    assert_eq!(page.ops.len(), 1);
+    // The program's moveto, the square at (100, 100) scaled by 0.01, and
+    // the trailing point charpath leaves at the advance.
+    assert!(
+        path_near(
+            &fills[0],
+            &[
+                Seg::Move(p(100.0, 100.0)),
+                Seg::Move(p(100.5, 100.0)),
+                Seg::Line(p(105.5, 100.0)),
+                Seg::Line(p(105.5, 105.0)),
+                Seg::Line(p(100.5, 105.0)),
+                Seg::Close,
+                Seg::Move(p(106.0, 100.0)),
+            ]
+        ),
+        "{:?}",
+        fills[0]
+    );
+    assert!(page.resources.fonts.is_empty());
+}
+
+// type1-seac-glyphshow.ps
+#[test]
+fn a_seac_glyph_shows_with_the_composite_advance_and_outlines_both_components() {
+    let run = exec(&with_syn(
+        "/Syn findfont 10 scalefont setfont 0 0 moveto /eacute glyphshow \
+         100 100 moveto (\\351) false charpath fill showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    let text = text_ops(page);
+    assert_eq!(text.len(), 1);
+    assert_eq!(
+        text[0].2,
+        [Glyph {
+            code: 233,
+            dx: 500.0,
+            dy: 0.0
+        }]
+    );
+    let fills = fills(page);
+    assert_eq!(fills.len(), 1);
+    // The base e at its sidebearing, then the accent displaced by
+    // (sbx - asb + adx, ady) = (140, 20) glyph units.
+    let outline: Vec<Seg> = fills[0][3..].to_vec();
+    assert!(
+        path_near(
+            &outline,
+            &[
+                Seg::Move(p(100.2, 100.0)),
+                Seg::Line(p(104.2, 100.0)),
+                Seg::Line(p(104.2, 104.0)),
+                Seg::Close,
+                Seg::Move(p(101.7, 105.2)),
+                Seg::Line(p(102.7, 106.2)),
+                Seg::Close,
+                Seg::Move(p(105.0, 100.0)),
+            ]
+        ),
+        "{outline:?}"
+    );
+}
+
+// type42-charpath-bbox.ps
+#[test]
+fn a_type42_charpath_box_is_the_cubic_control_box() {
+    let run = exec(&format!(
+        "{}/SynTT findfont [20 0 0 20 0 -5] makefont setfont 0 0 moveto (o) true charpath \
+         pathbbox 4 {{ 4 -1 roll 1000 mul round 1000 div }} repeat \
+         4 -1 roll = 3 -1 roll = exch = = fill showpage",
+        corpus_truetype().type42("SynTT", &[(97, "a"), (111, "o")])
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "0.0\n-3.372\n11.719\n3.138\n");
+    let page = &run.pages[0];
+    let fills = fills(page);
+    assert_eq!(fills.len(), 1);
+    let curves = fills[0]
+        .iter()
+        .filter(|s| matches!(s, Seg::Curve(..)))
+        .count();
+    assert_eq!(curves, 2);
+    let scale = 20.0 / 2048.0;
+    let ys: Vec<f32> = fills[0][1..fills[0].len() - 1]
+        .iter()
+        .flat_map(|s| match s {
+            Seg::Move(a) | Seg::Line(a) => vec![a.y],
+            Seg::Curve(a, b, c) => vec![a.y, b.y, c.y],
+            Seg::Close => Vec::new(),
+        })
+        .collect();
+    let lo = ys.iter().copied().fold(f32::INFINITY, f32::min);
+    let hi = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!((lo - (500.0 / 3.0 * scale - 5.0)).abs() < 1e-3, "{lo}");
+    assert!((hi - (2500.0 / 3.0 * scale - 5.0)).abs() < 1e-3, "{hi}");
+}

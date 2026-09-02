@@ -1134,7 +1134,8 @@ fn standard_files_and_currentfile() {
         ("1 token", "typecheck"),
         ("(x) 1 readline", "typecheck"),
         ("currentfile (abc) readonly readline", "invalidaccess"),
-        ("eexec", "undefined"),
+        ("eexec", "stackunderflow"),
+        ("1 eexec", "typecheck"),
         ("(}) token", "syntaxerror"),
         ("currentfile token\n}", "syntaxerror"),
         (

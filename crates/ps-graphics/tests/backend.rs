@@ -802,6 +802,79 @@ fn glyphs_are_captured_in_glyph_space_and_shown_as_a_run() {
 }
 
 #[test]
+fn embedded_fonts_intern_by_snapshot_and_encoding_and_dump_without_bytes() {
+    use ps_fonts::ProgramKind;
+    use ps_fonts::testing::corpus_type1;
+    use std::rc::Rc;
+    let program = Rc::new(corpus_type1().program());
+    let mut names: Vec<Option<Vec<u8>>> = vec![None; 256];
+    names[97] = Some(b"a".to_vec());
+    names[233] = Some(b"eacute".to_vec());
+    let embedded = |encoding: Vec<Option<Vec<u8>>>| FontInfo {
+        source: FontSource::Embedded {
+            family: 7,
+            kind: ProgramKind::Type1,
+            program: program.clone(),
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            font_name: b"Syn".to_vec(),
+        },
+        encoding,
+    };
+    let (mut g, pages) = backend();
+    g.define_font(0, &embedded(names.clone())).unwrap();
+    g.define_font(1, &embedded(names.clone())).unwrap();
+    let mut other = names.clone();
+    other[98] = Some(b"e".to_vec());
+    g.define_font(2, &embedded(other)).unwrap();
+    g.moveto(p(100.0, 100.0)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.show(&[glyph(97, 600.0)]).unwrap();
+    g.set_font(Some(font(1, 20.0))).unwrap();
+    g.show(&[glyph(233, 500.0)]).unwrap();
+    g.set_font(Some(font(2, 10.0))).unwrap();
+    g.show(&[glyph(98, 500.0)]).unwrap();
+    assert!(close(
+        g.current_point().unwrap(),
+        p(100.0 + 6.0 + 10.0 + 5.0, 100.0)
+    ));
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let fonts = &pages[0].resources.fonts;
+    assert_eq!(
+        fonts.len(),
+        2,
+        "two instances of one snapshot share a resource"
+    );
+    let FontSpec::Embedded {
+        family,
+        kind,
+        font_name,
+        program: shared,
+        ..
+    } = &fonts[0]
+    else {
+        panic!("an embedded resource, got {:?}", fonts[0]);
+    };
+    assert_eq!((*family, *kind), (7, ProgramKind::Type1));
+    assert_eq!(font_name, b"Syn");
+    assert!(Rc::ptr_eq(&shared.0, &program));
+    assert_eq!(fonts[0].width(97), (600.0, 0.0));
+    assert_eq!(fonts[1].width(98), (500.0, 0.0));
+    let dump = pages[0].dump();
+    assert!(
+        dump.contains(
+            "font 0 embedded type1 Syn glyphs=6 enc=[97 /a 233 /eacute]\n\
+         font 1 embedded type1 Syn glyphs=6 enc=[97 /a 98 /e 233 /eacute]\nops:\n\
+         text 0 0.01 0 0 0.01 100 100 (a) 600 0\n\
+         text 0 0.02 0 0 0.02 106 100 (\\351) 500 0\n\
+         text 1 0.01 0 0 0.01 116 100 (b) 500 0\n"
+        ),
+        "{dump}"
+    );
+    assert!(!dump.contains("eexec") && !dump.contains("RD"));
+}
+
+#[test]
 fn type3_fonts_intern_by_family_and_encoding() {
     let (mut g, pages) = backend();
     g.define_font(0, &square_font(7)).unwrap();

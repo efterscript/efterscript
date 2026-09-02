@@ -1,0 +1,9 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+font 0 embedded type1 Syn glyphs=6 enc=[97 /a 98 /b 101 /e 233 /eacute]
+ops:
+text 0 0.012 0 0 0.012 72 700 (a) 600 0

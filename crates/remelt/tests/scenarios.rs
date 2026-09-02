@@ -240,7 +240,7 @@ fn error_after_the_first_page() {
 #[test]
 fn two_runs_agree_on_every_corpus_graphics_and_text_file() {
     let unit = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/unit");
-    let mut files: Vec<_> = ["graphics", "text"]
+    let mut files: Vec<_> = ["graphics", "text", "fonts"]
         .into_iter()
         .flat_map(|dir| std::fs::read_dir(unit.join(dir)).unwrap().flatten())
         .map(|e| e.path())
@@ -372,5 +372,160 @@ fn substitutions_are_reported() {
     assert_eq!(
         font(&pdf, 0, "F0").get("BaseFont").unwrap().as_name(),
         b"Helvetica"
+    );
+}
+
+// --- embedded fonts -----------------------------------------------------------------------
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use ps_fonts::TrueTypeProgram;
+use ps_fonts::testing::{corpus_truetype, corpus_type1};
+use ps_fonts::type1::decrypt_section;
+use ps_graphics::{Graphics, IrOp, Page};
+use ps_vm::{Interp, SliceSource};
+
+fn with_syn(program: &str) -> String {
+    format!("{}{program}", corpus_type1().pfa())
+}
+
+/// The pages `program` delivers through the real backend.
+fn pages_of(program: &[u8]) -> (Outcome, String, Vec<Page>) {
+    let (io, out, _) = Io::capture();
+    let mut interp = Interp::with_config(Config {
+        io,
+        ..Default::default()
+    });
+    let pages = Rc::new(RefCell::new(Vec::new()));
+    interp.set_graphics_backend(Box::new(Graphics::new(pages.clone())));
+    let outcome = interp.run(&mut SliceSource::new(program));
+    (outcome, out.text(), pages.take())
+}
+
+// type1-embedded-two-pages.ps
+#[test]
+fn type1_embedded_on_two_pages() {
+    let run = distil(&with_syn(
+        "/Syn findfont 10 scalefont setfont 100 100 moveto (a) show showpage \
+         /Syn findfont 20 scalefont setfont 100 200 moveto (e) show showpage",
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    assert_eq!(run.report.pages, 2);
+    let pdf = check(&run.pdf);
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type1");
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    let font_file = pdf.resolve(descriptor.get("FontFile").unwrap().as_reference());
+    let data = decoded(font_file);
+    let lengths: Vec<usize> = ["Length1", "Length2", "Length3"]
+        .iter()
+        .map(|k| font_file.get(k).unwrap().as_int() as usize)
+        .collect();
+    assert_eq!(data.len(), lengths.iter().sum::<usize>());
+    let plain = decrypt_section(&data[lengths[0]..lengths[0] + lengths[1]]);
+    let text = String::from_utf8_lossy(&plain);
+    assert!(
+        text.contains("dup /CharStrings 3 dict dup begin\n"),
+        "{text}"
+    );
+    assert!(text.contains("/.notdef ") && text.contains("/a ") && text.contains("/e "));
+    assert!(!text.contains("/b ") && !text.contains("/acute "));
+    assert_eq!(
+        String::from_utf8_lossy(&run.pdf)
+            .matches("/Subtype /Type1")
+            .count(),
+        1
+    );
+}
+
+// type1-subset-round-trip.ps
+#[test]
+fn a_type1_subset_round_trips_through_the_interpreter() {
+    let program = with_syn("/Syn findfont 10 scalefont setfont 100 100 moveto (a) show showpage");
+    let run = distil(&program);
+    let pdf = check(&run.pdf);
+    let font = font(&pdf, 0, "F0");
+    let base = String::from_utf8(font.get("BaseFont").unwrap().as_name().to_vec()).unwrap();
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    let font_file = decoded(pdf.resolve(descriptor.get("FontFile").unwrap().as_reference()));
+
+    // The regenerated program defines the tagged font with exactly the
+    // two glyphs, and its glyph a measures and outlines as the original.
+    let check_program = format!(
+        "/{base} findfont /CharStrings get length = \
+         /{base} findfont /CharStrings get /a known = \
+         /{base} findfont /CharStrings get /e known = \
+         /{base} findfont 10 scalefont setfont (a) stringwidth pop 1000 mul round 1000 div = \
+         100 100 moveto (a) false charpath fill showpage"
+    );
+    let mut regenerated = font_file.clone();
+    regenerated.extend_from_slice(check_program.as_bytes());
+    let (outcome, output, pages) = pages_of(&regenerated);
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(output, "2\ntrue\nfalse\n6.0\n");
+    let (_, _, original) = pages_of(
+        with_syn(
+            "/Syn findfont 10 scalefont setfont 100 100 moveto (a) false charpath fill showpage",
+        )
+        .as_bytes(),
+    );
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].ops, original[0].ops);
+    assert!(matches!(&pages[0].ops[0].op, IrOp::Fill { path, .. } if path.len() == 7));
+}
+
+// truetype-embedded.ps
+#[test]
+fn truetype_embedded() {
+    let run = distil(&format!(
+        "{}/SynTT findfont 20 scalefont setfont 100 100 moveto (ao) show showpage",
+        corpus_truetype().type42("SynTT", &[(97, "a"), (111, "o")])
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n20 0 0 20 100 100 Tm\n(ao) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"TrueType");
+    assert!(font.get("Encoding").is_none());
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    let data = decoded(pdf.resolve(descriptor.get("FontFile2").unwrap().as_reference()));
+    let subset = TrueTypeProgram::parse(data).unwrap();
+    assert_eq!(subset.num_glyphs(), 3);
+    assert_eq!(subset.cmap(3, 0).unwrap().unwrap().get(&111), Some(&2));
+}
+
+// truetype-subset-cmap.ps
+#[test]
+fn a_truetype_subset_has_a_cmap() {
+    let run = distil(&format!(
+        "{}/SynTT findfont 20 scalefont setfont 100 100 moveto (AB) show showpage",
+        corpus_truetype().type42("SynTT", &[(65, "a"), (66, "o")])
+    ));
+    let pdf = check(&run.pdf);
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 65);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 66);
+    let widths: Vec<f64> = array(font.get("Widths").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(widths, [500.0, 585.938]);
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    let data = decoded(pdf.resolve(descriptor.get("FontFile2").unwrap().as_reference()));
+    let subset = TrueTypeProgram::parse(data).unwrap();
+    assert_eq!(subset.num_glyphs(), 3);
+    let cmap = subset.cmap(3, 0).unwrap().unwrap();
+    assert_eq!(cmap.get(&65), Some(&1));
+    assert_eq!(cmap.get(&66), Some(&2));
+    assert_eq!(
+        cmap.len(),
+        4,
+        "each code by its bare value and in the 0xF0xx range"
     );
 }

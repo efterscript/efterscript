@@ -17,7 +17,9 @@
 //! Font objects are written once per document: a page whose font
 //! resource is structurally equal to one already written — including the
 //! values of the colour spaces, images, and fonts its glyphs name —
-//! reuses the object.
+//! reuses the object. Embedded fonts are the exception: their objects
+//! are allocated here and written when the document ends (see
+//! `embedded`), since their subset depends on every page.
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -28,6 +30,7 @@ use ps_graphics::{FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, Resour
 use ps_vm::{Bounds, Matrix, SpaceSpec};
 
 use crate::content;
+use crate::embedded::EmbeddedTable;
 use crate::resources::Objects;
 
 /// What a font's glyph procedures refer to on their page, by index.
@@ -102,10 +105,12 @@ impl Key {
     }
 }
 
-/// The font objects written so far in the document.
+/// The font objects written so far in the document, and the embedded
+/// fonts still to be written at its end.
 #[derive(Default)]
 pub(crate) struct FontTable {
     written: Vec<(Key, Ref)>,
+    pub(crate) embedded: EmbeddedTable,
 }
 
 impl FontTable {
@@ -129,7 +134,11 @@ pub(crate) fn write_fonts<W: Write>(
     let resources = &page.resources;
     let mut refs = Vec::with_capacity(resources.fonts.len());
     let mut pending = Vec::new();
-    for spec in &resources.fonts {
+    for (index, spec) in resources.fonts.iter().enumerate() {
+        if matches!(spec, FontSpec::Embedded { .. }) {
+            refs.push(table.embedded.use_font(doc, page, index));
+            continue;
+        }
         let key = Key::of(spec, resources);
         match table.lookup(&key) {
             Some(r) => refs.push(r),
@@ -166,6 +175,7 @@ pub(crate) fn write_fonts<W: Write>(
                     write_type3(doc, r, &type3, resources, objects, &refs, filter)?;
                 notes.append(&mut glyph_notes);
             }
+            FontSpec::Embedded { .. } => unreachable!("routed to the embedded table"),
         }
     }
     Ok(refs)
@@ -175,7 +185,10 @@ pub(crate) fn write_fonts<W: Write>(
 
 /// `Differences` entries: a code starts a run, consecutive codes follow
 /// with their names alone.
-fn differences<'a>(a: &mut ArrayBuilder<'_>, entries: impl Iterator<Item = (u8, &'a [u8])>) {
+pub(crate) fn differences<'a>(
+    a: &mut ArrayBuilder<'_>,
+    entries: impl Iterator<Item = (u8, &'a [u8])>,
+) {
     let mut previous: Option<u8> = None;
     for (code, name) in entries {
         if previous.is_none_or(|p| p.checked_add(1) != Some(code)) {
@@ -188,7 +201,7 @@ fn differences<'a>(a: &mut ArrayBuilder<'_>, entries: impl Iterator<Item = (u8, 
 
 /// First code, last code, and the width of every code between, from the
 /// codes that have a width; `None` when none has.
-fn widths(width_of: impl Fn(u8) -> Option<f32>) -> Option<(u8, u8, Vec<f32>)> {
+pub(crate) fn widths(width_of: impl Fn(u8) -> Option<f32>) -> Option<(u8, u8, Vec<f32>)> {
     let widths: Vec<Option<f32>> = (0..=255u8).map(width_of).collect();
     let first = widths.iter().position(Option::is_some)?;
     let last = widths.iter().rposition(Option::is_some)?;
@@ -210,10 +223,18 @@ fn hex_utf16(chars: &[char]) -> String {
 }
 
 /// A ToUnicode CMap over the codes whose glyph names the glyph list
-/// maps, in code order; `None` when no code maps.
-fn to_unicode<'a>(entries: impl Iterator<Item = (u8, &'a [u8])>) -> Option<Vec<u8>> {
+/// maps — or `fallback` does, for a name the list lacks — in code
+/// order; `None` when no code maps.
+fn to_unicode<'a>(
+    entries: impl Iterator<Item = (u8, &'a [u8])>,
+    fallback: impl Fn(&[u8]) -> Option<Vec<char>>,
+) -> Option<Vec<u8>> {
     let mapped: Vec<(u8, Vec<char>)> = entries
-        .filter_map(|(code, name)| ps_fonts::unicode(name).map(|chars| (code, chars)))
+        .filter_map(|(code, name)| {
+            ps_fonts::unicode(name)
+                .or_else(|| fallback(name))
+                .map(|chars| (code, chars))
+        })
         .collect();
     if mapped.is_empty() {
         return None;
@@ -246,12 +267,13 @@ fn to_unicode<'a>(entries: impl Iterator<Item = (u8, &'a [u8])>) -> Option<Vec<u
     Some(text.into_bytes())
 }
 
-fn write_to_unicode<'a, W: Write>(
+pub(crate) fn write_to_unicode<'a, W: Write>(
     doc: &mut Document<W>,
     filter: Filter,
     entries: impl Iterator<Item = (u8, &'a [u8])>,
+    fallback: impl Fn(&[u8]) -> Option<Vec<char>>,
 ) -> Result<Option<Ref>, pdf_out::Error> {
-    let Some(cmap) = to_unicode(entries) else {
+    let Some(cmap) = to_unicode(entries, fallback) else {
         return Ok(None);
     };
     let r = doc.alloc();
@@ -259,7 +281,7 @@ fn write_to_unicode<'a, W: Write>(
     Ok(Some(r))
 }
 
-fn put_bounds(a: &mut ArrayBuilder<'_>, b: [f32; 4]) {
+pub(crate) fn put_bounds(a: &mut ArrayBuilder<'_>, b: [f32; 4]) {
     for v in b {
         a.real(v);
     }
@@ -351,7 +373,7 @@ fn write_resident<W: Write>(
         Some(_) => Some(write_descriptor(doc, base)?),
         None => None,
     };
-    let to_unicode = write_to_unicode(doc, filter, named())?;
+    let to_unicode = write_to_unicode(doc, filter, named(), |_| None)?;
     doc.write_obj(r, |v| {
         v.dict(|d| {
             d.key("Type").name("Font");
@@ -450,7 +472,7 @@ fn write_type3<W: Write>(
         font.glyphs.get(name).map(|g| g.width.0)
     })
     .unwrap_or((0, 0, vec![0.0]));
-    let to_unicode = write_to_unicode(doc, filter, captured.iter().copied())?;
+    let to_unicode = write_to_unicode(doc, filter, captured.iter().copied(), |_| None)?;
     let b = font.font_bbox;
     doc.write_obj(r, |v| {
         v.dict(|d| {
@@ -500,13 +522,25 @@ mod tests {
     #[test]
     fn to_unicode_maps_known_names_in_code_order_and_skips_the_rest() {
         let entries: [(u8, &[u8]); 4] = [(72, b"H"), (0, b".notdef"), (105, b"i"), (200, b"fi")];
-        let cmap = String::from_utf8(to_unicode(entries.into_iter()).unwrap()).unwrap();
+        let cmap = String::from_utf8(to_unicode(entries.into_iter(), |_| None).unwrap()).unwrap();
         assert!(cmap.contains("3 beginbfchar\n<48> <0048>\n<69> <0069>\n<C8> <FB01>\nendbfchar\n"));
         assert!(cmap.starts_with("/CIDInit /ProcSet findresource begin\n"));
         assert!(
             cmap.ends_with("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n")
         );
-        assert_eq!(to_unicode([(0u8, b".notdef".as_slice())].into_iter()), None);
+        assert_eq!(
+            to_unicode([(0u8, b".notdef".as_slice())].into_iter(), |_| None),
+            None
+        );
+        let fallback = to_unicode([(1u8, b"g1".as_slice())].into_iter(), |name| {
+            (name == b"g1").then(|| vec!['x'])
+        })
+        .unwrap();
+        assert!(
+            String::from_utf8(fallback)
+                .unwrap()
+                .contains("<01> <0078>\n")
+        );
         assert_eq!(hex_utf16(&['😀']), "D83DDE00");
     }
 

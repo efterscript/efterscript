@@ -11,12 +11,14 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
+use ps_fonts::Program;
+
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
 use crate::graphics::{FontRef, GraphicsBackend, Matrix};
 use crate::io::Io;
 use crate::memory::Memory;
-use crate::object::{Access, CompositeRef, Object, Type};
+use crate::object::{Access, CompositeRef, Handle, Object, Type};
 use crate::ops::{self, Num, OpEntry, Visibility};
 
 pub(crate) use exec::scan_error;
@@ -195,6 +197,10 @@ pub struct Interp {
     // The current font of a VM without a graphics backend, which has no
     // graphics state to keep it in.
     font_without_backend: Option<FontRef>,
+    // Program snapshots by `FID`, built on the first glyph a font needs
+    // and never invalidated: a job that alters its font dictionary
+    // afterwards is not followed.
+    font_programs: HashMap<u32, Rc<Program>>,
     next_fid: u32,
     substitutions: Vec<FontSubstitution>,
     #[allow(dead_code)]
@@ -309,6 +315,7 @@ impl Interp {
             described_fonts: HashSet::new(),
             defined_matrices: HashMap::new(),
             font_without_backend: None,
+            font_programs: HashMap::new(),
             next_fid: 0,
             substitutions: Vec::new(),
             quirks,
@@ -532,6 +539,21 @@ impl Interp {
             requested,
             substitute,
         });
+    }
+
+    /// The glyph program of a Type 1 or Type 42 font dictionary, built
+    /// from its `CharStrings` (and `Private` or `sfnts`) on first use and
+    /// cached by `FID`; `invalidfont` when the dictionary has none.
+    pub fn font_program(&mut self, dict: Object) -> Result<Rc<Program>, VmError> {
+        let fid = ops::font::entry(self, dict, "FID")?
+            .and_then(Object::as_font_id)
+            .ok_or(VmError::InvalidFont)?;
+        if let Some(program) = self.font_programs.get(&fid) {
+            return Ok(program.clone());
+        }
+        let program = Rc::new(ops::embedded::snapshot(self, dict)?);
+        self.font_programs.insert(fid, program.clone());
+        Ok(program)
     }
 
     pub(crate) fn allocate_fid(&mut self) -> Object {
@@ -823,7 +845,20 @@ impl Interp {
         if let Frame::Loop(LoopFrame::Show(show)) = &frame {
             ops::show::abandon(self, show);
         }
+        if let Frame::Marker(Marker::Eexec { layer, dicts }) = &frame {
+            self.end_eexec(*layer, *dicts);
+        }
         Some(frame)
+    }
+
+    /// Ends an `eexec` section: the dictionary stack returns to its depth
+    /// before the section's `systemdict` was pushed, and the layer is
+    /// closed (a no-op when `closefile` already did).
+    fn end_eexec(&mut self, layer: Option<Handle>, dicts: usize) {
+        self.dstack.truncate(dicts.max(self.dstack_floor));
+        if let Some(handle) = layer {
+            let _ = self.mem.files_mut().close(handle);
+        }
     }
 
     pub(crate) fn truncate_frames(&mut self, len: usize) {

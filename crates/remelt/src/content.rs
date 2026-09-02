@@ -20,6 +20,10 @@
 //! glyph codes. A glyph whose recorded displacement is the font's own
 //! width needs nothing more; a horizontal difference is a `TJ`
 //! adjustment, and any vertical difference moves the line with `Td`.
+//! The text matrix takes the run's glyph-to-page matrix back through
+//! the font's own matrix: thousandths for a resident font, the Type 3
+//! or embedded font's `FontMatrix` otherwise, so the PDF font's glyph
+//! space lands where the program's did.
 
 use pdf_out::fmt_real;
 use ps_graphics::{FillRule, FontIndex, FontSpec, IrOp, Op, Page, Resources, SpaceRef};
@@ -96,6 +100,30 @@ impl ColorOp {
     }
 }
 
+/// `matrix` taken back through `font_matrix`, computed in double
+/// precision; `None` for a singular font matrix.
+fn through_inverse(font_matrix: Matrix, matrix: Matrix) -> Option<Matrix> {
+    let [a, b, c, d, tx, ty] = font_matrix.0.map(f64::from);
+    let det = a * d - b * c;
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    let (ia, ib, ic, id) = (d / det, -b / det, -c / det, a / det);
+    let (itx, ity) = (-(tx * ia + ty * ic), -(tx * ib + ty * id));
+    let [a2, b2, c2, d2, tx2, ty2] = matrix.0.map(f64::from);
+    Some(Matrix(
+        [
+            ia * a2 + ib * c2,
+            ia * b2 + ib * d2,
+            ic * a2 + id * c2,
+            ic * b2 + id * d2,
+            itx * a2 + ity * c2 + tx2,
+            itx * b2 + ity * d2 + ty2,
+        ]
+        .map(|v| v as f32 + 0.0),
+    ))
+}
+
 fn reals(values: &[f32]) -> String {
     values
         .iter()
@@ -160,6 +188,18 @@ impl Writer<'_> {
             }
             FontSpec::Type3 { font_matrix, .. } => match font_matrix.inverse() {
                 Some(inverse) => inverse.then(matrix),
+                None => {
+                    self.notes.push(format!(
+                        "text in font {} skipped: its font matrix is singular",
+                        font_name(font)
+                    ));
+                    return;
+                }
+            },
+            // In double precision: the inverse of a thousandths matrix in
+            // single precision would print as 999.99994.
+            FontSpec::Embedded { font_matrix, .. } => match through_inverse(*font_matrix, matrix) {
+                Some(tm) => tm,
                 None => {
                     self.notes.push(format!(
                         "text in font {} skipped: its font matrix is singular",
@@ -478,6 +518,22 @@ mod tests {
             matrix: Matrix([50.0, 0.0, 0.0, 50.0, 100.0, 100.0]),
         }]);
         assert_eq!(text(&page), "q 50 0 0 50 100 100 cm /Im3 Do Q\n");
+    }
+
+    #[test]
+    fn the_inverse_font_matrix_is_exact_in_double_precision() {
+        let tm = through_inverse(
+            Matrix::scaling(0.001, 0.001),
+            Matrix([0.01, 0.0, 0.0, 0.01, 5.0, 7.0]),
+        )
+        .unwrap();
+        assert_eq!(reals(&tm.0), "10 0 0 10 5 7");
+        assert_eq!(
+            through_inverse(Matrix::scaling(0.0, 1.0), Matrix::IDENTITY),
+            None
+        );
+        let shifted = through_inverse(Matrix::translation(3.0, 4.0), Matrix::IDENTITY).unwrap();
+        assert_eq!(reals(&shifted.0), "1 0 0 1 -3 -4");
     }
 
     #[test]

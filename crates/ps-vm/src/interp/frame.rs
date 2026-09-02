@@ -3,7 +3,7 @@
 
 //! Execution-stack frames.
 
-use crate::object::Object;
+use crate::object::{Handle, Object};
 use crate::ops::Num;
 use crate::ops::image::ImageAcquisition;
 use crate::ops::show::ShowFrame;
@@ -165,6 +165,14 @@ pub enum Marker {
     RunBoundary,
     /// Below an `errordict` handler while it runs.
     ErrorHandler,
+    /// Below an `eexec` source. When the frame ends, however it ends, the
+    /// dictionary stack is cut back to `dicts` entries (dropping the
+    /// `systemdict` pushed for the section) and the layer file, if the
+    /// section is a file, is closed.
+    Eexec {
+        layer: Option<Handle>,
+        dicts: usize,
+    },
     Interrupt,
     Timeout,
 }

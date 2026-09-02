@@ -8,7 +8,7 @@
 //! file table owns the scanner's one byte of lookahead.
 
 use crate::error::VmError;
-use crate::interp::{Interp, lookup_in, scan_error};
+use crate::interp::{Frame, Interp, Marker, SourceFrame, SourceSlot, lookup_in, scan_error};
 use crate::memory::Memory;
 use crate::names::Atom;
 use crate::object::{Access, Handle, Object, Type};
@@ -328,9 +328,63 @@ fn stack(i: &mut Interp) -> Result<(), VmError> {
     dump(i, brief)
 }
 
-// Registered so the name resolves; decryption arrives with the font
-// change. The scanner already leaves the file positioned right after the
-// operator's delimiter.
-fn eexec(_: &mut Interp) -> Result<(), VmError> {
-    Err(VmError::Undefined)
+/// `eexec` (PLRM3 §8.2): a file operand becomes a decrypting layer over
+/// it, read from right after the operator's delimiter; a string operand
+/// is decrypted whole. Either runs as a source with `systemdict` on the
+/// dictionary stack under an `Eexec` marker that undoes the push and
+/// closes the layer when the source ends by `closefile`, end of data, or
+/// an error unwinding past it.
+fn eexec(i: &mut Interp) -> Result<(), VmError> {
+    let source = i.peek(0)?;
+    match source.ty() {
+        Type::File => {
+            let base = file_operand(source, Access::ReadOnly)?;
+            if !i.mem.files().is_open(base) {
+                return Err(VmError::IoError);
+            }
+            let systemdict = i.dicts.systemdict;
+            let dicts = i.dstack.len();
+            i.push_dict(systemdict)?;
+            let layer = i.mem.files_mut().open_layer(base)?;
+            let object = Object::file(i.mem.current_space(), layer)
+                .with_access(Access::ReadOnly)
+                .expect("file objects carry access");
+            i.pop()?;
+            let slot = SourceSlot::File {
+                object,
+                source: FileSource::from_handle(layer),
+            };
+            begin_section(i, Some(layer), dicts, slot)
+        }
+        Type::String => {
+            let cipher = bytes(i, source)?;
+            let plain = ps_fonts::type1::decrypt_section(&cipher);
+            let systemdict = i.dicts.systemdict;
+            let dicts = i.dstack.len();
+            i.push_dict(systemdict)?;
+            let string = i.mem.alloc_string(plain);
+            i.pop()?;
+            let slot = SourceSlot::String(StringSource::new(string).expect("string"));
+            begin_section(i, None, dicts, slot)
+        }
+        _ => Err(VmError::TypeCheck),
+    }
+}
+
+fn begin_section(
+    i: &mut Interp,
+    layer: Option<Handle>,
+    dicts: usize,
+    slot: SourceSlot,
+) -> Result<(), VmError> {
+    i.push_frame_unchecked(Frame::Marker(Marker::Eexec { layer, dicts }));
+    let frame = Frame::Source(Box::new(SourceFrame {
+        slot,
+        scanner: Scanner::new(),
+    }));
+    if let Err(e) = i.push_frame(frame) {
+        i.pop_frame();
+        return Err(e);
+    }
+    Ok(())
 }

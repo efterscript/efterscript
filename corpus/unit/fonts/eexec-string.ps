@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: hi
+% Scenario: eexec on a string. The string holds the binary encryption
+% of `(hi) print`; the newline is printed afterwards so the output is
+% a line.
+% Expect: hi.
+% The font program below is synthesised by ps-fonts' corpus
+% generator (tests/corpus_fonts.rs); regenerate rather than edit.
+<d9d66f63773af61ae837b9c8411e> eexec
+(\n) print

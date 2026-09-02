@@ -124,8 +124,16 @@ impl Interp {
                     }
                 }
                 Some(Frame::Source(frame)) => {
-                    if matches!(frame.slot, SourceSlot::Run) {
-                        if !self.mem.file_is_open(self.run_file) {
+                    // A file that was closed while being executed (the
+                    // job's own source, or an `eexec` layer ended by
+                    // `closefile`) has nothing more to run.
+                    let file = match frame.slot {
+                        SourceSlot::Run => Some(self.run_file),
+                        SourceSlot::File { object, .. } => Some(object),
+                        SourceSlot::String(_) => None,
+                    };
+                    if let Some(file) = file {
+                        if !self.mem.file_is_open(file) {
                             self.pop_frame();
                             continue;
                         }

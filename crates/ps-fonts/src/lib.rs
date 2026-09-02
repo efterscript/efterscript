@@ -15,20 +15,35 @@
 //!
 //! What exists so far: the metrics of the fourteen standard fonts
 //! ([`StdFont`]) read from the embedded AFM files, the two built-in text
-//! encodings, name-level substitution ([`substitute`]), and glyph-name to
-//! Unicode mapping ([`unicode`]) through the Adobe Glyph List.
-//! Font-program parsing follows.
+//! encodings, name-level substitution ([`substitute`]), glyph-name to
+//! Unicode mapping ([`unicode`]) through the Adobe Glyph List, and the
+//! glyph engine ([`Program`]): Type 1 charstrings and TrueType glyph
+//! tables interpreted into outlines and advances, the subsetters that
+//! regenerate a Type 1 program ([`type1::write`]) and rewrite a TrueType
+//! one ([`truetype::write::subset`]) for embedding, and the synthesised
+//! fonts of [`testing`]. CFF follows.
 //!
 //! Independently useful for any document tooling.
 
 pub mod afm;
 pub mod encoding;
 mod glyph_list;
+mod mac_glyphs;
+pub mod outline;
+mod program;
 mod resident;
 mod substitute;
+pub mod testing;
+pub mod truetype;
+pub mod type1;
 
 pub use afm::{Afm, AfmError, CharMetric};
 pub use encoding::{Encoding, ISO_LATIN1_ENCODING, STANDARD_ENCODING};
 pub use glyph_list::unicode;
+pub use mac_glyphs::MAC_GLYPH_NAMES;
+pub use outline::{Glyph, Outline, OutlineOp};
+pub use program::{FontError, Program, ProgramKind};
 pub use resident::{Family, StdFont};
 pub use substitute::substitute;
+pub use truetype::TrueTypeProgram;
+pub use type1::Type1Program;

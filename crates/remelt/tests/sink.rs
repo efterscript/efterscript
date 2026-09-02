@@ -1004,3 +1004,236 @@ fn a_type3_font_is_shared_only_when_its_references_mean_the_same() {
     assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
     assert_ne!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 2, "F0"));
 }
+
+// --- embedded fonts -------------------------------------------------------------------
+
+use std::rc::Rc;
+
+use ps_fonts::testing::{corpus_truetype, corpus_type1};
+use ps_fonts::type1::decrypt_section;
+use ps_fonts::{ProgramKind, TrueTypeProgram};
+use ps_graphics::ProgramRef;
+
+fn names(pairs: &[(u8, &str)]) -> ps_graphics::GlyphNames {
+    let mut names: Vec<Option<Vec<u8>>> = vec![None; 256];
+    for &(code, name) in pairs {
+        names[usize::from(code)] = Some(name.as_bytes().to_vec());
+    }
+    glyph_names(&names)
+}
+
+fn syn(program: &Rc<ps_fonts::Program>) -> FontSpec {
+    FontSpec::Embedded {
+        family: 3,
+        kind: ProgramKind::Type1,
+        font_name: b"Syn".to_vec(),
+        font_matrix: Matrix::scaling(0.001, 0.001),
+        program: ProgramRef(program.clone()),
+        encoding: names(&[(97, "a"), (98, "b"), (101, "e"), (233, "eacute")]),
+    }
+}
+
+/// The plain text of a FontFile's encrypted portion.
+fn private_text(font_file: &Value) -> String {
+    let data = decoded(font_file);
+    let length1 = font_file.get("Length1").unwrap().as_int() as usize;
+    let length2 = font_file.get("Length2").unwrap().as_int() as usize;
+    let length3 = font_file.get("Length3").unwrap().as_int() as usize;
+    assert_eq!(data.len(), length1 + length2 + length3);
+    assert!(data.starts_with(b"%!FontType1-1.0: "));
+    assert!(data.ends_with(b"cleartomark\n"));
+    String::from_utf8_lossy(&decrypt_section(&data[length1..length1 + length2])).into_owned()
+}
+
+#[test]
+fn an_embedded_type1_font_is_subset_and_written_at_finish() {
+    let program = Rc::new(corpus_type1().program());
+    let first = text_page(
+        syn(&program),
+        Matrix([0.01, 0.0, 0.0, 0.01, 100.0, 100.0]),
+        vec![glyph(97, 600.0, 0.0), glyph(233, 500.0, 0.0)],
+    );
+    let second = text_page(
+        syn(&program),
+        Matrix([0.02, 0.0, 0.0, 0.02, 100.0, 200.0]),
+        vec![glyph(101, 500.0, 0.0)],
+    );
+    let bytes = distil_pages(vec![first, second], uncompressed());
+    let pdf = check(&bytes);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<61E9> Tj\nET\n"
+    );
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type1");
+    let base = font.get("BaseFont").unwrap().as_name().to_vec();
+    assert_eq!(base.len(), 10);
+    assert!(base.ends_with(b"+Syn"));
+    assert!(base[..6].iter().all(u8::is_ascii_uppercase));
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 97);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 233);
+    let widths = numbers(font.get("Widths").unwrap());
+    assert_eq!(widths.len(), 233 - 97 + 1);
+    assert_eq!(widths[0], 600.0);
+    assert_eq!(widths[101 - 97], 500.0);
+    assert_eq!(widths[98 - 97], 0.0, "an unused code has no width");
+    assert_eq!(widths[233 - 97], 500.0);
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    assert_eq!(differences.len(), 2);
+    assert_eq!(differences[0].as_int(), 233);
+    assert_eq!(differences[1].as_name(), b"eacute");
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(
+        descriptor.get("FontName").unwrap().as_name(),
+        base.as_slice()
+    );
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    assert_eq!(
+        numbers(descriptor.get("FontBBox").unwrap()),
+        [0.0, 0.0, 750.0, 750.0]
+    );
+    assert_eq!(number(descriptor.get("Ascent").unwrap()), 750.0);
+    assert_eq!(number(descriptor.get("StemV").unwrap()), 80.0);
+    let font_file = pdf.resolve(descriptor.get("FontFile").unwrap().as_reference());
+    let plain = private_text(font_file);
+    assert!(
+        plain.contains("dup /CharStrings 5 dict dup begin\n"),
+        "{plain}"
+    );
+    for name in [".notdef", "a", "e", "eacute", "acute"] {
+        assert!(plain.contains(&format!("/{name} ")), "{name} kept");
+    }
+    assert!(!plain.contains("/b "), "b was never shown");
+    let cmap = String::from_utf8(decoded(
+        pdf.resolve(font.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(cmap.contains("<61> <0061>\n"));
+    assert!(cmap.contains("<E9> <00E9>\n"));
+    assert!(!cmap.contains("<62>"));
+    // The font objects are written after both pages, whatever their ids.
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.rfind("/Type /Page ").unwrap() < text.find("/Subtype /Type1").unwrap());
+}
+
+#[test]
+fn an_embedded_truetype_font_carries_a_symbolic_subset_with_a_cmap() {
+    let program = Rc::new(corpus_truetype().program().unwrap());
+    let spec = FontSpec::Embedded {
+        family: 4,
+        kind: ProgramKind::TrueType,
+        font_name: b"SynTT".to_vec(),
+        font_matrix: Matrix::IDENTITY,
+        program: ProgramRef(program),
+        encoding: names(&[(65, "a"), (66, "o"), (67, "zz")]),
+    };
+    let page = text_page(
+        spec,
+        Matrix([20.0, 0.0, 0.0, 20.0, 100.0, 100.0]),
+        vec![
+            glyph(65, 0.5, 0.0),
+            glyph(66, 1200.0 / 2048.0, 0.0),
+            glyph(67, 0.5, 0.0),
+        ],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n20 0 0 20 100 100 Tm\n(ABC) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"TrueType");
+    assert!(font.get("BaseFont").unwrap().as_name().ends_with(b"+SynTT"));
+    assert!(
+        font.get("Encoding").is_none(),
+        "symbolic: the cmap maps the codes"
+    );
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 65);
+    assert_eq!(
+        numbers(font.get("Widths").unwrap()),
+        [500.0, 585.938, 500.0]
+    );
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    assert_eq!(
+        numbers(descriptor.get("FontBBox").unwrap()),
+        [0.0, 0.0, 537.109, 488.281]
+    );
+    let font_file = pdf.resolve(descriptor.get("FontFile2").unwrap().as_reference());
+    let data = decoded(font_file);
+    assert_eq!(
+        font_file.get("Length1").unwrap().as_int() as usize,
+        data.len()
+    );
+    let subset = TrueTypeProgram::parse(data).unwrap();
+    assert_eq!(subset.num_glyphs(), 3);
+    let cmap = subset.cmap(3, 0).unwrap().unwrap();
+    assert_eq!(cmap.get(&65), Some(&1));
+    assert_eq!(cmap.get(&66), Some(&2));
+    assert_eq!(cmap.get(&0xF041), Some(&1));
+    assert_eq!(cmap.get(&67), None, "a code drawing glyph 0 is not mapped");
+    assert_eq!(subset.advance(1).unwrap(), 1024);
+    assert_eq!(subset.advance(2).unwrap(), 1200);
+    let to_unicode = String::from_utf8(decoded(
+        pdf.resolve(font.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(to_unicode.contains("<41> <0061>\n"), "{to_unicode}");
+    assert!(to_unicode.contains("<42> <006F>\n"));
+}
+
+#[test]
+fn glyphs_shown_inside_a_type3_procedure_count_for_the_embedded_font() {
+    let program = Rc::new(corpus_type1().program());
+    let mut page = Page::new(LETTER);
+    let type3 = page.resources.add_font(square_font(GlyphProc {
+        ops: vec![
+            IrOp::Text {
+                font: FontIndex(1),
+                matrix: Matrix::scaling(0.001, 0.001),
+                glyphs: vec![glyph(101, 500.0, 0.0)],
+            }
+            .into(),
+        ],
+        width: (1000.0, 0.0),
+        bbox: None,
+    }));
+    let embedded = page.resources.add_font(syn(&program));
+    assert_eq!(embedded, FontIndex(1));
+    page.ops = vec![Op::from(IrOp::Text {
+        font: type3,
+        matrix: Matrix::scaling(0.01, 0.01),
+        glyphs: vec![glyph(97, 1000.0, 0.0)],
+    })];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let font = font(&pdf, 0, "F1");
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 101);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 101);
+    assert_eq!(numbers(font.get("Widths").unwrap()), [500.0]);
+}
+
+#[test]
+fn embedded_fonts_distil_deterministically() {
+    let program = Rc::new(corpus_type1().program());
+    let make = || {
+        text_page(
+            syn(&program),
+            Matrix([0.01, 0.0, 0.0, 0.01, 100.0, 100.0]),
+            vec![glyph(97, 600.0, 0.0)],
+        )
+    };
+    let first = distil_pages(vec![make()], uncompressed());
+    let second = distil_pages(vec![make()], uncompressed());
+    assert_eq!(first, second);
+    let program_again = Rc::new(corpus_type1().program());
+    let third = distil_pages(
+        vec![text_page(
+            syn(&program_again),
+            Matrix([0.01, 0.0, 0.0, 0.01, 100.0, 100.0]),
+            vec![glyph(97, 600.0, 0.0)],
+        )],
+        uncompressed(),
+    );
+    assert_eq!(first, third, "the snapshot's identity leaves no trace");
+}

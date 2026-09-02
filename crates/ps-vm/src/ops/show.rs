@@ -12,8 +12,13 @@
 //! call when the string ends or, for `kshow`, before the procedure runs
 //! between two glyphs. `stringwidth` runs the same frame in measuring
 //! mode: no run is shown and the total displacement is pushed instead.
+//! `charpath` runs it in outline mode: a Type 1 or Type 42 glyph's
+//! outline is appended to the current path through the font matrix at
+//! the glyph's position, and the current point advances at the end.
 
-use ps_fonts::StdFont;
+use std::rc::Rc;
+
+use ps_fonts::{Glyph as ProgramGlyph, OutlineOp, Program, StdFont};
 
 use crate::error::VmError;
 use crate::graphics::{Bounds, FontInfo, FontRef, FontSource, Glyph, Matrix, Point};
@@ -23,12 +28,16 @@ use crate::ops::array::items;
 use crate::ops::font::entry;
 
 /// How a font's glyphs are produced.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum FontKind {
     /// Widths from the resident metrics; nothing is executed.
     Resident(StdFont),
     /// `BuildGlyph` (glyph names) or `BuildChar` (codes) is run per glyph.
     Type3 { build: Object, by_name: bool },
+    /// A Type 1 or Type 42 program the job defined; `scale` takes the
+    /// program's glyph units to the space the font matrix maps (one for
+    /// charstring units, the reciprocal of the units per em for TrueType).
+    Embedded { program: Rc<Program>, scale: f32 },
 }
 
 /// The show operator and the extra operands it took.
@@ -84,6 +93,8 @@ pub struct ShowFrame {
     pub(crate) codes: Vec<u8>,
     pub(crate) variant: Variant,
     pub(crate) measure: bool,
+    /// `charpath`: outlines join the current path and no run is shown.
+    pub(crate) outline: bool,
     pub(crate) next: usize,
     /// The run assembled since the last flush.
     pub(crate) pending: Vec<Glyph>,
@@ -98,17 +109,17 @@ pub struct ShowFrame {
 impl ShowFrame {
     /// The procedure the frame runs between its steps, if any.
     pub fn procedure(&self) -> Object {
-        match (&self.variant, self.kind) {
+        match (&self.variant, &self.kind) {
             (Variant::KShow { procedure }, _) => *procedure,
-            (_, FontKind::Type3 { build, .. }) => build,
+            (_, FontKind::Type3 { build, .. }) => *build,
             _ => Object::null(),
         }
     }
 
     pub(crate) fn references(&self) -> Vec<Object> {
         let mut objects = vec![self.dict, self.encoding];
-        if let FontKind::Type3 { build, .. } = self.kind {
-            objects.push(build);
+        if let FontKind::Type3 { build, .. } = &self.kind {
+            objects.push(*build);
         }
         if let Variant::GlyphShow(name) = self.variant {
             objects.push(name);
@@ -128,7 +139,7 @@ fn is_array(object: Object) -> bool {
 
 /// How a font dictionary's glyphs are produced, or `invalidfont` when
 /// they cannot be: a Type 1 or Type 42 dictionary without the resident
-/// marker has no glyph source until font programs are parsed.
+/// marker must carry a program the snapshot can be built from.
 pub(crate) fn font_kind(i: &mut Interp, dict: Object) -> Result<FontKind, VmError> {
     let font_type = entry(i, dict, "FontType")?.and_then(Object::as_i32);
     match font_type {
@@ -147,12 +158,22 @@ pub(crate) fn font_kind(i: &mut Interp, dict: Object) -> Result<FontKind, VmErro
                 Err(VmError::InvalidFont)
             }
         }
-        Some(1 | 42) => entry(i, dict, "ResidentFont")?
-            .and_then(Object::as_i32)
-            .and_then(|n| usize::try_from(n).ok())
-            .and_then(StdFont::from_index)
-            .map(FontKind::Resident)
-            .ok_or(VmError::InvalidFont),
+        Some(1 | 42) => {
+            let resident = entry(i, dict, "ResidentFont")?
+                .and_then(Object::as_i32)
+                .and_then(|n| usize::try_from(n).ok())
+                .and_then(StdFont::from_index);
+            match resident {
+                Some(font) => Ok(FontKind::Resident(font)),
+                None => {
+                    let program = i.font_program(dict)?;
+                    let scale = program
+                        .units_per_em()
+                        .map_or(1.0, |units| 1.0 / f32::from(units));
+                    Ok(FontKind::Embedded { program, scale })
+                }
+            }
+        }
         _ => Err(VmError::InvalidFont),
     }
 }
@@ -168,14 +189,35 @@ pub(crate) fn begin(
     measure: bool,
     operands: usize,
 ) -> Result<(), VmError> {
+    start(i, operator, variant, codes, measure, false, operands)
+}
+
+/// Starts `charpath` of `codes`: outline mode, which only a Type 1 or
+/// Type 42 program supports; resident and Type 3 fonts are `invalidfont`.
+pub(crate) fn begin_charpath(i: &mut Interp, codes: Vec<u8>) -> Result<(), VmError> {
+    start(i, "charpath", Variant::Show, codes, false, true, 2)
+}
+
+fn start(
+    i: &mut Interp,
+    operator: &'static str,
+    variant: Variant,
+    codes: Vec<u8>,
+    measure: bool,
+    outline: bool,
+    operands: usize,
+) -> Result<(), VmError> {
     let font = i.current_font().ok_or(VmError::InvalidFont)?;
     let dict = i.font_dict(font.instance).ok_or(VmError::InvalidFont)?;
     let kind = font_kind(i, dict)?;
+    if outline && !matches!(kind, FontKind::Embedded { .. }) {
+        return Err(VmError::InvalidFont);
+    }
     let encoding = entry(i, dict, "Encoding")?
         .filter(|e| is_array(*e))
         .ok_or(VmError::InvalidFont)?;
     let codes = match variant {
-        Variant::GlyphShow(name) => vec![glyphshow_code(i, encoding, name, kind)?],
+        Variant::GlyphShow(name) => vec![glyphshow_code(i, encoding, name, &kind)?],
         _ => codes,
     };
     let needed = match &variant {
@@ -190,7 +232,7 @@ pub(crate) fn begin(
         i.backend()?.current_point()?;
     }
     if i.has_graphics_backend() && !i.font_described(font.instance) {
-        let info = describe(i, dict, kind, encoding, font.matrix)?;
+        let info = describe(i, dict, &kind, encoding, font.matrix)?;
         i.backend()?.define_font(font.instance, &info)?;
         i.mark_font_described(font.instance);
     }
@@ -206,6 +248,7 @@ pub(crate) fn begin(
         codes,
         variant,
         measure,
+        outline,
         next: 0,
         pending: Vec::new(),
         total: Point::default(),
@@ -221,7 +264,7 @@ pub(crate) fn begin(
 fn describe(
     i: &mut Interp,
     dict: Object,
-    kind: FontKind,
+    kind: &FontKind,
     encoding: Object,
     matrix: Matrix,
 ) -> Result<FontInfo, VmError> {
@@ -229,12 +272,30 @@ fn describe(
         .into_iter()
         .map(|entry| entry.as_name().map(|atom| i.mem.name_text(atom).to_vec()))
         .collect();
+    let family = entry(i, dict, "FID")?
+        .and_then(Object::as_font_id)
+        .unwrap_or(u32::MAX);
     let source = match kind {
-        FontKind::Resident(font) => FontSource::Resident(font),
+        FontKind::Resident(font) => FontSource::Resident(*font),
+        FontKind::Embedded { program, .. } => {
+            let font_name = match entry(i, dict, "FontName")? {
+                Some(name) if name.ty() == Type::Name => {
+                    i.mem.name_text(name.as_name().expect("name")).to_vec()
+                }
+                Some(name) if name.ty() == Type::String => {
+                    i.mem.string(name).map(<[u8]>::to_vec).unwrap_or_default()
+                }
+                _ => Vec::new(),
+            };
+            FontSource::Embedded {
+                family,
+                kind: program.kind(),
+                program: program.clone(),
+                font_matrix: i.defined_matrix(family).unwrap_or(matrix),
+                font_name,
+            }
+        }
         FontKind::Type3 { .. } => {
-            let family = entry(i, dict, "FID")?
-                .and_then(Object::as_font_id)
-                .unwrap_or(u32::MAX);
             let font_bbox = match entry(i, dict, "FontBBox")? {
                 Some(array) if is_array(array) => {
                     let values: Vec<f32> = items(i, array)?
@@ -265,7 +326,7 @@ fn glyphshow_code(
     i: &Interp,
     encoding: Object,
     name: Object,
-    kind: FontKind,
+    kind: &FontKind,
 ) -> Result<u8, VmError> {
     let found = items(i, encoding)?
         .iter()
@@ -323,8 +384,9 @@ fn advance(i: &mut Interp, f: &mut ShowFrame) -> Result<Next, VmError> {
             finish(i, f)?;
             return Ok(Next::Done);
         };
-        match f.kind {
+        match &f.kind {
             FontKind::Resident(font) => {
+                let font = *font;
                 let width = glyph_name(i, f, code)
                     .map(|name| i.mem.name_text(name.as_name().expect("name")).to_vec())
                     .and_then(|name| font.width(std::str::from_utf8(&name).ok()?))
@@ -335,12 +397,83 @@ fn advance(i: &mut Interp, f: &mut ShowFrame) -> Result<Next, VmError> {
                     return Ok(Next::Run(procedure));
                 }
             }
+            FontKind::Embedded { program, scale } => {
+                let (program, scale) = (program.clone(), *scale);
+                let glyph = program_glyph(i, f, &program, code)?;
+                let width = glyph.as_ref().map_or(Point::default(), |g| {
+                    Point::new(g.advance.0 * scale, g.advance.1 * scale)
+                });
+                if f.outline
+                    && let Some(glyph) = &glyph
+                {
+                    append_outline(i, f, glyph, scale)?;
+                }
+                let displacement = displacement(f, code, width)?;
+                add_glyph(f, code, displacement);
+                if let Some(procedure) = after_glyph(i, f)? {
+                    return Ok(Next::Run(procedure));
+                }
+            }
             FontKind::Type3 { build, by_name } => {
+                let (build, by_name) = (*build, *by_name);
                 begin_glyph(i, f, code, by_name)?;
                 return Ok(Next::Run(build));
             }
         }
     }
+}
+
+/// The program's glyph for `code`: by the encoding's name, else the
+/// program's `.notdef`, else nothing (a zero-width blank). A charstring
+/// or glyph record that cannot be interpreted is `invalidfont`.
+fn program_glyph(
+    i: &Interp,
+    f: &ShowFrame,
+    program: &Program,
+    code: u8,
+) -> Result<Option<Rc<ProgramGlyph>>, VmError> {
+    let lookup = |name: &[u8]| program.glyph(name).map_err(|_| VmError::InvalidFont);
+    if let Some(name) = glyph_name(i, f, code) {
+        let text = i.mem.name_text(name.as_name().expect("name")).to_vec();
+        if let Some(glyph) = lookup(&text)? {
+            return Ok(Some(glyph));
+        }
+    }
+    lookup(b".notdef")
+}
+
+/// Appends a glyph's outline to the current path: glyph units scaled,
+/// taken through the font matrix, and moved to the glyph's position in
+/// user space; the backend applies the CTM.
+fn append_outline(
+    i: &mut Interp,
+    f: &mut ShowFrame,
+    glyph: &ProgramGlyph,
+    scale: f32,
+) -> Result<(), VmError> {
+    let origin = match f.origin {
+        Some(origin) => origin,
+        None => {
+            let origin = i.backend()?.current_point()?;
+            f.origin = Some(origin);
+            origin
+        }
+    };
+    let at = add(origin, f.font.matrix.apply_delta(f.total));
+    let matrix = f.font.matrix;
+    let map = |x: f32, y: f32| add(matrix.apply(Point::new(x * scale, y * scale)), at);
+    let backend = i.backend()?;
+    for op in &glyph.outline.ops {
+        match *op {
+            OutlineOp::MoveTo(x, y) => backend.moveto(map(x, y))?,
+            OutlineOp::LineTo(x, y) => backend.lineto(map(x, y))?,
+            OutlineOp::CurveTo(x1, y1, x2, y2, x, y) => {
+                backend.curveto(map(x1, y1), map(x2, y2), map(x, y))?;
+            }
+            OutlineOp::Close => backend.closepath()?,
+        }
+    }
+    Ok(())
 }
 
 /// The glyph name a code selects: the `glyphshow` name, else the
@@ -431,9 +564,18 @@ fn after_glyph(i: &mut Interp, f: &mut ShowFrame) -> Result<Option<Object>, VmEr
 }
 
 /// Hands the pending run to the backend, which advances the current
-/// point; the next run starts wherever that leaves it.
+/// point; the next run starts wherever that leaves it. In outline mode
+/// the outlines are already in the path and the current point moves to
+/// the end of the run.
 fn flush(i: &mut Interp, f: &mut ShowFrame) -> Result<(), VmError> {
-    if !f.pending.is_empty()
+    if f.outline {
+        let origin = match f.origin {
+            Some(origin) => origin,
+            None => i.backend()?.current_point()?,
+        };
+        let end = add(origin, f.font.matrix.apply_delta(f.total));
+        i.backend()?.moveto(end)?;
+    } else if !f.pending.is_empty()
         && !f.measure
         && let Some(backend) = i.graphics_backend()
     {
@@ -550,6 +692,7 @@ mod tests {
             codes: vec![97, 32, 98],
             variant,
             measure: false,
+            outline: false,
             next: 0,
             pending: Vec::new(),
             total: Point::default(),

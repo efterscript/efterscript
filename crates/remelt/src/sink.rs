@@ -7,7 +7,9 @@
 //! `PageSink::page` cannot return an error, so the first failure is kept
 //! and every later page ignored; `finish` reports it. The content stream
 //! is built in memory and the page written through one `add_page` call,
-//! so a page that fails is never half-written by this layer.
+//! so a page that fails is never half-written by this layer. Embedded
+//! fonts are written at `finish`, once every page has said which glyphs
+//! it uses.
 
 use std::io::Write;
 
@@ -64,19 +66,22 @@ impl<W: Write> PdfSink<W> {
         &self.notes
     }
 
-    /// Closes the document — page tree, catalog, Info, cross-reference
-    /// table — and returns the writer. A failure latched while writing a
-    /// page is returned instead.
+    /// Closes the document — the embedded fonts, page tree, catalog,
+    /// Info, cross-reference table — and returns the writer. A failure
+    /// latched while writing a page is returned instead.
     pub fn finish(self) -> Result<W, Error> {
+        let filter = self.text_filter();
         let PdfSink {
             mut doc,
             tree,
             error,
+            fonts,
             ..
         } = self;
         if let Some(e) = error {
             return Err(e.into());
         }
+        fonts.embedded.write_all(&mut doc, filter)?;
         let root = tree.finish(&mut doc)?;
         let info = write_info(&mut doc, |d| {
             d.key("Producer").string(PRODUCER.as_bytes());

@@ -106,6 +106,7 @@ pub mod arith;
 pub mod array;
 pub mod control;
 pub mod dict;
+pub mod embedded;
 pub mod errors;
 pub mod file;
 pub mod font;

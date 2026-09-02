@@ -452,9 +452,11 @@ fn glyphshow(i: &mut Interp) -> Result<(), VmError> {
     )
 }
 
-/// Outlines are not available until font programs are parsed.
-fn charpath(_: &mut Interp) -> Result<(), VmError> {
-    Err(VmError::InvalidFont)
+/// `charpath`: the string's outlines join the current path; the boolean
+/// is accepted and, with no stroked fonts drawn as such, ignored.
+fn charpath(i: &mut Interp) -> Result<(), VmError> {
+    let string = codes(i, i.peek(1)?)?;
+    show::begin_charpath(i, string)
 }
 
 // --- glyph width declarations ---------------------------------------------------------

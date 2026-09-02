@@ -1,0 +1,9 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+font 0 embedded truetype SynTT glyphs=3 enc=[65 /a 66 /o]
+ops:
+text 0 20 0 0 20 100 100 (AB) 0.5 0 0.585938 0

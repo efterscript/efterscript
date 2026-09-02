@@ -30,7 +30,9 @@ use ps_vm::{
 };
 
 use crate::arc;
-use crate::ir::{FillRule, FontIndex, FontSpec, GlyphProc, IrOp, Op, Page, PageSink, glyph_names};
+use crate::ir::{
+    FillRule, FontIndex, FontSpec, GlyphProc, IrOp, Op, Page, PageSink, ProgramRef, glyph_names,
+};
 use crate::state::{ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, rect_segments};
 
 /// What the IR last set, tracked per open `Save`.
@@ -323,7 +325,8 @@ impl<S: PageSink> Graphics<S> {
     // --- fonts ---------------------------------------------------------------------
 
     /// The page resource for the current font instance, interned on first
-    /// use: a resident font by base and encoding, a Type 3 font by family
+    /// use: a resident font by base and encoding, an embedded font by its
+    /// snapshot (one per family) and encoding, a Type 3 font by family
     /// and encoding.
     fn font_resource(&mut self, font: FontRef) -> Result<FontIndex, VmError> {
         if let Some(&index) = self.page_fonts.get(&font.instance) {
@@ -331,12 +334,26 @@ impl<S: PageSink> Graphics<S> {
         }
         let info = self.fonts.get(&font.instance).ok_or(VmError::InvalidFont)?;
         let encoding = glyph_names(&info.encoding);
-        let index = match info.source {
-            FontSource::Resident(base) => self
-                .page
-                .resources
-                .intern_font(FontSpec::Resident { base, encoding }),
-            FontSource::Type3 {
+        let index = match &info.source {
+            FontSource::Resident(base) => self.page.resources.intern_font(FontSpec::Resident {
+                base: *base,
+                encoding,
+            }),
+            FontSource::Embedded {
+                family,
+                kind,
+                program,
+                font_matrix,
+                font_name,
+            } => self.page.resources.intern_font(FontSpec::Embedded {
+                family: *family,
+                kind: *kind,
+                font_name: font_name.clone(),
+                font_matrix: *font_matrix,
+                program: ProgramRef(program.clone()),
+                encoding,
+            }),
+            &FontSource::Type3 {
                 family,
                 font_matrix,
                 font_bbox,

@@ -28,6 +28,7 @@ use ps_graphics::{Graphics, Page, PageSink};
 use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
 
 mod content;
+mod embedded;
 mod fonts;
 mod resources;
 mod sink;

@@ -22,7 +22,7 @@ positioned after the last byte the layer consumed.
 #### Scenario: A hexadecimal eexec section
 
 - **GIVEN** a program whose `eexec` section, when decrypted, is
-  `/x 42 def mark currentfile closefile`, followed by zeros and
+  `userdict /x 42 put mark currentfile closefile`, followed by zeros and
   `cleartomark x =`
 - **THEN** the output is `42`
 
@@ -89,8 +89,9 @@ segments.
 
 - **GIVEN** the same font whose glyph `o` is one quadratic contour
 - **WHEN** `(o) true charpath pathbbox` runs
-- **THEN** the bounding box matches the contour's control box scaled by
-  the font size
+- **THEN** the bounding box is that of the converted cubic segments'
+  points and control points, scaled by the font size, and lies within
+  the quadratic contour's control box
 
 ### Requirement: charpath appends outlines
 
