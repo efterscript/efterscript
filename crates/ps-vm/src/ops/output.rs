@@ -64,11 +64,21 @@ const MAX_PRINT_DEPTH: usize = 64;
 /// exists, a bracketed type name otherwise.
 pub fn full(i: &Interp, object: Object) -> Vec<u8> {
     let mut out = Vec::new();
-    write_full(i, object, &mut out, 0);
+    write_full(i, object, &mut out, 0, false);
     out
 }
 
-fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize) {
+/// The object as re-scannable source: like `==`, except that operators
+/// print as their bare names (so a bound procedure round-trips) and
+/// objects without a syntax print as `null`. This is how a procedure is
+/// captured as text, e.g. a tint transform.
+pub fn source(i: &Interp, object: Object) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_full(i, object, &mut out, 0, true);
+    out
+}
+
+fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize, source: bool) {
     match object.ty() {
         Type::Name => {
             if object.is_literal() {
@@ -112,17 +122,23 @@ fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize) {
                         if k > 0 {
                             out.push(b' ');
                         }
-                        write_full(i, item, out, depth + 1);
+                        write_full(i, item, out, depth + 1, source);
                     }
                     out.push(close);
                 }
                 _ => out.extend(b"--nostringval--"),
             }
         }
+        Type::Operator if source => out.extend(brief(i, object)),
         Type::Operator => {
             out.extend(b"--");
             out.extend(brief(i, object));
             out.extend(b"--");
+        }
+        Type::Null if source => out.extend(b"null"),
+        Type::Mark if source => out.extend(b"mark"),
+        Type::Dict | Type::File | Type::Save | Type::FontId | Type::GState if source => {
+            out.extend(b"null")
         }
         Type::Dict => out.extend(b"-dict-"),
         Type::File => out.extend(b"-file-"),

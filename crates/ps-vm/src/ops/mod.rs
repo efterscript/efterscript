@@ -7,7 +7,8 @@
 //! chains them once per process, and an operator object's index is its
 //! position in that chain. `systemdict` lists the public entries; internal
 //! entries (the default error handlers) are reachable only through
-//! `errordict`.
+//! `errordict`; graphics entries enter `systemdict` only when a graphics
+//! backend is installed.
 
 use std::sync::OnceLock;
 
@@ -49,13 +50,23 @@ impl Sig {
     }
 }
 
+/// Where an operator's name is defined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Visibility {
+    /// In `systemdict` from the start.
+    Public,
+    /// Reachable only through `errordict`.
+    Internal,
+    /// Defined in `systemdict` by `Interp::set_graphics_backend`.
+    Graphics,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct OpEntry {
     pub name: &'static str,
     pub func: OpFn,
     pub sig: &'static [Sig],
-    /// Kept out of `systemdict`.
-    pub internal: bool,
+    pub visibility: Visibility,
 }
 
 /// Declares a module's operator table:
@@ -67,21 +78,25 @@ pub struct OpEntry {
 /// }}
 /// ```
 ///
-/// `internal OPS { … }` marks every entry internal.
+/// `internal OPS { … }` marks every entry internal and `graphics OPS { … }`
+/// marks every entry as belonging to the graphics group.
 macro_rules! op_table {
     ($table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
-        op_table!(@build $table, false, { $($name => $func $(, [$($sig),*])?;)* });
+        op_table!(@build $table, Public, { $($name => $func $(, [$($sig),*])?;)* });
     };
     (internal $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
-        op_table!(@build $table, true, { $($name => $func $(, [$($sig),*])?;)* });
+        op_table!(@build $table, Internal, { $($name => $func $(, [$($sig),*])?;)* });
     };
-    (@build $table:ident, $internal:expr, { $($name:expr => $func:expr $(, [$($sig:ident),*])?;)* }) => {
+    (graphics $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
+        op_table!(@build $table, Graphics, { $($name => $func $(, [$($sig),*])?;)* });
+    };
+    (@build $table:ident, $visibility:ident, { $($name:expr => $func:expr $(, [$($sig:ident),*])?;)* }) => {
         pub(crate) static $table: &[$crate::ops::OpEntry] = &[
             $($crate::ops::OpEntry {
                 name: $name,
                 func: $func,
                 sig: &[$($($crate::ops::Sig::$sig),*)?],
-                internal: $internal,
+                visibility: $crate::ops::Visibility::$visibility,
             }),*
         ];
     };
@@ -93,7 +108,10 @@ pub mod control;
 pub mod dict;
 pub mod errors;
 pub mod file;
+pub mod graphics;
+pub mod image;
 pub mod output;
+pub mod pagedevice;
 pub mod stack;
 pub mod types;
 pub mod vm;
@@ -111,6 +129,8 @@ const MODULES: &[&[OpEntry]] = &[
     types::OPS,
     vm::OPS,
     file::OPS,
+    pagedevice::OPS,
+    graphics::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -120,10 +140,10 @@ pub fn table() -> &'static [OpEntry] {
 }
 
 /// The index of the operator named `name` with the given visibility.
-pub fn find(name: &str, internal: bool) -> Option<u32> {
+pub fn find(name: &str, visibility: Visibility) -> Option<u32> {
     table()
         .iter()
-        .position(|e| e.internal == internal && e.name == name)
+        .position(|e| e.visibility == visibility && e.name == name)
         .map(|i| u32::try_from(i).expect("operator table fits in u32"))
 }
 
@@ -186,12 +206,15 @@ mod tests {
     fn table_names_are_unique_per_visibility() {
         let mut seen = std::collections::HashSet::new();
         for e in table() {
-            assert!(seen.insert((e.name, e.internal)), "duplicate {}", e.name);
+            assert!(seen.insert((e.name, e.visibility)), "duplicate {}", e.name);
         }
-        assert!(find("add", false).is_some());
-        assert!(find("add", true).is_none());
-        assert!(find("typecheck", true).is_some());
-        assert!(find("typecheck", false).is_none());
+        assert!(find("add", Visibility::Public).is_some());
+        assert!(find("add", Visibility::Internal).is_none());
+        assert!(find("typecheck", Visibility::Internal).is_some());
+        assert!(find("typecheck", Visibility::Public).is_none());
+        assert!(find("moveto", Visibility::Graphics).is_some());
+        assert!(find("moveto", Visibility::Public).is_none());
+        assert!(find("setpagedevice", Visibility::Public).is_some());
     }
 
     #[test]

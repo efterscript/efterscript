@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: [612 792]
+% expect-output: [300 400]
+% expect-output: false
+% expect-output: (tray)
+% expect-output: true
+% Scenario: each setpagedevice merges into the page device; the default
+% page size is letter; values survive in global VM across restore.
+currentpagedevice /PageSize get ==            % [612 792]
+save
+<< /PageSize [300 400] /Duplex false >> setpagedevice
+<< /InputAttributes (tray) >> setpagedevice
+restore
+currentpagedevice /PageSize get ==            % [300 400]
+currentpagedevice /Duplex get ==              % false
+currentpagedevice /InputAttributes get ==     % (tray)
+currentpagedevice /InputAttributes get gcheck = % true

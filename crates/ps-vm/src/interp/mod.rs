@@ -13,10 +13,11 @@ use std::rc::Rc;
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
+use crate::graphics::GraphicsBackend;
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, Object, Type};
-use crate::ops::{self, Num, OpEntry};
+use crate::ops::{self, Num, OpEntry, Visibility};
 
 pub(crate) use exec::scan_error;
 pub use frame::{Frame, LoopFrame, Marker, SourceFrame, SourceSlot};
@@ -133,6 +134,11 @@ pub struct Interp {
     stderr: Option<Object>,
     run_file: Object,
     run_buffer: RunStream,
+    graphics: Option<Box<dyn GraphicsBackend>>,
+    // One entry per live `save`: the graphics-state depth just after the
+    // gsave that `save` performed, below which `grestore` must not pop.
+    gstate_floors: Vec<usize>,
+    page_device: Object,
     #[allow(dead_code)]
     pub(crate) quirks: Quirks,
     pub(crate) dicts: StandardDicts,
@@ -185,6 +191,7 @@ impl Interp {
         let systemdict = mem.new_dict(u32::try_from(ops.len()).unwrap_or(u32::MAX));
         let globaldict = mem.new_dict(200);
         let statusdict = mem.new_dict(16);
+        let page_device = mem.new_dict(32);
         mem.set_global(false);
         let userdict = mem.new_dict(200);
         let errordict = mem.new_dict(32);
@@ -214,6 +221,9 @@ impl Interp {
             stderr,
             run_file,
             run_buffer,
+            graphics: None,
+            gstate_floors: Vec::new(),
+            page_device,
             quirks,
             dicts: StandardDicts {
                 systemdict,
@@ -242,10 +252,10 @@ impl Interp {
         let dicts = self.dicts;
         let ops = self.ops;
         for (index, entry) in ops.iter().enumerate() {
-            let dict = if entry.internal {
-                dicts.errordict
-            } else {
-                dicts.systemdict
+            let dict = match entry.visibility {
+                Visibility::Public => dicts.systemdict,
+                Visibility::Internal => dicts.errordict,
+                Visibility::Graphics => continue,
             };
             let key = self.intern(entry.name);
             let op = Object::operator(u32::try_from(index).expect("table fits in u32"));
@@ -277,6 +287,8 @@ impl Interp {
             .dict_set_access(dicts.systemdict, Access::ReadOnly)
             .expect("systemdict exists");
 
+        ops::pagedevice::seed(self).expect("fresh dictionary");
+
         let atoms = self.atoms;
         for (key, value) in [
             (atoms.newerror, Object::boolean(false)),
@@ -288,6 +300,75 @@ impl Interp {
                 .dict_put(dicts.error, key, value)
                 .expect("fresh dictionary");
         }
+    }
+
+    // --- graphics ------------------------------------------------------------
+
+    /// Installs the graphics backend and defines the graphics operators in
+    /// `systemdict`. Until this is called, `moveto` and the rest of the
+    /// group are undefined names. The backend is told the current page
+    /// size so its media box agrees with `currentpagedevice`.
+    pub fn set_graphics_backend(&mut self, backend: Box<dyn GraphicsBackend>) {
+        let mut backend = backend;
+        if let Some(media_box) = ops::pagedevice::media_box(self) {
+            let _ = backend.set_media_box(media_box);
+        }
+        let first = self.graphics.is_none();
+        self.graphics = Some(backend);
+        if !first {
+            return;
+        }
+        let systemdict = self.dicts.systemdict;
+        for (index, entry) in self.ops.iter().enumerate() {
+            if entry.visibility != Visibility::Graphics {
+                continue;
+            }
+            let key = self.intern(entry.name);
+            let op = Object::operator(u32::try_from(index).expect("table fits in u32"));
+            // systemdict is read-only by now; the entries predate every
+            // save and are global, so the raw insert is safe.
+            self.mem
+                .dict_mut(systemdict)
+                .expect("systemdict exists")
+                .insert(key, op);
+        }
+    }
+
+    pub fn has_graphics_backend(&self) -> bool {
+        self.graphics.is_some()
+    }
+
+    pub fn graphics_backend(&mut self) -> Option<&mut (dyn GraphicsBackend + 'static)> {
+        self.graphics.as_deref_mut()
+    }
+
+    /// The backend a graphics operator dispatches to; `undefined` without
+    /// one, which can only happen to an operator object obtained before
+    /// the backend was removed, since the names are not defined otherwise.
+    pub(crate) fn backend(&mut self) -> Result<&mut (dyn GraphicsBackend + 'static), VmError> {
+        self.graphics.as_deref_mut().ok_or(VmError::Undefined)
+    }
+
+    /// The page-device dictionary `currentpagedevice` returns.
+    pub fn page_device(&self) -> Object {
+        self.page_device
+    }
+
+    /// The depth `grestore` may not pop below: the state the innermost
+    /// `save` left on the graphics-state stack.
+    pub(crate) fn gstate_floor(&self) -> usize {
+        self.gstate_floors.last().copied().unwrap_or(0)
+    }
+
+    pub(crate) fn push_gstate_floor(&mut self, floor: usize) {
+        self.gstate_floors.push(floor);
+    }
+
+    /// Keeps one floor per live save after `restore` discarded the nested
+    /// ones.
+    pub(crate) fn truncate_gstate_floors(&mut self) {
+        let live = self.mem.save_depth();
+        self.gstate_floors.truncate(live);
     }
 
     // --- state -------------------------------------------------------------
@@ -398,9 +479,16 @@ impl Interp {
             .expect("interpreter names are short")
     }
 
-    /// The operator object registered under `name` in `systemdict`.
+    /// The operator object `systemdict` defines under `name`: a public
+    /// operator, or a graphics operator once a backend is installed.
     pub fn operator(&self, name: &str) -> Option<Object> {
-        ops::find(name, false).map(Object::operator)
+        ops::find(name, Visibility::Public)
+            .or_else(|| {
+                self.graphics
+                    .as_ref()
+                    .and_then(|_| ops::find(name, Visibility::Graphics))
+            })
+            .map(Object::operator)
     }
 
     /// `def` into the current dictionary.

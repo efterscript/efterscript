@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Virtual-memory operators (PLRM3 §3.7, §8.2). `save` records no
-//! graphics state yet: the graphics layer will pass its stack depth here
-//! and pop back to what `restore` returns.
+//! Virtual-memory operators (PLRM3 §3.7, §8.2). `save` performs the
+//! implicit graphics save and records the depth to return to; `restore`
+//! pops the graphics-state stack back to it.
 
 use crate::error::VmError;
 use crate::interp::Interp;
@@ -22,7 +22,24 @@ op_table! { OPS {
 const VM_MAXIMUM: i32 = 1 << 30;
 
 fn save(i: &mut Interp) -> Result<(), VmError> {
-    let save = i.mem.save(0)?;
+    let depth = match i.graphics_backend() {
+        Some(backend) => {
+            let depth = backend.gstate_depth();
+            backend.gsave()?;
+            Some(depth)
+        }
+        None => None,
+    };
+    let save = match i.mem.save(depth.unwrap_or(0)) {
+        Ok(save) => save,
+        Err(e) => {
+            if depth.is_some() {
+                let _ = i.backend()?.grestore();
+            }
+            return Err(e);
+        }
+    };
+    i.push_gstate_floor(depth.map_or(0, |d| d + 1));
     i.push(save)
 }
 
@@ -33,7 +50,11 @@ fn restore(i: &mut Interp) -> Result<(), VmError> {
     }
     let references = i.exec_references();
     let (ostack, dstack) = (i.ostack.clone(), i.dstack.clone());
-    i.mem.restore(save, &[&ostack, &dstack, &references])?;
+    let depth = i.mem.restore(save, &[&ostack, &dstack, &references])?;
+    i.truncate_gstate_floors();
+    if let Some(backend) = i.graphics_backend() {
+        backend.grestore_to(depth)?;
+    }
     i.pop()?;
     Ok(())
 }

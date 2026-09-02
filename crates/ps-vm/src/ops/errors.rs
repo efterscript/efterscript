@@ -26,6 +26,7 @@ op_table! { internal HANDLERS {
     VmError::InvalidRestore.name() => |i| default_error(i, VmError::InvalidRestore);
     VmError::IoError.name() => |i| default_error(i, VmError::IoError);
     VmError::LimitCheck.name() => |i| default_error(i, VmError::LimitCheck);
+    VmError::NoCurrentPoint.name() => |i| default_error(i, VmError::NoCurrentPoint);
     VmError::RangeCheck.name() => |i| default_error(i, VmError::RangeCheck);
     VmError::StackOverflow.name() => |i| default_error(i, VmError::StackOverflow);
     VmError::StackUnderflow.name() => |i| default_error(i, VmError::StackUnderflow);
@@ -73,6 +74,7 @@ fn handleerror(i: &mut Interp) -> Result<(), VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ops::Visibility;
 
     #[test]
     fn every_error_has_a_default_handler() {
@@ -80,7 +82,7 @@ mod tests {
             assert!(
                 HANDLERS
                     .iter()
-                    .any(|e| e.internal && e.name == error.name()),
+                    .any(|e| e.visibility == Visibility::Internal && e.name == error.name()),
                 "{}",
                 error.name()
             );

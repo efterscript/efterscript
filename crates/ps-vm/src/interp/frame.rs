@@ -5,6 +5,7 @@
 
 use crate::object::Object;
 use crate::ops::Num;
+use crate::ops::image::ImageAcquisition;
 use crate::scanner::Scanner;
 use crate::source::{FileSource, StringSource};
 
@@ -82,7 +83,7 @@ impl SourceSlot {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum LoopFrame {
     For {
         body: Object,
@@ -106,6 +107,13 @@ pub enum LoopFrame {
         container: Object,
         next: u32,
     },
+    /// `image` or `imagemask` collecting sample data from a procedure: the
+    /// body runs until enough bytes have been delivered or it returns an
+    /// empty string.
+    ImageData {
+        body: Object,
+        acquisition: Box<ImageAcquisition>,
+    },
 }
 
 impl LoopFrame {
@@ -115,7 +123,8 @@ impl LoopFrame {
             LoopFrame::For { body, .. }
             | LoopFrame::Repeat { body, .. }
             | LoopFrame::Loop { body }
-            | LoopFrame::ForAll { body, .. } => *body,
+            | LoopFrame::ForAll { body, .. }
+            | LoopFrame::ImageData { body, .. } => *body,
         }
     }
 }

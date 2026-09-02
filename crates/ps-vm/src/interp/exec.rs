@@ -12,7 +12,7 @@ use super::{SourceFrame, SourceSlot, lookup_in};
 use crate::error::VmError;
 use crate::memory::Memory;
 use crate::names::Atom;
-use crate::object::{Object, Type};
+use crate::object::{Access, Object, Type};
 use crate::ops::{self, Num};
 use crate::scanner::{Scan, ScanErrorKind, Scanner};
 use crate::source::{FileSource, Source, StringSource};
@@ -58,7 +58,9 @@ enum LoopStep {
         values: [Option<Object>; 2],
         operator: &'static str,
     },
-    Failed(VmError),
+    /// The image's data is complete: hand it to the backend.
+    FinishImage,
+    Failed(VmError, &'static str),
 }
 
 impl Interp {
@@ -400,7 +402,45 @@ impl Interp {
                             operator: "forall",
                         }
                     }
-                    Err(e) => LoopStep::Failed(e),
+                    Err(e) => LoopStep::Failed(e, "forall"),
+                }
+            }
+            LoopFrame::ImageData { body, acquisition } => {
+                let operator = acquisition.operator_name();
+                if !acquisition.started {
+                    acquisition.started = true;
+                    if acquisition.is_complete() {
+                        LoopStep::FinishImage
+                    } else {
+                        LoopStep::Iterate {
+                            body: *body,
+                            values: [None, None],
+                            operator,
+                        }
+                    }
+                } else {
+                    // The procedure left its next chunk on the operand stack.
+                    match self.ostack.pop() {
+                        None => LoopStep::Failed(VmError::StackUnderflow, operator),
+                        Some(chunk) if chunk.ty() == Type::String => {
+                            let readable = chunk.access().unwrap_or_default() <= Access::ReadOnly;
+                            match self.mem.string(chunk).filter(|_| readable) {
+                                None => LoopStep::Failed(VmError::InvalidAccess, operator),
+                                Some(bytes) => {
+                                    if acquisition.feed(bytes) {
+                                        LoopStep::Iterate {
+                                            body: *body,
+                                            values: [None, None],
+                                            operator,
+                                        }
+                                    } else {
+                                        LoopStep::FinishImage
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) => LoopStep::Failed(VmError::TypeCheck, operator),
+                    }
                 }
             }
         };
@@ -408,9 +448,20 @@ impl Interp {
             LoopStep::Finished => {
                 self.pop_frame();
             }
-            LoopStep::Failed(e) => {
+            LoopStep::FinishImage => {
+                let Some(Frame::Loop(LoopFrame::ImageData { acquisition, .. })) = self.pop_frame()
+                else {
+                    unreachable!("frame checked above");
+                };
+                let operator = acquisition.operator_name();
+                if let Err(e) = ops::image::finish(self, *acquisition) {
+                    let command = self.operator(operator).unwrap_or(Object::null());
+                    self.raise(e, command);
+                }
+            }
+            LoopStep::Failed(e, operator) => {
                 self.pop_frame();
-                let command = self.operator("forall").unwrap_or(Object::null());
+                let command = self.operator(operator).unwrap_or(Object::null());
                 self.raise(e, command);
             }
             LoopStep::Iterate {

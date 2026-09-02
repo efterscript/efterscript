@@ -15,6 +15,7 @@
 pub mod dict;
 pub mod error;
 pub mod files;
+pub mod graphics;
 pub mod interp;
 pub mod io;
 pub mod memory;
@@ -27,6 +28,9 @@ pub mod source;
 pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
+pub use graphics::{
+    Bounds, GraphicsBackend, ImageSpec, LineCap, LineJoin, Matrix, Point, Rect, Seg, SpaceSpec,
+};
 pub use interp::{
     Capabilities, Config, ErrorSummary, Frame, Interp, Limits, LoopFrame,
     MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, Quirks, SourceFrame, SourceSlot, StandardDicts,
@@ -37,7 +41,7 @@ pub use memory::{
 };
 pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
 pub use object::{Access, CompositeRef, Handle, Object, Space, Type};
-pub use ops::{Num, OpEntry, OpFn, Sig};
+pub use ops::{Num, OpEntry, OpFn, Sig, Visibility};
 pub use scanner::{
     DscObserver, MAX_PROC_DEPTH, MAX_STRING_LEN, Resolver, Scan, ScanError, ScanErrorKind, Scanner,
     scan_all,

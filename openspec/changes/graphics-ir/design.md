@@ -56,9 +56,11 @@ Decisions:
 ## 3. Graphics state (in ps-graphics)
 
 A `GState` value (CTM, colour space + components, line parameters, dash,
-flatness, clip identifier, media box) on a plain stack. The current path is
-not part of the gstate (per the spec it survives gsave/grestore); it lives
-beside the stack. CTM math is `f32` with the same formatting rules as the
+flatness, clip identifier, media box, and the current path) on a plain
+stack: per PLRM3 §4.2 the current path is part of the graphics state and
+`gsave`/`grestore` save and restore it like every other component, so the
+backend's gsave copies the path (paths are small; sharing the segment
+vector until mutation keeps the copy cheap). CTM math is `f32` with the same formatting rules as the
 rest of the project. Default user space is PDF's: origin bottom-left, 72
 units per inch; there is no device resolution anywhere.
 
@@ -142,3 +144,129 @@ a later, distillation-side concern.
 - **Backend executing tint/image procedures via a callback into the
   interpreter** — inverts the dependency and reentrancy is poison; the VM
   drives all procedure execution.
+
+## 8. Implementation notes
+
+Recorded where the code departs from, or pins down, the text above.
+
+### Part 1
+
+Covers the ps-vm side: the `GraphicsBackend` trait, the graphics operator
+group, `image`/`imagemask`, `setpagedevice`/`currentpagedevice`, and the
+save/restore plumbing. The graphics crate is untouched.
+
+- **The operator table is a process-wide static chain, so "registered
+  only with a backend" is realised through a third visibility.** Every
+  `OpEntry` now carries `Visibility::{Public, Internal, Graphics}`;
+  graphics entries have stable table indices from the start but are
+  inserted into `systemdict` only by `Interp::set_graphics_backend`
+  (through the raw dictionary storage, since `systemdict` is read-only by
+  then; the entries are global and older than every save). Without a
+  backend `moveto` is not a name in `systemdict`, so the spec scenario is
+  met by the ordinary lookup failure, with the name as the offending
+  command. Each operator additionally answers `undefined` if called with
+  no backend, which is reachable only through an operator object held
+  across a backend swap. `Interp::operator(name)` resolves graphics names
+  only while a backend is installed, so the error machinery reports them
+  correctly.
+- **`setpagedevice` and `currentpagedevice` are always defined**, in a
+  separate public group. They are device configuration, not marking; the
+  page-device dictionary lives in the VM, and the "Unknown keys accepted"
+  scenario has to run as a corpus file under `difftest`, which has no
+  backend. With a backend installed, a `PageSize` request is forwarded as
+  `set_media_box([0 0 w h])`; installing a backend forwards the current
+  page size once so the two agree. The dictionary is global, read-only
+  (`currentpagedevice` returns it directly, so a program cannot corrupt
+  it), seeded with `/PageSize [612 792]`, and every request value is
+  deep-copied into global VM (arrays, strings, dictionaries; other local
+  composites are `typecheck`) so the global/local rule holds and the
+  recorded values survive `restore`. A malformed `PageSize` (not two
+  numbers) is `typecheck`/`rangecheck`; every other key is stored without
+  inspection.
+- **Trait shape.** All arguments are numbers, slices, and the value types
+  in `ps_vm::graphics` (`Point`, `Rect` as origin+extent for the `rect…`
+  operators, `Bounds` as corners for `pathbbox` and the media box,
+  `Matrix([a b c d tx ty])`, `LineCap`, `LineJoin`, `SpaceSpec`,
+  `ImageSpec`, `Seg`). Queries that cannot fail return plain values;
+  everything else returns `Result<_, VmError>`. Beyond §2's list the trait
+  has `gstate_depth`, `grestore_to(depth)`, `default_matrix` (what
+  `defaultmatrix`/`initmatrix` read), `rectfill`/`rectstroke`/`rectclip`
+  (explicit rather than composed, because they must leave the current path
+  alone and the path is the backend's), `nulldevice`, and `clippath`
+  returning the clip's segments. `ImageSpec.matrix` is a `Matrix`, not a
+  bare `[f32; 6]`.
+- **What the operator layer computes versus leaves to the backend.**
+  Computed here: matrix arithmetic for every form with a matrix operand
+  (`translate`/`scale`/`rotate` with a matrix, `concatmatrix`,
+  `invertmatrix`, `…transform` with a matrix); `transform`/`itransform`/
+  `dtransform`/`idtransform` against the CTM obtained from
+  `current_matrix()` (a singular CTM is `undefinedresult`); relative path
+  operators as `current_point()` plus the delta (so the trait has no
+  relative methods); HSB↔RGB and the gray/RGB/CMYK conversions of the
+  `current…color` queries (a Separation, DeviceN, or Indexed current
+  colour reads as black through those queries, since evaluating a tint
+  transform is not this layer's business); clamping of the device-space
+  convenience operators' components to [0, 1] (`setcolor` passes raw
+  values); `setlinecap`/`setlinejoin` range (`rangecheck`),
+  `setmiterlimit` below 1 and a `setdash` array that is negative or all
+  zero (`rangecheck`). Left to the backend: the CTM itself, the Bézier
+  work of the `arc` family (raw arguments are passed), `arcto`'s tangent
+  points, `currentpoint` in user space, the bounding box, the meaning of
+  `nulldevice` (marks are discarded until the state that installed it is
+  restored; the reference also resets the CTM, which is the backend's to
+  honour), and every parameter range the trait does not check. Failing
+  operators leave their operands on the stack.
+- **Tint transforms are captured as re-scannable source text.** Arrays
+  carry no span (the scanner reports spans per token and the array object
+  does not retain one), so the procedure is serialised with
+  `ops::output::source`: the `==` form with operators printed as bare
+  names, so a `bind`-ed procedure round-trips, and objects without a
+  syntax printed as `null`. `currentcolorspace` rebuilds the array from
+  the `SpaceSpec`, re-scanning the tint source into a procedure; nested
+  device alternates come back as bare names, the top level always as an
+  array. `SpaceSpec::Indexed` accepts a string lookup table only; a
+  procedure lookup is `typecheck`. `hival` is limited to 4095. Families
+  outside DeviceGray/RGB/CMYK, Separation, DeviceN, and Indexed are
+  `undefined`; a malformed array of a known family is `rangecheck`/
+  `typecheck`. Nesting deeper than eight levels is `limitcheck`.
+- **Image data acquisition.** A string source is taken as is; a file is
+  read until the required count or end of file; a procedure runs as a
+  `LoopFrame::ImageData` frame (`LoopFrame` is now `Clone`, not `Copy`)
+  that the loop stepper drives like `forall`, taking one string off the
+  operand stack per iteration (anything else is `typecheck`, an empty
+  stack `stackunderflow`, with `image`/`imagemask` as the offending
+  command) until the byte count is reached or a chunk is empty. The count
+  is `height × ceil(width × bits × components / 8)`. A source that runs
+  dry does not pad: the data is trimmed to whole rows and
+  `ImageSpec.height` becomes the number of rows delivered, so the backend
+  always sees exactly `height` complete rows. `image` samples are in the
+  current colour space (`color_space: Some(…)`, components from it);
+  `imagemask` has `color_space: None`. Default `Decode` is `[0 1]` per
+  component, `[0 2^bits−1]` for Indexed, and the Level 1 `imagemask`
+  polarity maps to `[1 0]`/`[0 1]`. `ImageType` other than 1 is
+  `rangecheck`, `MultipleDataSources true` is `typecheck`, bits outside
+  {1, 2, 4, 8, 12} (masks: 1) are `rangecheck`, and `colorimage` is not
+  registered.
+- **save/restore.** `save` asks the backend for `gstate_depth()`, calls
+  `gsave`, and records the pre-gsave depth in the save record (undoing
+  the gsave if the save itself fails); `restore` calls
+  `grestore_to(depth)` with what the record returns, so the state at
+  `save` time is current again. The clamp is operator-layer bookkeeping:
+  `Interp` keeps one floor per live save (the depth just after `save`'s
+  gsave, aligned with the save stack and truncated with it). `grestore` at
+  the floor restores the state without popping it — a `grestore` followed
+  by a `gsave` on the backend — and is a no-op on an empty stack;
+  `grestoreall` pops to the floor and then does the same. Saves made
+  before a backend is installed record depth 0 and a floor of 0.
+- **`nocurrentpoint` is a new `VmError`** with the usual default handler.
+- **Caution for part 2, §3.** The claim that the current path is not part
+  of the graphics state and survives `gsave`/`grestore` should be checked
+  against PLRM3 §4.2 and §4.4 before the gstate stack is built; the
+  language reference lists the path among the graphics-state parameters.
+  Nothing in part 1 depends on either reading.
+
+- **Resolved (reviewer, PLRM3 §4.2 checked in the vault):** the current
+  path *is* part of the graphics state and is saved/restored by
+  `gsave`/`grestore`; §3 above has been corrected before part 2 builds the
+  gstate stack. `save`/`restore` likewise include it (§3.7.7 lists the
+  current path among the saved elements).

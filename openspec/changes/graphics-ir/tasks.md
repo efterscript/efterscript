@@ -2,11 +2,11 @@
 
 ## 1. Boundary (ps-vm)
 
-- [ ] 1.1 `GraphicsBackend` trait and installation on `Interp`; group registered only with a backend
-- [ ] 1.2 `ops/graphics.rs`: state, matrix, path, paint, clip, page operators popping/checking operands
-- [ ] 1.3 `image`/`imagemask`: dict form, data acquisition from procedures/strings/files via loop frames
-- [ ] 1.4 `setpagedevice`/`currentpagedevice` with tolerant recording
-- [ ] 1.5 save/restore ↔ gsave/grestore plumbing (depth already passes through)
+- [x] 1.1 `GraphicsBackend` trait and installation on `Interp`; group registered only with a backend
+- [x] 1.2 `ops/graphics.rs`: state, matrix, path, paint, clip, page operators popping/checking operands
+- [x] 1.3 `image`/`imagemask`: dict form, data acquisition from procedures/strings/files via loop frames
+- [x] 1.4 `setpagedevice`/`currentpagedevice` with tolerant recording
+- [x] 1.5 save/restore ↔ gsave/grestore plumbing (depth already passes through)
 
 ## 2. Graphics state (ps-graphics)
 
