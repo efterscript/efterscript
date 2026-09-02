@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% expect-output: 130.656
+% expect-output: 72.0
+% Scenario: resident charpath. Times-Roman outlines come from the
+% Liberation Serif asset; (Ab) at size 48 from (72, 72) advances the
+% current point by the AFM widths 722 and 500, and the fill paints the
+% two outlines as one path with no text operation; the golden pins the
+% outlines.
+% Expect: 130.656 and 72.0, then one page.
+/r { 1000 mul round 1000 div } def
+/Times-Roman findfont 48 scalefont setfont
+72 72 moveto (Ab) false charpath
+currentpoint r exch r = =
+fill
+showpage

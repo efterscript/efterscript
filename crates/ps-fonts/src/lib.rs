@@ -13,14 +13,18 @@
 //! The VM owns font-dictionary *semantics*; this crate owns the glyph engine,
 //! kept behind a trait. No rasterization.
 //!
-//! What exists so far: the metrics of the fourteen standard fonts
-//! ([`StdFont`]) read from the embedded AFM files, the two built-in text
-//! encodings, name-level substitution ([`substitute`]), glyph-name to
-//! Unicode mapping ([`unicode`]) through the Adobe Glyph List, and the
-//! glyph engine ([`Program`]): Type 1 charstrings and TrueType glyph
-//! tables interpreted into outlines and advances, the subsetters that
-//! regenerate a Type 1 program ([`type1::write`]) and rewrite a TrueType
-//! one ([`truetype::write::subset`]) for embedding, and the synthesised
+//! What exists so far: the resident set — the fourteen standard fonts
+//! ([`StdFont`]) and the thirty-five resident faces ([`ResidentFace`])
+//! with metrics read from the embedded AFM files and outlines from the
+//! embedded Liberation and TeX Gyre assets ([`outlines`], behind the
+//! `resident-outlines` feature) — the two built-in text encodings,
+//! name-level substitution ([`substitute`]), glyph-name to Unicode
+//! mapping ([`unicode`]) through the Adobe Glyph List, and the glyph
+//! engine ([`Program`]): Type 1 charstrings and TrueType glyph tables
+//! interpreted into outlines and advances, a reader for Type 1 font
+//! files ([`type1::parse_file`]), the subsetters that regenerate a
+//! Type 1 program ([`type1::write`]) and rewrite a TrueType one
+//! ([`truetype::write::subset`]) for embedding, and the synthesised
 //! fonts of [`testing`]. CFF follows.
 //!
 //! Independently useful for any document tooling.
@@ -30,6 +34,7 @@ pub mod encoding;
 mod glyph_list;
 mod mac_glyphs;
 pub mod outline;
+pub mod outlines;
 mod program;
 mod resident;
 mod substitute;
@@ -42,8 +47,15 @@ pub use encoding::{Encoding, ISO_LATIN1_ENCODING, STANDARD_ENCODING};
 pub use glyph_list::unicode;
 pub use mac_glyphs::MAC_GLYPH_NAMES;
 pub use outline::{Glyph, Outline, OutlineOp};
+pub use outlines::{OutlineAsset, ResidentOutlines};
 pub use program::{FontError, Program, ProgramKind};
-pub use resident::{Family, StdFont};
+pub use resident::{Family, ResidentFace, StdFont};
 pub use substitute::substitute;
 pub use truetype::TrueTypeProgram;
 pub use type1::Type1Program;
+
+/// Whether this build embeds the resident set's outline assets (the
+/// `resident-outlines` feature), and so can outline resident fonts.
+pub const fn has_resident_outlines() -> bool {
+    cfg!(feature = "resident-outlines")
+}

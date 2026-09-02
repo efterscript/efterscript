@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: true
+% Scenario: missing glyph. Times-Roman re-encoded with code 65 as a name
+% no asset has appends nothing for it and advances by 0, the metrics
+% lacking the name too; the path holds only the start point.
+% Expect: 0.0 and 0.0, then true.
+/r { 1000 mul round 1000 div } def
+/T2 /Times-Roman findfont dup length dict copy
+  dup /Encoding StandardEncoding dup length array copy
+  dup 65 /nosuchglyph put put definefont pop
+/T2 findfont 10 scalefont setfont
+0 0 moveto (A) false charpath
+currentpoint r exch r = =
+pathbbox 0 eq exch 0 eq and exch 0 eq and exch 0 eq and =

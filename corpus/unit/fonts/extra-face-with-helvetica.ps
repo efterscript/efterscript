@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% Scenario: Helvetica stays unembedded. Helvetica text beside Palatino
+% text on the same page: the Palatino font dictionary embeds its
+% subset program, the Helvetica one names the standard font and has no
+% font file.
+% Expect: one page.
+/Palatino-Roman findfont 12 scalefont setfont
+100 700 moveto (Pa) show
+/Helvetica findfont 12 scalefont setfont
+100 680 moveto (Hi) show
+showpage

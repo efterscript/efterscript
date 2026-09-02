@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use ps_fonts::{Program, ProgramKind, StdFont};
+use ps_fonts::{Program, ProgramKind, ResidentFace};
 
 use crate::error::VmError;
 
@@ -305,8 +305,9 @@ impl Glyph {
 /// needs to know it.
 #[derive(Clone, Debug)]
 pub enum FontSource {
-    /// One of the standard fourteen; widths come from its metrics.
-    Resident(StdFont),
+    /// One of the thirty-five resident faces; widths come from its
+    /// metrics and the backend draws nothing itself.
+    Resident(ResidentFace),
     /// A Type 3 font, whose glyphs are procedures the VM runs between
     /// `begin_glyph` and `end_glyph`. `family` is the `FID` every derived
     /// instance shares; `font_matrix` is the matrix the font was defined

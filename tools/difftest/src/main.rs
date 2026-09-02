@@ -15,6 +15,8 @@
 //!   absent, the job must end normally.
 //! - `% backend: none` — run without a graphics backend, for files that
 //!   check the scripting-only configuration.
+//! - `% requires: <feature>` — the file is skipped, with a message, in a
+//!   build without that feature; `resident-outlines` is the one known.
 //!
 //! Declarations are read from the leading comment block only.
 //!
@@ -49,6 +51,8 @@ pub struct Expectation {
     pub error: Option<String>,
     /// Whether the graphics backend is installed for the run.
     pub graphics: bool,
+    /// Build features the file needs, as declared.
+    pub requires: Vec<String>,
 }
 
 impl Default for Expectation {
@@ -57,7 +61,26 @@ impl Default for Expectation {
             output: String::new(),
             error: None,
             graphics: true,
+            requires: Vec::new(),
         }
+    }
+}
+
+impl Expectation {
+    /// The declared feature this build lacks, if any.
+    pub fn unmet_requirement(&self) -> Option<&str> {
+        self.requires
+            .iter()
+            .find(|feature| !feature_present(feature))
+            .map(String::as_str)
+    }
+}
+
+/// Whether this build has `feature`; an unknown feature is absent.
+fn feature_present(feature: &str) -> bool {
+    match feature {
+        "resident-outlines" => ps_fonts::has_resident_outlines(),
+        _ => false,
     }
 }
 
@@ -89,6 +112,7 @@ pub fn expectation(program: &str) -> Expectation {
     let mut lines = Vec::new();
     let mut error = None;
     let mut graphics = true;
+    let mut requires = Vec::new();
     for line in program.lines() {
         let line = line.trim_end_matches('\r');
         if line.trim().is_empty() {
@@ -103,6 +127,8 @@ pub fn expectation(program: &str) -> Expectation {
             error = Some(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("% backend:") {
             graphics = rest.trim() != "none";
+        } else if let Some(rest) = line.strip_prefix("% requires:") {
+            requires.extend(rest.split_whitespace().map(str::to_string));
         }
     }
     let mut output = lines.join("\n");
@@ -113,6 +139,7 @@ pub fn expectation(program: &str) -> Expectation {
         output,
         error,
         graphics,
+        requires,
     }
 }
 
@@ -394,11 +421,22 @@ fn external_check(root: &Path, path: &Path, pdf: &[u8]) -> Result<Vec<String>, S
     Ok(lines)
 }
 
+/// What running one corpus file found.
+enum Verdict {
+    /// The failure lines, none for a pass.
+    Checked(Vec<String>),
+    /// Not run: the build lacks the named feature.
+    Skipped(String),
+}
+
 /// Runs one corpus file against its declarations, its goldens, and the
-/// external checker; the failure lines, or none.
-fn check(root: &Path, path: &Path) -> Result<Vec<String>, String> {
+/// external checker.
+fn check(root: &Path, path: &Path) -> Result<Verdict, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("unreadable: {e}"))?;
     let expected = expectation(&String::from_utf8_lossy(&bytes));
+    if let Some(feature) = expected.unmet_requirement() {
+        return Ok(Verdict::Skipped(feature.to_string()));
+    }
     let actual = execute_with(&bytes, expected.graphics);
     let ir = read_golden(root, path, Golden::Ir)?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
@@ -416,7 +454,7 @@ fn check(root: &Path, path: &Path) -> Result<Vec<String>, String> {
     {
         lines.extend(external_check(root, path, pdf)?);
     }
-    Ok(lines)
+    Ok(Verdict::Checked(lines))
 }
 
 /// (Re)writes the goldens of `kinds` for a corpus file that produced
@@ -424,6 +462,9 @@ fn check(root: &Path, path: &Path) -> Result<Vec<String>, String> {
 fn update_goldens(root: &Path, path: &Path, kinds: &[Golden]) -> Result<Vec<PathBuf>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("unreadable: {e}"))?;
     let expected = expectation(&String::from_utf8_lossy(&bytes));
+    if expected.unmet_requirement().is_some() {
+        return Ok(Vec::new());
+    }
     let actual = execute_with(&bytes, expected.graphics);
     if actual.pages.is_empty() {
         return Ok(Vec::new());
@@ -476,6 +517,7 @@ fn run(args: &[String]) -> ExitCode {
         collect(path, &mut files);
     }
     let mut failures = 0;
+    let mut skipped = 0;
     for path in &files {
         let shown = path.strip_prefix(&root).unwrap_or(path).display();
         if !kinds.is_empty() {
@@ -494,13 +536,17 @@ fn run(args: &[String]) -> ExitCode {
             }
         }
         match check(&root, path) {
-            Ok(lines) if lines.is_empty() => println!("ok    {shown}"),
-            Ok(lines) => {
+            Ok(Verdict::Checked(lines)) if lines.is_empty() => println!("ok    {shown}"),
+            Ok(Verdict::Checked(lines)) => {
                 failures += 1;
                 println!("FAIL  {shown}");
                 for line in lines {
                     println!("{line}");
                 }
+            }
+            Ok(Verdict::Skipped(feature)) => {
+                skipped += 1;
+                println!("skip  {shown} (requires the {feature} feature, absent from this build)");
             }
             Err(e) => {
                 failures += 1;
@@ -510,10 +556,11 @@ fn run(args: &[String]) -> ExitCode {
     }
     println!();
     println!(
-        "{} files, {} passed, {} failed",
+        "{} files, {} passed, {} failed, {} skipped",
         files.len(),
-        files.len() - failures,
-        failures
+        files.len() - failures - skipped,
+        failures,
+        skipped
     );
     if failures > 0 || files.is_empty() {
         ExitCode::FAILURE
@@ -550,6 +597,16 @@ mod tests {
         assert_eq!(expectation("1 ="), Expectation::default());
         assert_eq!(expectation("% expect-output:\n").output, "\n");
         assert!(!expectation("%!PS\n% backend: none\n").graphics);
+        let e = expectation("%!PS\n% requires: resident-outlines\n1 =");
+        assert_eq!(e.requires, ["resident-outlines"]);
+        assert_eq!(
+            e.unmet_requirement().is_none(),
+            ps_fonts::has_resident_outlines()
+        );
+        assert_eq!(
+            expectation("% requires: no-such-feature\n").unmet_requirement(),
+            Some("no-such-feature")
+        );
     }
 
     #[test]
@@ -679,7 +736,9 @@ mod tests {
         collect(&root.join("corpus").join("unit"), &mut files);
         assert!(!files.is_empty());
         for path in files {
-            let lines = check(&root, &path).unwrap();
+            let Verdict::Checked(lines) = check(&root, &path).unwrap() else {
+                continue;
+            };
             assert!(
                 lines.is_empty(),
                 "{}:\n{}",

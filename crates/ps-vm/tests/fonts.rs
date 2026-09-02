@@ -427,10 +427,18 @@ fn charpath_needs_a_current_point_and_a_font_with_outlines() {
         "/Syn findfont 10 scalefont setfont (a) false charpath",
     ));
     assert_eq!(run.error(), Some("nocurrentpoint"));
-    let run = exec("/Helvetica findfont 10 scalefont setfont 0 0 moveto (x) false charpath");
+    // Symbol has no outline asset in any build.
+    let run = exec("/Symbol findfont 10 scalefont setfont 0 0 moveto (x) false charpath");
     assert_eq!(run.error(), Some("invalidfont"));
     assert_eq!(run.command(), Some("charpath"));
     assert_eq!(run.interp.ostack().len(), 2, "operands stay on failure");
+    let run = exec("/Helvetica findfont 10 scalefont setfont 0 0 moveto (x) false charpath");
+    if ps_fonts::has_resident_outlines() {
+        assert_eq!(run.error(), None);
+        assert!(run.path_calls().len() > 2, "the outline joined the path");
+    } else {
+        assert_eq!(run.error(), Some("invalidfont"));
+    }
     let run = exec(
         "/Sq << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding \
          /BuildGlyph { pop pop 500 0 setcharwidth } >> definefont 10 scalefont setfont \

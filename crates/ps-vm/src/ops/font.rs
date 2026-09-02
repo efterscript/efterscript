@@ -11,7 +11,7 @@
 //! current font in its own slot. `PAINT_OPS` marks the page and enters
 //! `systemdict` only with a backend, like the rest of the graphics group.
 
-use ps_fonts::{Encoding, StdFont};
+use ps_fonts::{Encoding, ResidentFace};
 
 use crate::error::VmError;
 use crate::graphics::{FontRef, Matrix};
@@ -52,7 +52,7 @@ op_table! { graphics PAINT_OPS {
 }}
 
 /// The marker entry of a resident font's dictionary: the index of the
-/// standard font whose metrics it measures with.
+/// resident face whose metrics it measures with.
 pub const RESIDENT_KEY: &str = "ResidentFont";
 
 fn is_array(object: Object) -> bool {
@@ -187,8 +187,8 @@ pub(crate) fn find(i: &mut Interp, key: Object) -> Result<Object, VmError> {
     if let Some(font) = defined(i, key)? {
         return Ok(font);
     }
-    if let Some(font) = StdFont::from_postscript_name(&text) {
-        return resident(i, font);
+    if let Some(face) = ResidentFace::from_postscript_name(&text) {
+        return resident(i, face);
     }
     if !i.fonts_config.substitute {
         return Err(VmError::InvalidFont);
@@ -206,7 +206,7 @@ fn findfont(i: &mut Interp) -> Result<(), VmError> {
 }
 
 /// The dictionary of a resident font, built in global VM on first use.
-pub(crate) fn resident(i: &mut Interp, font: StdFont) -> Result<Object, VmError> {
+pub(crate) fn resident(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
     if let Some(dict) = i.resident_fonts[font.index()] {
         return Ok(dict);
     }
@@ -223,7 +223,7 @@ fn number(value: f32) -> Object {
     }
 }
 
-fn materialise(i: &mut Interp, font: StdFont) -> Result<Object, VmError> {
+fn materialise(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
     let dict = i.mem.new_dict(10);
     let name = i.intern(font.postscript_name());
     let matrix = i.mem.alloc_array(vec![
@@ -241,7 +241,7 @@ fn materialise(i: &mut Interp, font: StdFont) -> Result<Object, VmError> {
         i.standard_encoding
     };
     let fid = i.allocate_fid();
-    let index = i32::try_from(font.index()).expect("fourteen fonts");
+    let index = i32::try_from(font.index()).expect("thirty-five faces");
     let entries = [
         ("FontType", Object::integer(1)),
         ("FontName", name),

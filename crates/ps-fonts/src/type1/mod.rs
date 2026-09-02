@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 //! Type 1 font programs: the encryption the format uses for its `eexec`
-//! section and its charstrings, and a program snapshot whose charstrings
-//! are interpreted into outlines.
+//! section and its charstrings, a program snapshot whose charstrings
+//! are interpreted into outlines, a reader for font files ([`file`]),
+//! and the writer that regenerates a program for embedding ([`write`]).
 
 mod charstring;
+pub mod file;
 pub mod write;
 
 use std::cell::RefCell;
@@ -14,6 +16,8 @@ use std::rc::Rc;
 
 use crate::outline::Glyph;
 use crate::program::FontError;
+
+pub use file::{FileEncoding, ParsedFont, parse_file};
 
 /// The key of an `eexec` section.
 pub const EEXEC_KEY: u16 = 55665;

@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 
 use pdf_out::{ArrayBuilder, Document, Filter, Ref};
-use ps_fonts::StdFont;
+use ps_fonts::ResidentFace;
 use ps_graphics::{FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, Resources};
 use ps_vm::{Bounds, Matrix, SpaceSpec};
 
@@ -289,8 +289,8 @@ pub(crate) fn put_bounds(a: &mut ArrayBuilder<'_>, b: [f32; 4]) {
 
 // --- resident fonts ------------------------------------------------------------------
 
-/// Font descriptor flags (ISO 32000-1 Table 123) for a standard font.
-fn flags(base: StdFont) -> i64 {
+/// Font descriptor flags (ISO 32000-1 Table 123) for a resident face.
+fn flags(base: ResidentFace) -> i64 {
     const FIXED_PITCH: i64 = 1;
     const SERIF: i64 = 1 << 1;
     const SYMBOLIC: i64 = 1 << 2;
@@ -305,10 +305,7 @@ fn flags(base: StdFont) -> i64 {
     if metrics.is_fixed_pitch {
         flags |= FIXED_PITCH;
     }
-    if matches!(
-        base.family(),
-        ps_fonts::Family::Times | ps_fonts::Family::Courier
-    ) {
+    if base.family().is_serif() {
         flags |= SERIF;
     }
     if base.is_italic() {
@@ -317,7 +314,10 @@ fn flags(base: StdFont) -> i64 {
     flags
 }
 
-fn write_descriptor<W: Write>(doc: &mut Document<W>, base: StdFont) -> Result<Ref, pdf_out::Error> {
+fn write_descriptor<W: Write>(
+    doc: &mut Document<W>,
+    base: ResidentFace,
+) -> Result<Ref, pdf_out::Error> {
     let metrics = base.metrics();
     let [_, lly, _, ury] = metrics.font_bbox;
     let r = doc.alloc();
@@ -343,7 +343,7 @@ fn write_descriptor<W: Write>(doc: &mut Document<W>, base: StdFont) -> Result<Re
 fn write_resident<W: Write>(
     doc: &mut Document<W>,
     r: Ref,
-    base: StdFont,
+    base: ResidentFace,
     encoding: &GlyphNames,
     filter: Filter,
 ) -> Result<(), pdf_out::Error> {
@@ -559,10 +559,12 @@ mod tests {
 
     #[test]
     fn flags_follow_the_family() {
-        assert_eq!(flags(StdFont::Helvetica), 32);
-        assert_eq!(flags(StdFont::TimesItalic), 2 | 32 | 64);
-        assert_eq!(flags(StdFont::CourierBold), 1 | 2 | 32);
-        assert_eq!(flags(StdFont::Symbol), 4);
+        assert_eq!(flags(ResidentFace::Helvetica), 32);
+        assert_eq!(flags(ResidentFace::TimesItalic), 2 | 32 | 64);
+        assert_eq!(flags(ResidentFace::CourierBold), 1 | 2 | 32);
+        assert_eq!(flags(ResidentFace::Symbol), 4);
+        assert_eq!(flags(ResidentFace::PalatinoItalic), 2 | 32 | 64);
+        assert_eq!(flags(ResidentFace::AvantGardeBook), 32);
     }
 
     #[test]

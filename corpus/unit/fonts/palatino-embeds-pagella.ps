@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% Scenario: Palatino text embeds Pagella. Palatino-Roman is resident
+% with the TeX Gyre Pagella outlines, so the document holds one embedded
+% Type 1 font named by the Pagella font name with a subset tag, subset
+% to P, a, and .notdef, and the text operation references it.
+% Expect: one page.
+/Palatino-Roman findfont 12 scalefont setfont
+100 700 moveto (Pa) show
+showpage

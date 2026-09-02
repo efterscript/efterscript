@@ -441,9 +441,18 @@ fn text_errors_leave_operands_in_place() {
     let run = exec("1 0 setcharwidth");
     assert_eq!(run.error(), Some("undefined"));
 
-    let run = exec("/Helvetica findfont 10 scalefont setfont 0 0 moveto (x) false charpath");
+    // Symbol has no outline asset in any build; Helvetica outlines only
+    // with the assets embedded.
+    let run = exec("/Symbol findfont 10 scalefont setfont 0 0 moveto (a) false charpath");
     assert_eq!(run.error(), Some("invalidfont"));
     assert_eq!(run.command(), Some("charpath"));
+    let run = exec("/Helvetica findfont 10 scalefont setfont 0 0 moveto (x) false charpath");
+    if ps_fonts::has_resident_outlines() {
+        assert_eq!(run.error(), None);
+    } else {
+        assert_eq!(run.error(), Some("invalidfont"));
+        assert_eq!(run.command(), Some("charpath"));
+    }
 
     let run = exec("/NoFID 3 dict dup /FontMatrix [1 0 0 1 0 0] put setfont");
     assert_eq!(run.error(), Some("invalidfont"));
@@ -688,6 +697,9 @@ fn resourceforall_writes_names_into_the_scratch_string() {
         run.output,
         "Extra\nISOLatin1Encoding\nStandardEncoding\n\
          Courier-Bold\nCourier-BoldOblique\nHelvetica-Bold\nHelvetica-BoldOblique\n\
+         Helvetica-Narrow-Bold\nHelvetica-Narrow-BoldOblique\n\
+         NewCenturySchlbk-Bold\nNewCenturySchlbk-BoldItalic\n\
+         Palatino-Bold\nPalatino-BoldItalic\n\
          Times-Bold\nTimes-BoldItalic\nCourier\nZed\n"
     );
     assert_eq!(run.top_numbers(1), [3.0]);

@@ -7,7 +7,7 @@
 //! instances: the resident fonts, and the two encoding arrays in
 //! `systemdict`. Other categories are `undefined`.
 
-use ps_fonts::StdFont;
+use ps_fonts::ResidentFace;
 
 use crate::error::VmError;
 use crate::interp::{Category, Frame, Interp, LoopFrame};
@@ -64,7 +64,7 @@ fn defined(i: &mut Interp, kind: Kind, key: Object) -> Result<Option<Object>, Vm
 /// A built-in instance by name, materialised if need be.
 fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, VmError> {
     match kind {
-        Kind::Font => match StdFont::from_postscript_name(name) {
+        Kind::Font => match ResidentFace::from_postscript_name(name) {
             Some(std) => font::resident(i, std).map(Some),
             None => Ok(None),
         },
@@ -78,7 +78,7 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
 
 fn has_builtin(kind: Kind, name: &[u8]) -> bool {
     match kind {
-        Kind::Font => StdFont::from_postscript_name(name).is_some(),
+        Kind::Font => ResidentFace::from_postscript_name(name).is_some(),
         Kind::Encoding => BUILTIN_ENCODINGS.iter().any(|e| e.as_bytes() == name),
     }
 }
@@ -198,7 +198,10 @@ fn names(i: &mut Interp, kind: Kind, template: &[u8]) -> Result<Vec<Vec<u8>>, Vm
         }
     }
     let builtins: Vec<&str> = match kind {
-        Kind::Font => StdFont::ALL.iter().map(|f| f.postscript_name()).collect(),
+        Kind::Font => ResidentFace::ALL
+            .iter()
+            .map(|f| f.postscript_name())
+            .collect(),
         Kind::Encoding => BUILTIN_ENCODINGS.to_vec(),
     };
     for name in builtins {

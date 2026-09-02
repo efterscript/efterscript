@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% expect-output: 5.56
+% expect-output: 0.0
+% expect-output: true
+% Scenario: Unicode fallback. Helvetica re-encoded with code 65 as /Euro
+% outlines through the asset's Unicode cmap when the post table has no
+% such name, and advances by the AFM's Euro width, 556.
+% Expect: 5.56 and 0.0, then true (the path rises above the baseline).
+/r { 1000 mul round 1000 div } def
+/H2 /Helvetica findfont dup length dict copy
+  dup /Encoding StandardEncoding dup length array copy
+  dup 65 /Euro put put definefont pop
+/H2 findfont 10 scalefont setfont
+0 0 moveto (A) false charpath
+currentpoint r exch r = =
+pathbbox 0 gt exch pop exch pop exch pop =

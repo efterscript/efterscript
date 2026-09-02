@@ -13,12 +13,13 @@
 //! between two glyphs. `stringwidth` runs the same frame in measuring
 //! mode: no run is shown and the total displacement is pushed instead.
 //! `charpath` runs it in outline mode: a Type 1 or Type 42 glyph's
-//! outline is appended to the current path through the font matrix at
-//! the glyph's position, and the current point advances at the end.
+//! outline, or a resident face's from its outline asset, is appended to
+//! the current path through the font matrix at the glyph's position,
+//! and the current point advances at the end.
 
 use std::rc::Rc;
 
-use ps_fonts::{Glyph as ProgramGlyph, OutlineOp, Program, StdFont};
+use ps_fonts::{Glyph as ProgramGlyph, OutlineOp, Program, ResidentFace};
 
 use crate::error::VmError;
 use crate::graphics::{Bounds, FontInfo, FontRef, FontSource, Glyph, Matrix, Point};
@@ -30,8 +31,9 @@ use crate::ops::font::entry;
 /// How a font's glyphs are produced.
 #[derive(Clone, Debug)]
 pub(crate) enum FontKind {
-    /// Widths from the resident metrics; nothing is executed.
-    Resident(StdFont),
+    /// Widths from the resident metrics, outlines from the face's asset
+    /// when it has one; nothing is executed.
+    Resident(ResidentFace),
     /// `BuildGlyph` (glyph names) or `BuildChar` (codes) is run per glyph.
     Type3 { build: Object, by_name: bool },
     /// A Type 1 or Type 42 program the job defined; `scale` takes the
@@ -162,7 +164,7 @@ pub(crate) fn font_kind(i: &mut Interp, dict: Object) -> Result<FontKind, VmErro
             let resident = entry(i, dict, "ResidentFont")?
                 .and_then(Object::as_i32)
                 .and_then(|n| usize::try_from(n).ok())
-                .and_then(StdFont::from_index);
+                .and_then(ResidentFace::from_index);
             match resident {
                 Some(font) => Ok(FontKind::Resident(font)),
                 None => {
@@ -192,8 +194,10 @@ pub(crate) fn begin(
     start(i, operator, variant, codes, measure, false, operands)
 }
 
-/// Starts `charpath` of `codes`: outline mode, which only a Type 1 or
-/// Type 42 program supports; resident and Type 3 fonts are `invalidfont`.
+/// Starts `charpath` of `codes`: outline mode, which a Type 1 or Type 42
+/// program and a resident face with an outline asset support; Symbol,
+/// ZapfDingbats, Type 3 fonts, and every resident face in a build
+/// without the assets are `invalidfont`.
 pub(crate) fn begin_charpath(i: &mut Interp, codes: Vec<u8>) -> Result<(), VmError> {
     start(i, "charpath", Variant::Show, codes, false, true, 2)
 }
@@ -210,7 +214,12 @@ fn start(
     let font = i.current_font().ok_or(VmError::InvalidFont)?;
     let dict = i.font_dict(font.instance).ok_or(VmError::InvalidFont)?;
     let kind = font_kind(i, dict)?;
-    if outline && !matches!(kind, FontKind::Embedded { .. }) {
+    let can_outline = match &kind {
+        FontKind::Embedded { .. } => true,
+        FontKind::Resident(face) => face.has_outlines(),
+        FontKind::Type3 { .. } => false,
+    };
+    if outline && !can_outline {
         return Err(VmError::InvalidFont);
     }
     let encoding = entry(i, dict, "Encoding")?
@@ -260,7 +269,10 @@ fn start(
 /// What the backend needs to know about the font: its glyph source and
 /// its encoding as names. A Type 3 font is identified by its `FID` and
 /// carries the matrix it was defined with, so a scaled instance records
-/// its glyphs in the same space as the original.
+/// its glyphs in the same space as the original. A resident face outside
+/// the fourteen whose outline asset is embedded is described as an
+/// embedded font built from that asset, so the output carries its
+/// program; the fourteen stay resident.
 fn describe(
     i: &mut Interp,
     dict: Object,
@@ -276,7 +288,16 @@ fn describe(
         .and_then(Object::as_font_id)
         .unwrap_or(u32::MAX);
     let source = match kind {
-        FontKind::Resident(font) => FontSource::Resident(*font),
+        FontKind::Resident(face) => match face.outlines().filter(|_| face.std_font().is_none()) {
+            Some(outlines) => FontSource::Embedded {
+                family,
+                kind: outlines.program().kind(),
+                program: outlines.program().clone(),
+                font_matrix: Matrix::scaling(0.001, 0.001),
+                font_name: outlines.font_name().to_vec(),
+            },
+            None => FontSource::Resident(*face),
+        },
         FontKind::Embedded { program, .. } => {
             let font_name = match entry(i, dict, "FontName")? {
                 Some(name) if name.ty() == Type::Name => {
@@ -385,12 +406,20 @@ fn advance(i: &mut Interp, f: &mut ShowFrame) -> Result<Next, VmError> {
             return Ok(Next::Done);
         };
         match &f.kind {
-            FontKind::Resident(font) => {
-                let font = *font;
-                let width = glyph_name(i, f, code)
-                    .map(|name| i.mem.name_text(name.as_name().expect("name")).to_vec())
-                    .and_then(|name| font.width(std::str::from_utf8(&name).ok()?))
+            FontKind::Resident(face) => {
+                let face = *face;
+                let name = glyph_name(i, f, code)
+                    .map(|name| i.mem.name_text(name.as_name().expect("name")).to_vec());
+                let width = name
+                    .as_deref()
+                    .and_then(|name| face.width(std::str::from_utf8(name).ok()?))
                     .unwrap_or(0);
+                if f.outline
+                    && let Some(name) = &name
+                    && let Some(glyph) = face.outline(name).map_err(|_| VmError::InvalidFont)?
+                {
+                    append_outline(i, f, &glyph, 1.0)?;
+                }
                 let displacement = displacement(f, code, Point::new(f32::from(width), 0.0))?;
                 add_glyph(f, code, displacement);
                 if let Some(procedure) = after_glyph(i, f)? {
@@ -687,7 +716,7 @@ mod tests {
                 matrix,
             },
             dict: Object::null(),
-            kind: FontKind::Resident(StdFont::Helvetica),
+            kind: FontKind::Resident(ResidentFace::Helvetica),
             encoding: Object::null(),
             codes: vec![97, 32, 98],
             variant,

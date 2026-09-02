@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::rc::Rc;
 
-use ps_fonts::{Program, ProgramKind, StdFont};
+use ps_fonts::{Program, ProgramKind, ResidentFace};
 use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, Matrix, Seg, SpaceSpec, Span};
 
 pub use crate::state::FillRule;
@@ -88,9 +88,12 @@ impl Deref for ProgramRef {
 /// font's come from its program.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FontSpec {
-    /// One of the standard fourteen with the encoding in effect; glyph
-    /// space is thousandths of the em.
-    Resident { base: StdFont, encoding: GlyphNames },
+    /// One of the thirty-five resident faces with the encoding in effect;
+    /// glyph space is thousandths of the em.
+    Resident {
+        base: ResidentFace,
+        encoding: GlyphNames,
+    },
     /// A Type 3 font: `font_matrix` maps glyph space to text space, and
     /// every glyph shown on the page has its captured procedure here.
     Type3 {
@@ -422,7 +425,7 @@ mod tests {
 
     fn helvetica_like() -> FontSpec {
         FontSpec::Resident {
-            base: StdFont::Helvetica,
+            base: ResidentFace::Helvetica,
             encoding: glyph_names(&[]),
         }
     }

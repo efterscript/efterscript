@@ -562,7 +562,7 @@ fn parameters_are_validated_and_flatness_clamped() {
 
 // --- text ------------------------------------------------------------------------------
 
-use ps_fonts::{STANDARD_ENCODING, StdFont};
+use ps_fonts::{ResidentFace, STANDARD_ENCODING};
 use ps_graphics::{FontIndex, FontSpec, GlyphProc, glyph_names};
 use ps_vm::{FontInfo, FontRef, FontSource, Glyph};
 
@@ -575,7 +575,7 @@ fn standard_names() -> Vec<Option<Vec<u8>>> {
 
 fn helvetica() -> FontInfo {
     FontInfo {
-        source: FontSource::Resident(StdFont::Helvetica),
+        source: FontSource::Resident(ResidentFace::Helvetica),
         encoding: standard_names(),
     }
 }
@@ -668,7 +668,7 @@ fn a_run_is_one_text_op_with_colour_before_it_and_advances_the_point() {
     assert_eq!(
         pages[0].resources.fonts,
         [FontSpec::Resident {
-            base: StdFont::Helvetica,
+            base: ResidentFace::Helvetica,
             encoding: glyph_names(&standard_names()),
         }]
     );
@@ -689,8 +689,8 @@ fn resident_fonts_intern_by_base_and_encoding_not_by_instance() {
     g.define_font(
         3,
         &FontInfo {
-            source: FontSource::Resident(StdFont::Symbol),
-            encoding: StdFont::Symbol
+            source: FontSource::Resident(ResidentFace::Symbol),
+            encoding: ResidentFace::Symbol
                 .builtin_encoding()
                 .iter()
                 .map(|n| Some(n.unwrap_or(".notdef").as_bytes().to_vec()))

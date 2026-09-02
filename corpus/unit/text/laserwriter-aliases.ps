@@ -1,0 +1,23 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: Palatino-BoldItalic
+% expect-output: Palatino-Roman
+% expect-output: Bookman-Demi
+% expect-output: AvantGarde-DemiOblique
+% expect-output: NewCenturySchlbk-Italic
+% expect-output: Helvetica-Narrow-Bold
+% expect-output: ZapfChancery-MediumItalic
+% Scenario: LaserWriter family aliases. The classic families resolve to
+% their own resident faces, with the style mapped to each family's
+% names (Bookman Light/Demi, AvantGarde Book/Demi, one Chancery face).
+% Expected divergence: the reference raises invalidfont for the names
+% that are not exact.
+% Expect: the seven resolved names.
+/Palatino-BoldItalic findfont /FontName get =
+/BookAntiqua findfont /FontName get =
+/ITCBookman-Bold findfont /FontName get =
+/AvantGardeGothic-BoldItalic findfont /FontName get =
+/CenturySchoolbook-Italic findfont /FontName get =
+/ArialNarrow-Bold findfont /FontName get =
+/Chancery-Bold findfont /FontName get =

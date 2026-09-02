@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! The promoted data files are byte-identical to the vault's copies: each
-//! file's SHA-256 must match the entry in the vault's `SHA256SUMS`. Runs
-//! only when `EFTERSCRIPT_HELLBOX` names an existing checkout; skips with
-//! a message otherwise.
+//! The data files are what `PROVENANCE.md` says they are: every file's
+//! SHA-256 matches its entry there, every entry names an existing file,
+//! and each outline set's licence file sits beside its fonts with the
+//! plain licence text under `LICENSES/`. The files promoted from the
+//! vault are also compared with the vault's `SHA256SUMS` when
+//! `EFTERSCRIPT_HELLBOX` names an existing checkout; that part skips
+//! with a message otherwise.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // SHA-256 (FIPS 180-4), written out here so the check needs no dependency.
 fn sha256(data: &[u8]) -> [u8; 32] {
@@ -94,7 +97,8 @@ fn sha256_matches_a_known_vector() {
     );
 }
 
-const FILES: &[(&str, &str)] = &[
+/// The files promoted from the vault: their path here and in the vault.
+const VAULTED: &[(&str, &str)] = &[
     (
         "core14/Courier-Bold.afm",
         "fonts/metrics/core14/Courier-Bold.afm",
@@ -146,6 +150,68 @@ const FILES: &[(&str, &str)] = &[
     ("glyphlist.txt", "fonts/glyphlists/glyphlist.txt"),
 ];
 
+const LIBERATION: [&str; 12] = [
+    "LiberationSans-Regular",
+    "LiberationSans-Bold",
+    "LiberationSans-Italic",
+    "LiberationSans-BoldItalic",
+    "LiberationSerif-Regular",
+    "LiberationSerif-Bold",
+    "LiberationSerif-Italic",
+    "LiberationSerif-BoldItalic",
+    "LiberationMono-Regular",
+    "LiberationMono-Bold",
+    "LiberationMono-Italic",
+    "LiberationMono-BoldItalic",
+];
+
+const TEX_GYRE: [&str; 21] = [
+    "qagr", "qagri", "qagb", "qagbi", "qbkr", "qbkri", "qbkb", "qbkbi", "qcsr", "qcsri", "qcsb",
+    "qcsbi", "qplr", "qplri", "qplb", "qplbi", "qzcmi", "qhvcr", "qhvcri", "qhvcb", "qhvcbi",
+];
+
+const TEX_GYRE_MANIFESTS: [&str; 6] = ["Adventor", "Bonum", "Chorus", "Heros", "Pagella", "Schola"];
+
+/// The outline assets fetched from upstream, by provenance path.
+fn fetched() -> Vec<String> {
+    let mut files = Vec::new();
+    for stem in LIBERATION {
+        files.push(format!("outlines/liberation/{stem}.ttf"));
+    }
+    files.push("outlines/liberation/LICENSE".to_string());
+    for stem in TEX_GYRE {
+        files.push(format!("outlines/tex-gyre/{stem}.pfb"));
+        files.push(format!("outlines/tex-gyre/{stem}.afm"));
+    }
+    files.push("outlines/tex-gyre/GUST-FONT-LICENSE.txt".to_string());
+    for family in TEX_GYRE_MANIFESTS {
+        files.push(format!("outlines/tex-gyre/MANIFEST-TeX-Gyre-{family}.txt"));
+    }
+    files.push("LICENSES/OFL-1.1.txt".to_string());
+    files.push("LICENSES/LPPL-1.3c.txt".to_string());
+    files
+}
+
+fn data_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("data")
+}
+
+/// A provenance path on disk: under the data directory, except the
+/// licence texts, which live at the repository root.
+fn located(path: &str) -> PathBuf {
+    if path.starts_with("LICENSES/") {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path)
+    } else {
+        data_dir().join(path)
+    }
+}
+
+fn note() -> String {
+    std::fs::read_to_string(data_dir().join("PROVENANCE.md")).unwrap()
+}
+
 #[test]
 fn promoted_files_match_the_vault_checksums() {
     let Some(vault) = std::env::var_os("EFTERSCRIPT_HELLBOX") else {
@@ -160,8 +226,7 @@ fn promoted_files_match_the_vault_checksums() {
         );
         return;
     };
-    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
-    for &(local, vaulted) in FILES {
+    for &(local, vaulted) in VAULTED {
         let expected = sums
             .lines()
             .find_map(|line| {
@@ -169,7 +234,7 @@ fn promoted_files_match_the_vault_checksums() {
                 (path.trim() == vaulted).then(|| sum.to_string())
             })
             .unwrap_or_else(|| panic!("{vaulted} is not listed in the vault's SHA256SUMS"));
-        let bytes = std::fs::read(data.join(local)).expect("promoted file exists");
+        let bytes = std::fs::read(located(local)).expect("promoted file exists");
         assert_eq!(
             hex(&sha256(&bytes)),
             expected,
@@ -185,14 +250,136 @@ fn promoted_files_match_the_vault_checksums() {
 
 #[test]
 fn provenance_note_lists_every_file_with_its_checksum() {
-    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
-    let note = std::fs::read_to_string(data.join("PROVENANCE.md")).unwrap();
-    for &(local, _) in FILES {
-        let bytes = std::fs::read(data.join(local)).unwrap();
+    let note = note();
+    let mut listed: Vec<String> = VAULTED.iter().map(|(local, _)| local.to_string()).collect();
+    listed.extend(fetched());
+    for local in &listed {
+        let bytes = std::fs::read(located(local)).unwrap_or_else(|e| panic!("{local}: {e}"));
         let sum = hex(&sha256(&bytes));
         assert!(
             note.contains(&format!("| `{local}` | `{sum}` |")),
             "{local} with {sum} is not recorded in PROVENANCE.md"
+        );
+    }
+}
+
+#[test]
+fn every_provenance_entry_names_an_existing_file_and_nothing_is_unlisted() {
+    let note = note();
+    let mut entries = Vec::new();
+    for line in note.lines() {
+        let mut cells = line.split('|').map(str::trim).filter(|c| !c.is_empty());
+        let Some(path) = cells
+            .next()
+            .and_then(|c| c.strip_prefix('`'))
+            .and_then(|c| c.strip_suffix('`'))
+        else {
+            continue;
+        };
+        let Some(sum) = cells
+            .next()
+            .and_then(|c| c.strip_prefix('`'))
+            .and_then(|c| c.strip_suffix('`'))
+        else {
+            continue;
+        };
+        if sum.len() != 64 {
+            continue;
+        }
+        let bytes = std::fs::read(located(path))
+            .unwrap_or_else(|e| panic!("PROVENANCE.md names {path}, which is unreadable: {e}"));
+        assert_eq!(hex(&sha256(&bytes)), sum, "{path}");
+        entries.push(path.to_string());
+    }
+    let mut expected: Vec<String> = VAULTED.iter().map(|(local, _)| local.to_string()).collect();
+    expected.extend(fetched());
+    expected.sort();
+    entries.sort();
+    assert_eq!(entries, expected);
+
+    // Every file under the data directory is listed.
+    fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.path().is_dir() {
+                walk(&entry.path(), &path, out);
+            } else if path != "PROVENANCE.md" {
+                out.push(path);
+            }
+        }
+    }
+    let mut present = Vec::new();
+    walk(&data_dir(), "", &mut present);
+    present.sort();
+    let mut data_entries: Vec<String> = expected
+        .iter()
+        .filter(|p| !p.starts_with("LICENSES/"))
+        .cloned()
+        .collect();
+    data_entries.sort();
+    assert_eq!(present, data_entries);
+}
+
+#[test]
+fn licence_files_sit_beside_the_fonts_and_the_texts_are_in_licenses() {
+    let liberation =
+        std::fs::read_to_string(data_dir().join("outlines/liberation/LICENSE")).unwrap();
+    assert!(liberation.contains("SIL OPEN FONT LICENSE Version 1.1"));
+    assert!(liberation.contains("Reserved Font Name Liberation"));
+    let ofl = std::fs::read_to_string(located("LICENSES/OFL-1.1.txt")).unwrap();
+    assert!(ofl.starts_with("SIL OPEN FONT LICENSE"));
+    assert!(ofl.contains("Version 1.1 - 26 February 2007"));
+    // Liberation's copy re-wraps the licence text after its copyright
+    // statements, so the two are compared clause by clause rather than
+    // byte for byte.
+    for clause in ["PERMISSION & CONDITIONS", "TERMINATION", "DISCLAIMER"] {
+        assert!(
+            liberation.contains(clause) && ofl.contains(clause),
+            "{clause}"
+        );
+    }
+
+    let gust = std::fs::read_to_string(data_dir().join("outlines/tex-gyre/GUST-FONT-LICENSE.txt"))
+        .unwrap();
+    assert!(gust.contains("GUST Font License"));
+    assert!(gust.contains("LaTeX Project Public License"));
+    assert!(gust.contains("version 1.3c"));
+    let lppl = std::fs::read_to_string(located("LICENSES/LPPL-1.3c.txt")).unwrap();
+    assert!(lppl.starts_with("The LaTeX Project Public License"));
+    assert!(lppl.contains("LPPL Version 1.3c"));
+    // Each family states its own version; the manifest beside the fonts
+    // must be the one for the release the fonts are.
+    for (family, stem) in [
+        ("Adventor", "qagr"),
+        ("Bonum", "qbkr"),
+        ("Chorus", "qzcmi"),
+        ("Heros", "qhvcr"),
+        ("Pagella", "qplr"),
+        ("Schola", "qcsr"),
+    ] {
+        let manifest = std::fs::read_to_string(
+            data_dir().join(format!("outlines/tex-gyre/MANIFEST-TeX-Gyre-{family}.txt")),
+        )
+        .unwrap();
+        assert!(manifest.contains(family), "{family}");
+        let afm = std::fs::read_to_string(data_dir().join(format!("outlines/tex-gyre/{stem}.afm")))
+            .unwrap();
+        let version = |text: &str, key: &str| -> String {
+            text.lines()
+                .find_map(|l| l.strip_prefix(key))
+                .map(|v| v.trim().to_string())
+                .unwrap_or_else(|| panic!("{family}: no {key}"))
+        };
+        assert_eq!(
+            version(&manifest, "Version:"),
+            version(&afm, "Version "),
+            "{family} manifest names another release"
         );
     }
 }

@@ -1,66 +1,82 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Name-level substitution: any font name resolves to one of the standard
-//! fourteen. Aliases cover the metrically compatible families and the
-//! classic LaserWriter families by class; anything else is classified by
-//! hints in the name, Helvetica being the default.
+//! Name-level substitution: any font name resolves to one of the
+//! thirty-five resident faces. Aliases cover the metrically compatible
+//! families and the classic LaserWriter families; anything else is
+//! classified by hints in the name, Helvetica being the default.
 
-use crate::resident::{Family, StdFont};
+use crate::resident::{Family, ResidentFace};
 
 // Family aliases, compared case-insensitively against the family part of
-// the name with `MT`, `PS`, and `PSMT` suffixes removed.
+// the name with spaces removed and `MT`, `PS`, and `PSMT` suffixes
+// dropped.
 const ALIASES: &[(&str, Family)] = &[
     ("courier", Family::Courier),
     ("couriernew", Family::Courier),
     ("helvetica", Family::Helvetica),
     ("arial", Family::Helvetica),
-    ("arialnarrow", Family::Helvetica),
+    ("helveticanarrow", Family::HelveticaNarrow),
+    ("arialnarrow", Family::HelveticaNarrow),
     ("times", Family::Times),
     ("timesnewroman", Family::Times),
     ("timesroman", Family::Times),
     ("symbol", Family::Symbol),
     ("zapfdingbats", Family::ZapfDingbats),
     ("dingbats", Family::ZapfDingbats),
-    ("palatino", Family::Times),
-    ("bookman", Family::Times),
-    ("newcenturyschlbk", Family::Times),
-    ("newcenturyschoolbook", Family::Times),
+    ("palatino", Family::Palatino),
+    ("bookantiqua", Family::Palatino),
+    ("palladio", Family::Palatino),
+    ("bookman", Family::Bookman),
+    ("itcbookman", Family::Bookman),
+    ("avantgarde", Family::AvantGarde),
+    ("itcavantgarde", Family::AvantGarde),
+    ("avantgardegothic", Family::AvantGarde),
+    ("itcavantgardegothic", Family::AvantGarde),
+    ("gothic", Family::AvantGarde),
+    ("newcenturyschlbk", Family::NewCenturySchlbk),
+    ("newcenturyschoolbook", Family::NewCenturySchlbk),
+    ("centuryschoolbook", Family::NewCenturySchlbk),
+    ("schoolbook", Family::NewCenturySchlbk),
+    ("zapfchancery", Family::ZapfChancery),
+    ("itczapfchancery", Family::ZapfChancery),
+    ("chancery", Family::ZapfChancery),
     ("garamond", Family::Times),
-    ("avantgarde", Family::Helvetica),
     ("optima", Family::Helvetica),
     ("univers", Family::Helvetica),
 ];
 
-/// The standard font a name stands for.
-pub fn substitute(name: &[u8]) -> StdFont {
+/// The resident face a name stands for.
+pub fn substitute(name: &[u8]) -> ResidentFace {
     let name = String::from_utf8_lossy(name);
     let name = strip_subset_tag(&name);
-    if let Some(font) = StdFont::from_postscript_name(name.as_bytes()) {
-        return font;
+    if let Some(face) = ResidentFace::from_postscript_name(name.as_bytes()) {
+        return face;
     }
     let lower = name.to_ascii_lowercase();
     let (family, style) = match lower.find(['-', ',']) {
         Some(at) => (&lower[..at], &lower[at + 1..]),
         None => (lower.as_str(), ""),
     };
-    let family = trim_family(family);
+    let family: String = family.chars().filter(|c| !c.is_whitespace()).collect();
+    let family = trim_family(&family);
     let whole = lower.as_str();
-    if family == "zapfchancery" {
-        return StdFont::TimesItalic;
-    }
-    let class = ALIASES
+    let mut class = ALIASES
         .iter()
         .find(|(alias, _)| *alias == family)
         .map(|&(_, class)| class)
         .unwrap_or_else(|| classify(whole));
+    // `Helvetica-Narrow-…` and `Arial-Narrow…` split at the first dash.
+    if class == Family::Helvetica && style.starts_with("narrow") {
+        class = Family::HelveticaNarrow;
+    }
     let bold = ["bold", "black", "heavy", "semibold", "demi"]
         .iter()
         .any(|hint| style.contains(hint) || (style.is_empty() && whole.contains(hint)));
     let italic = ["italic", "oblique"]
         .iter()
         .any(|hint| style.contains(hint) || (style.is_empty() && whole.contains(hint)));
-    StdFont::styled(class, bold, italic)
+    ResidentFace::styled(class, bold, italic)
 }
 
 /// Six upper-case letters and a plus sign, as an embedded subset carries.
@@ -106,60 +122,125 @@ fn classify(name: &str) -> Family {
 mod tests {
     use super::*;
 
-    fn sub(name: &str) -> StdFont {
+    fn sub(name: &str) -> ResidentFace {
         substitute(name.as_bytes())
     }
 
     #[test]
     fn exact_names_are_themselves() {
-        for font in StdFont::ALL {
-            assert_eq!(sub(font.postscript_name()), font);
+        for face in ResidentFace::ALL {
+            assert_eq!(sub(face.postscript_name()), face);
         }
     }
 
     #[test]
     fn aliases_and_suffixes() {
-        assert_eq!(sub("Arial-BoldMT"), StdFont::HelveticaBold);
-        assert_eq!(sub("ArialMT"), StdFont::Helvetica);
-        assert_eq!(sub("Arial,BoldItalic"), StdFont::HelveticaBoldOblique);
-        assert_eq!(sub("TimesNewRomanPSMT"), StdFont::TimesRoman);
+        assert_eq!(sub("Arial-BoldMT"), ResidentFace::HelveticaBold);
+        assert_eq!(sub("ArialMT"), ResidentFace::Helvetica);
+        assert_eq!(sub("Arial,BoldItalic"), ResidentFace::HelveticaBoldOblique);
+        assert_eq!(sub("TimesNewRomanPSMT"), ResidentFace::TimesRoman);
         assert_eq!(
             sub("TimesNewRomanPS-BoldItalicMT"),
-            StdFont::TimesBoldItalic
+            ResidentFace::TimesBoldItalic
         );
-        assert_eq!(sub("CourierNewPS-BoldMT"), StdFont::CourierBold);
-        assert_eq!(sub("CourierNew"), StdFont::Courier);
-        assert_eq!(sub("Palatino-Roman"), StdFont::TimesRoman);
-        assert_eq!(sub("Bookman-Demi"), StdFont::TimesBold);
-        assert_eq!(sub("NewCenturySchlbk-BoldItalic"), StdFont::TimesBoldItalic);
-        assert_eq!(sub("AvantGarde-Book"), StdFont::Helvetica);
-        assert_eq!(sub("Optima-Bold"), StdFont::HelveticaBold);
-        assert_eq!(sub("Univers-Oblique"), StdFont::HelveticaOblique);
-        assert_eq!(sub("ZapfChancery-MediumItalic"), StdFont::TimesItalic);
-        assert_eq!(sub("Helvetica-Narrow-Bold"), StdFont::HelveticaBold);
-        assert_eq!(sub("Times-Roman"), StdFont::TimesRoman);
-        assert_eq!(sub("Symbol"), StdFont::Symbol);
-        assert_eq!(sub("Dingbats"), StdFont::ZapfDingbats);
+        assert_eq!(sub("Times New Roman"), ResidentFace::TimesRoman);
+        assert_eq!(sub("CourierNewPS-BoldMT"), ResidentFace::CourierBold);
+        assert_eq!(sub("CourierNew"), ResidentFace::Courier);
+        assert_eq!(sub("Optima-Bold"), ResidentFace::HelveticaBold);
+        assert_eq!(sub("Univers-Oblique"), ResidentFace::HelveticaOblique);
+        assert_eq!(sub("Garamond"), ResidentFace::TimesRoman);
+        assert_eq!(sub("Times-Roman"), ResidentFace::TimesRoman);
+        assert_eq!(sub("Symbol"), ResidentFace::Symbol);
+        assert_eq!(sub("Dingbats"), ResidentFace::ZapfDingbats);
+    }
+
+    #[test]
+    fn laserwriter_families_resolve_to_their_own_faces() {
+        assert_eq!(sub("Palatino-Roman"), ResidentFace::PalatinoRoman);
+        assert_eq!(sub("Palatino"), ResidentFace::PalatinoRoman);
+        assert_eq!(sub("Palatino-BoldItalic"), ResidentFace::PalatinoBoldItalic);
+        assert_eq!(sub("BookAntiqua"), ResidentFace::PalatinoRoman);
+        assert_eq!(sub("Book Antiqua,Bold"), ResidentFace::PalatinoBold);
+        assert_eq!(sub("Palladio-Italic"), ResidentFace::PalatinoItalic);
+        assert_eq!(sub("Bookman-Demi"), ResidentFace::BookmanDemi);
+        assert_eq!(sub("Bookman-Light"), ResidentFace::BookmanLight);
+        assert_eq!(
+            sub("ITCBookman-LightItalic"),
+            ResidentFace::BookmanLightItalic
+        );
+        assert_eq!(sub("Bookman-Bold"), ResidentFace::BookmanDemi);
+        assert_eq!(sub("Bookman"), ResidentFace::BookmanLight);
+        assert_eq!(sub("AvantGarde-Book"), ResidentFace::AvantGardeBook);
+        assert_eq!(sub("AvantGarde-Demi"), ResidentFace::AvantGardeDemi);
+        assert_eq!(
+            sub("AvantGarde-BookOblique"),
+            ResidentFace::AvantGardeBookOblique
+        );
+        assert_eq!(
+            sub("ITC Avant Garde Gothic,BoldItalic"),
+            ResidentFace::AvantGardeDemiOblique
+        );
+        assert_eq!(sub("Gothic-Bold"), ResidentFace::AvantGardeDemi);
+        assert_eq!(
+            sub("NewCenturySchlbk-BoldItalic"),
+            ResidentFace::NewCenturySchlbkBoldItalic
+        );
+        assert_eq!(
+            sub("NewCenturySchoolbook-Roman"),
+            ResidentFace::NewCenturySchlbkRoman
+        );
+        assert_eq!(
+            sub("Century Schoolbook,Italic"),
+            ResidentFace::NewCenturySchlbkItalic
+        );
+        assert_eq!(sub("Schoolbook"), ResidentFace::NewCenturySchlbkRoman);
+        assert_eq!(
+            sub("ZapfChancery-MediumItalic"),
+            ResidentFace::ZapfChanceryMediumItalic
+        );
+        assert_eq!(sub("Chancery"), ResidentFace::ZapfChanceryMediumItalic);
+        assert_eq!(
+            sub("ITCZapfChancery-Bold"),
+            ResidentFace::ZapfChanceryMediumItalic
+        );
+        assert_eq!(
+            sub("Helvetica-Narrow-Bold"),
+            ResidentFace::HelveticaNarrowBold
+        );
+        assert_eq!(
+            sub("Helvetica-Narrow-BoldItalic"),
+            ResidentFace::HelveticaNarrowBoldOblique
+        );
+        assert_eq!(sub("ArialNarrow"), ResidentFace::HelveticaNarrow);
+        assert_eq!(
+            sub("Arial Narrow,Italic"),
+            ResidentFace::HelveticaNarrowOblique
+        );
+        assert_eq!(sub("Arial-Narrow"), ResidentFace::HelveticaNarrow);
+        assert_eq!(
+            sub("HelveticaNarrow-Oblique"),
+            ResidentFace::HelveticaNarrowOblique
+        );
     }
 
     #[test]
     fn heuristics_and_subset_tags() {
-        assert_eq!(sub("Garamond-Italic"), StdFont::TimesItalic);
-        assert_eq!(sub("LucidaConsole"), StdFont::Courier);
-        assert_eq!(sub("ABCDEF+LucidaConsole-Bold"), StdFont::CourierBold);
-        assert_eq!(sub("Verdana"), StdFont::Helvetica);
-        assert_eq!(sub("Georgia-BoldItalic"), StdFont::TimesBoldItalic);
-        assert_eq!(sub("DejaVuSansMono-Oblique"), StdFont::CourierOblique);
-        assert_eq!(sub("DejaVuSerif"), StdFont::TimesRoman);
-        assert_eq!(sub("OpenSans-Semibold"), StdFont::HelveticaBold);
-        assert_eq!(sub("MinionPro-Regular"), StdFont::Helvetica);
-        assert_eq!(sub("SymbolMT"), StdFont::Symbol);
-        assert_eq!(sub("Wingdings-Regular"), StdFont::Helvetica);
-        assert_eq!(sub("MyDingbatFont"), StdFont::ZapfDingbats);
-        assert_eq!(sub("abcdef+Foo"), StdFont::Helvetica);
-        assert_eq!(sub(""), StdFont::Helvetica);
-        assert_eq!(sub("Century-Book"), StdFont::TimesRoman);
-        assert_eq!(sub("HeavyMetal"), StdFont::HelveticaBold);
-        assert_eq!(sub("Arial-Black"), StdFont::HelveticaBold);
+        assert_eq!(sub("Garamond-Italic"), ResidentFace::TimesItalic);
+        assert_eq!(sub("LucidaConsole"), ResidentFace::Courier);
+        assert_eq!(sub("ABCDEF+LucidaConsole-Bold"), ResidentFace::CourierBold);
+        assert_eq!(sub("Verdana"), ResidentFace::Helvetica);
+        assert_eq!(sub("Georgia-BoldItalic"), ResidentFace::TimesBoldItalic);
+        assert_eq!(sub("DejaVuSansMono-Oblique"), ResidentFace::CourierOblique);
+        assert_eq!(sub("DejaVuSerif"), ResidentFace::TimesRoman);
+        assert_eq!(sub("OpenSans-Semibold"), ResidentFace::HelveticaBold);
+        assert_eq!(sub("MinionPro-Regular"), ResidentFace::Helvetica);
+        assert_eq!(sub("SymbolMT"), ResidentFace::Symbol);
+        assert_eq!(sub("Wingdings-Regular"), ResidentFace::Helvetica);
+        assert_eq!(sub("MyDingbatFont"), ResidentFace::ZapfDingbats);
+        assert_eq!(sub("abcdef+Foo"), ResidentFace::Helvetica);
+        assert_eq!(sub(""), ResidentFace::Helvetica);
+        assert_eq!(sub("Century-Book"), ResidentFace::TimesRoman);
+        assert_eq!(sub("HeavyMetal"), ResidentFace::HelveticaBold);
+        assert_eq!(sub("Arial-Black"), ResidentFace::HelveticaBold);
     }
 }

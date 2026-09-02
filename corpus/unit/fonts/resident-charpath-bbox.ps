@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% expect-output: true
+% Scenario: name lookup in a TrueType asset. Helvetica's H outline is
+% found by its post name in Liberation Sans, and its width at size 100
+% is within 2 units of the Helvetica AFM's H bounding box width, 56.9.
+% The run's start point and the trailing point at the advance lie on
+% the baseline and would bracket the outline in pathbbox, so the glyph
+% is sheared by its own height: under [100 0 100 100 0 0] the top-right
+% corner lands at urx + ury and under [100 0 -100 100 0 0] the top-left
+% at llx - ury, and H's stems reach the top, so the two boxes give the
+% outline's width.
+% Expect: true.
+/Helvetica findfont dup
+[100 0 100 100 0 0] makefont setfont
+0 0 moveto (H) false charpath
+pathbbox /ury exch def /urx exch def pop pop
+newpath
+[100 0 -100 100 0 0] makefont setfont
+0 0 moveto (H) false charpath
+pathbbox pop pop pop /llx exch def
+urx ury sub llx ury add sub 56.9 sub abs 2 le =

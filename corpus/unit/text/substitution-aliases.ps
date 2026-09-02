@@ -4,12 +4,13 @@
 % expect-output: Helvetica-Bold
 % expect-output: Times-Roman
 % expect-output: Courier-BoldOblique
-% expect-output: Times-Italic
+% expect-output: ZapfChancery-MediumItalic
 % Scenario: metric-pair aliases. Names of the metrically compatible
 % families, with their PostScript-name suffixes and style parts, resolve
-% to the standard font of the same class and style; ZapfChancery maps to
-% Times-Italic. Expected divergence: the reference raises invalidfont.
-% Expect: the four substitute names.
+% to the resident face of the same class and style; ZapfChancery is a
+% resident face itself. Expected divergence: the reference raises
+% invalidfont for the first three.
+% Expect: the four resolved names.
 /Arial-BoldMT findfont /FontName get =
 /TimesNewRomanPSMT findfont /FontName get =
 /CourierNewPS-BoldItalicMT findfont /FontName get =

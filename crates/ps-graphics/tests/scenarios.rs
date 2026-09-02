@@ -251,7 +251,7 @@ fn text_operation_shape() {
     assert_eq!(page.resources.fonts.len(), 1);
     assert!(matches!(
         &page.resources.fonts[0],
-        FontSpec::Resident { base: ps_fonts::StdFont::Helvetica, encoding }
+        FontSpec::Resident { base: ps_fonts::ResidentFace::Helvetica, encoding }
             if encoding[72].as_deref() == Some(b"H".as_slice()) && encoding[0].is_none()
     ));
     let text = text_ops(page);

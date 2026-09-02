@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-error: invalidfont
+% Scenario: Symbol has no outlines. ZapfDingbats and Symbol are resident
+% with metrics only, so charpath raises invalidfont for both, whatever
+% the build; the first is caught, the second ends the job.
+% Expect: true, then invalidfont.
+{ /ZapfDingbats findfont 10 scalefont setfont 0 0 moveto (a) false charpath } stopped =
+/Symbol findfont 10 scalefont setfont 0 0 moveto (a) false charpath

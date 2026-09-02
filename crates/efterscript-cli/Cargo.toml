@@ -14,6 +14,12 @@ repository.workspace = true
 name = "efterscript"
 path = "src/main.rs"
 
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["ps-vm/resident-outlines", "ps-graphics/resident-outlines", "remelt/resident-outlines"]
+
 [dependencies]
 ps-vm.workspace = true
 ps-graphics.workspace = true

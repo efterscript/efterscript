@@ -1,6 +1,14 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
+% expect-output: (AvantGarde-Book)
+% expect-output: (AvantGarde-BookOblique)
+% expect-output: (AvantGarde-Demi)
+% expect-output: (AvantGarde-DemiOblique)
+% expect-output: (Bookman-Demi)
+% expect-output: (Bookman-DemiItalic)
+% expect-output: (Bookman-Light)
+% expect-output: (Bookman-LightItalic)
 % expect-output: (Courier)
 % expect-output: (Courier-Bold)
 % expect-output: (Courier-BoldOblique)
@@ -8,12 +16,25 @@
 % expect-output: (Helvetica)
 % expect-output: (Helvetica-Bold)
 % expect-output: (Helvetica-BoldOblique)
+% expect-output: (Helvetica-Narrow)
+% expect-output: (Helvetica-Narrow-Bold)
+% expect-output: (Helvetica-Narrow-BoldOblique)
+% expect-output: (Helvetica-Narrow-Oblique)
 % expect-output: (Helvetica-Oblique)
+% expect-output: (NewCenturySchlbk-Bold)
+% expect-output: (NewCenturySchlbk-BoldItalic)
+% expect-output: (NewCenturySchlbk-Italic)
+% expect-output: (NewCenturySchlbk-Roman)
+% expect-output: (Palatino-Bold)
+% expect-output: (Palatino-BoldItalic)
+% expect-output: (Palatino-Italic)
+% expect-output: (Palatino-Roman)
 % expect-output: (Symbol)
 % expect-output: (Times-Bold)
 % expect-output: (Times-BoldItalic)
 % expect-output: (Times-Italic)
 % expect-output: (Times-Roman)
+% expect-output: (ZapfChancery-MediumItalic)
 % expect-output: (ZapfDingbats)
 % expect-output: (Times-Bold)
 % expect-output: (Times-BoldItalic)
@@ -21,6 +42,6 @@
 % expect-output: (Times-Roman)
 % Scenario: the Font category lists the resident set in sorted order;
 % a template narrows the list.
-% Expect: the fourteen names, then the four Times names.
+% Expect: the thirty-five resident names, then the four Times names.
 (*) { == } 128 string /Font resourceforall
 (Times-*) { == } 128 string /Font resourceforall

@@ -545,7 +545,7 @@ fn the_first_write_error_is_latched_and_reported_at_finish() {
 
 use std::collections::BTreeMap;
 
-use ps_fonts::{STANDARD_ENCODING, StdFont};
+use ps_fonts::{ResidentFace, STANDARD_ENCODING};
 use ps_graphics::{FontIndex, FontSpec, GlyphProc, glyph_names};
 use ps_vm::Glyph;
 use support::{font, font_ref};
@@ -560,7 +560,7 @@ fn standard() -> ps_graphics::GlyphNames {
 
 fn helvetica() -> FontSpec {
     FontSpec::Resident {
-        base: StdFont::Helvetica,
+        base: ResidentFace::Helvetica,
         encoding: standard(),
     }
 }
@@ -672,7 +672,7 @@ fn encoding_differences_and_symbolic_fonts() {
     encoding[66] = None;
     encoding[67] = Some(b"nosuchglyph".to_vec());
     let reencoded = FontSpec::Resident {
-        base: StdFont::Helvetica,
+        base: ResidentFace::Helvetica,
         encoding,
     };
     let mut page = text_page(
@@ -681,9 +681,9 @@ fn encoding_differences_and_symbolic_fonts() {
         vec![glyph(65, 944.0, 0.0)],
     );
     let symbol = FontSpec::Resident {
-        base: StdFont::Symbol,
+        base: ResidentFace::Symbol,
         encoding: glyph_names(
-            &StdFont::Symbol
+            &ResidentFace::Symbol
                 .builtin_encoding()
                 .iter()
                 .map(|n| n.map(|n| n.as_bytes().to_vec()))
@@ -951,7 +951,7 @@ fn fonts_are_written_once_per_document_and_shared_by_equal_pages() {
     reencoded[65] = Some(b"W".to_vec());
     let third = text_page(
         FontSpec::Resident {
-            base: StdFont::Helvetica,
+            base: ResidentFace::Helvetica,
             encoding: reencoded,
         },
         Matrix::scaling(0.012, 0.012),

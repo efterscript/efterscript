@@ -181,7 +181,7 @@ pub struct Interp {
     pub(crate) encoding_category: Category,
     pub(crate) standard_encoding: Object,
     pub(crate) iso_latin1_encoding: Object,
-    pub(crate) resident_fonts: [Option<Object>; 14],
+    pub(crate) resident_fonts: [Option<Object>; ps_fonts::ResidentFace::COUNT],
     // The font instance table: the graphics state names a font by its
     // index here (D1). Entries are never removed; one that `restore`
     // invalidated is never looked up again, because the graphics state
@@ -309,7 +309,7 @@ impl Interp {
             },
             standard_encoding,
             iso_latin1_encoding,
-            resident_fonts: [None; 14],
+            resident_fonts: [None; ps_fonts::ResidentFace::COUNT],
             font_instances: Vec::new(),
             instance_index: HashMap::new(),
             described_fonts: HashSet::new(),

@@ -11,4 +11,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["resident-outlines"]
+# Embeds the Liberation and TeX Gyre outline programs of the resident
+# set (about seven megabytes); off, the faces keep their metrics only.
+resident-outlines = []
+
 [dependencies]

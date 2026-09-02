@@ -456,6 +456,23 @@ impl Type1Font {
         out.extend_from_slice(TRAILER.as_bytes());
         out
     }
+
+    /// The program in PFB form: an ASCII segment with the cleartext, a
+    /// binary segment with the encrypted section, an ASCII segment with
+    /// the trailer, and the end marker.
+    pub fn pfb(&self) -> Vec<u8> {
+        let segment = |kind: u8, data: &[u8], out: &mut Vec<u8>| {
+            out.extend_from_slice(&[0x80, kind]);
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(data);
+        };
+        let mut out = Vec::new();
+        segment(1, self.cleartext().as_bytes(), &mut out);
+        segment(2, &eexec_binary(&self.private_text()), &mut out);
+        segment(1, format!("\n{TRAILER}").as_bytes(), &mut out);
+        out.extend_from_slice(&[0x80, 3]);
+        out
+    }
 }
 
 /// The Type 1 font of the corpus and of the tests across crates: `a` is
