@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: Helvetica-Bold
+% expect-output: Times-Roman
+% expect-output: Courier-BoldOblique
+% expect-output: Times-Italic
+% Scenario: metric-pair aliases. Names of the metrically compatible
+% families, with their PostScript-name suffixes and style parts, resolve
+% to the standard font of the same class and style; ZapfChancery maps to
+% Times-Italic. Expected divergence: the reference raises invalidfont.
+% Expect: the four substitute names.
+/Arial-BoldMT findfont /FontName get =
+/TimesNewRomanPSMT findfont /FontName get =
+/CourierNewPS-BoldItalicMT findfont /FontName get =
+/ZapfChancery-MediumItalic findfont /FontName get =

@@ -25,9 +25,10 @@ use std::rc::Rc;
 use std::{error, fmt};
 
 use ps_graphics::{Graphics, Page, PageSink};
-use ps_vm::{Config, Interp, Outcome, SliceSource};
+use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
 
 mod content;
+mod fonts;
 mod resources;
 mod sink;
 
@@ -56,6 +57,12 @@ pub struct Report {
     pub outcome: Outcome,
     /// Pages written to the document.
     pub pages: usize,
+    /// Every font the program asked for by a name that resolved to one
+    /// of the resident fonts through substitution, in order.
+    pub substitutions: Vec<FontSubstitution>,
+    /// What the document could not carry as it was recorded, one line
+    /// each, prefixed with the page it concerns.
+    pub notes: Vec<String>,
 }
 
 /// Why a document could not be written. The interpreter's own failures
@@ -116,12 +123,22 @@ pub fn distill<W: Write + 'static>(
     let mut interp = Interp::with_config(config);
     interp.set_graphics_backend(Box::new(Graphics::new(Shared(shared.clone()))));
     let outcome = interp.run(&mut SliceSource::new(program));
+    let substitutions = interp.font_substitutions().to_vec();
     drop(interp);
     let sink = Rc::try_unwrap(shared)
         .ok()
         .and_then(RefCell::into_inner)
         .expect("the interpreter has been dropped and with it the only other handle");
     let pages = sink.pages();
+    let notes = sink.notes().to_vec();
     let out = sink.finish()?;
-    Ok((Report { outcome, pages }, out))
+    Ok((
+        Report {
+            outcome,
+            pages,
+            substitutions,
+            notes,
+        },
+        out,
+    ))
 }

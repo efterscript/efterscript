@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: text operation shape. Two Helvetica glyphs at size 12 from
+% (100, 700) become one text operation whose matrix maps glyph space to
+% the page and whose glyphs carry their widths, 722 and 222, as their
+% displacements; the page holds one font resource. The PDF selects the
+% font at size 1 with the matrix scaled by a thousand and shows the
+% string with Tj.
+/Helvetica findfont 12 scalefont setfont
+100 700 moveto (Hi) show
+showpage

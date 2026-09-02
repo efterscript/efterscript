@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 118.0
+% expect-output: 100.0
+% Scenario: show advances the current point by the string's width, three
+% Courier glyphs of 600 units at size 10.
+% Expect: 118.0 and 100.0.
+/r { 1000 mul round 1000 div } def
+/Courier findfont 10 scalefont setfont
+100 100 moveto (abc) show currentpoint r exch r = =

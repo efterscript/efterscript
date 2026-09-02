@@ -559,3 +559,408 @@ fn parameters_are_validated_and_flatness_clamped() {
     assert_eq!(g.default_matrix(), Matrix::IDENTITY);
     assert_eq!(g.current_color_space(), SpaceSpec::DeviceGray);
 }
+
+// --- text ------------------------------------------------------------------------------
+
+use ps_fonts::{STANDARD_ENCODING, StdFont};
+use ps_graphics::{FontIndex, FontSpec, GlyphProc, glyph_names};
+use ps_vm::{FontInfo, FontRef, FontSource, Glyph};
+
+fn standard_names() -> Vec<Option<Vec<u8>>> {
+    STANDARD_ENCODING
+        .iter()
+        .map(|name| name.map(|n| n.as_bytes().to_vec()))
+        .collect()
+}
+
+fn helvetica() -> FontInfo {
+    FontInfo {
+        source: FontSource::Resident(StdFont::Helvetica),
+        encoding: standard_names(),
+    }
+}
+
+fn square_font(family: u32) -> FontInfo {
+    FontInfo {
+        source: FontSource::Type3 {
+            family,
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            font_bbox: Bounds::new(0.0, 0.0, 1000.0, 1000.0),
+        },
+        encoding: standard_names(),
+    }
+}
+
+fn font(instance: u32, size: f32) -> FontRef {
+    FontRef {
+        instance,
+        matrix: Matrix::scaling(0.001 * size, 0.001 * size),
+    }
+}
+
+fn glyph(code: u8, dx: f32) -> Glyph {
+    Glyph { code, dx, dy: 0.0 }
+}
+
+/// Runs a square glyph procedure of `size` glyph units through the
+/// capture, declared with `setcachedevice` unless `charwidth`.
+fn capture_square(g: &mut Graphics<Pages>, font: FontRef, name: &[u8], measure: bool) {
+    g.gsave().unwrap();
+    let origin = g.current_point().unwrap();
+    let ctm = font
+        .matrix
+        .then(Matrix::translation(origin.x, origin.y))
+        .then(g.current_matrix());
+    g.set_matrix(ctm).unwrap();
+    g.newpath().unwrap();
+    g.begin_glyph(font, name[0], name, measure).unwrap();
+    g.rectfill(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 750.0,
+        height: 750.0,
+    }])
+    .unwrap();
+    g.end_glyph((1000.0, 0.0), Some(Bounds::new(0.0, 0.0, 750.0, 750.0)))
+        .unwrap();
+    g.grestore().unwrap();
+}
+
+#[test]
+fn a_run_is_one_text_op_with_colour_before_it_and_advances_the_point() {
+    let (mut g, _) = backend();
+    g.define_font(0, &helvetica()).unwrap();
+    assert_eq!(g.show(&[glyph(72, 722.0)]), Err(VmError::NoCurrentPoint));
+    g.moveto(p(100.0, 700.0)).unwrap();
+    assert_eq!(g.show(&[glyph(72, 722.0)]), Err(VmError::InvalidFont));
+    g.set_font(Some(font(0, 12.0))).unwrap();
+    g.set_color(&[0.5]).unwrap();
+    g.show(&[glyph(72, 722.0), glyph(105, 222.0)]).unwrap();
+    let after = g.current_point().unwrap();
+    assert!(close(after, p(100.0 + 0.944 * 12.0, 700.0)));
+    let recorded = ops(&g);
+    assert_eq!(recorded[0], IrOp::SetColor(vec![0.5]));
+    let IrOp::Text {
+        font,
+        matrix,
+        glyphs,
+    } = &recorded[1]
+    else {
+        panic!("a text op, got {:?}", recorded[1]);
+    };
+    assert_eq!(*font, FontIndex(0));
+    assert!(
+        matrix
+            .0
+            .iter()
+            .zip([0.012, 0.0, 0.0, 0.012, 100.0, 700.0])
+            .all(|(a, b)| (a - b).abs() < 1e-6)
+    );
+    assert_eq!(glyphs, &[glyph(72, 722.0), glyph(105, 222.0)]);
+    assert_eq!(recorded.len(), 2);
+    // A second run in the same colour needs no setting; an empty run
+    // records nothing but is not an error.
+    g.show(&[]).unwrap();
+    g.show(&[glyph(72, 722.0)]).unwrap();
+    assert_eq!(ops(&g).len(), 3);
+    g.showpage().unwrap();
+    let pages = g.sink().borrow();
+    assert_eq!(
+        pages[0].resources.fonts,
+        [FontSpec::Resident {
+            base: StdFont::Helvetica,
+            encoding: glyph_names(&standard_names()),
+        }]
+    );
+    assert!(pages[0].dump().contains(
+        "font 0 Helvetica\nops:\nsc 0.5\ntext 0 0.012 0 0 0.012 100 700 (Hi) 722 0 222 0\n"
+    ));
+}
+
+#[test]
+fn resident_fonts_intern_by_base_and_encoding_not_by_instance() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &helvetica()).unwrap();
+    g.define_font(1, &helvetica()).unwrap();
+    let mut reencoded = helvetica();
+    reencoded.encoding[65] = Some(b"W".to_vec());
+    reencoded.encoding[66] = None;
+    g.define_font(2, &reencoded).unwrap();
+    g.define_font(
+        3,
+        &FontInfo {
+            source: FontSource::Resident(StdFont::Symbol),
+            encoding: StdFont::Symbol
+                .builtin_encoding()
+                .iter()
+                .map(|n| Some(n.unwrap_or(".notdef").as_bytes().to_vec()))
+                .collect(),
+        },
+    )
+    .unwrap();
+    for (instance, size) in [(0, 12.0), (1, 24.0), (2, 12.0), (3, 12.0), (0, 8.0)] {
+        g.moveto(p(0.0, 0.0)).unwrap();
+        g.set_font(Some(font(instance, size))).unwrap();
+        g.show(&[glyph(65, 667.0)]).unwrap();
+    }
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let fonts: Vec<FontIndex> = pages[0]
+        .ops
+        .iter()
+        .filter_map(|o| match &o.op {
+            IrOp::Text { font, .. } => Some(*font),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        fonts,
+        [
+            FontIndex(0),
+            FontIndex(0),
+            FontIndex(1),
+            FontIndex(2),
+            FontIndex(0)
+        ]
+    );
+    assert_eq!(pages[0].resources.fonts.len(), 3);
+    let dump = pages[0].dump();
+    assert!(dump.contains(
+        "font 0 Helvetica\nfont 1 Helvetica diff=[65 /W 66 /.notdef]\nfont 2 Symbol\nops:\n"
+    ));
+    // A redefined instance starts over.
+    assert!(
+        pages[0].resources.fonts[2]
+            .glyph_name(97)
+            .is_some_and(|n| n == b"alpha")
+    );
+}
+
+#[test]
+fn glyphs_are_captured_in_glyph_space_and_shown_as_a_run() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.concat(Matrix::scaling(2.0, 2.0)).unwrap();
+    g.set_font(Some(font(0, 20.0))).unwrap();
+    g.moveto(p(10.0, 10.0)).unwrap();
+    g.set_color(&[0.5]).unwrap();
+    capture_square(&mut g, font(0, 20.0), b"a", false);
+    capture_square(&mut g, font(0, 20.0), b"a", false);
+    g.show(&[glyph(97, 1000.0), glyph(97, 1000.0)]).unwrap();
+    assert_eq!(g.gstate_depth(), 0);
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let page = &pages[0];
+    let square = vec![
+        Seg::Move(p(0.0, 0.0)),
+        Seg::Line(p(750.0, 0.0)),
+        Seg::Line(p(750.0, 750.0)),
+        Seg::Line(p(0.0, 750.0)),
+        Seg::Close,
+    ];
+    let FontSpec::Type3 {
+        font_matrix,
+        glyphs,
+        ..
+    } = &page.resources.fonts[0]
+    else {
+        panic!("a Type 3 resource");
+    };
+    assert_eq!(*font_matrix, Matrix::scaling(0.001, 0.001));
+    assert_eq!(glyphs.len(), 1);
+    let proc_ = &glyphs[b"a".as_slice()];
+    assert_eq!(proc_.width, (1000.0, 0.0));
+    assert_eq!(proc_.bbox, Some(Bounds::new(0.0, 0.0, 750.0, 750.0)));
+    // The inherited colour is not part of the procedure.
+    assert_eq!(proc_.ops.len(), 1);
+    let IrOp::Fill { path, .. } = &proc_.ops[0].op else {
+        panic!("a fill");
+    };
+    assert!(path.iter().zip(&square).all(|(a, b)| match (a, b) {
+        (Seg::Move(a), Seg::Move(b)) | (Seg::Line(a), Seg::Line(b)) => close(*a, *b),
+        (Seg::Close, Seg::Close) => true,
+        _ => false,
+    }));
+    let recorded: Vec<&IrOp> = page.ops.iter().map(|o| &o.op).collect();
+    assert_eq!(*recorded[0], IrOp::SetColor(vec![0.5]));
+    let IrOp::Text { matrix, glyphs, .. } = recorded[1] else {
+        panic!("a text op");
+    };
+    assert!(
+        matrix
+            .0
+            .iter()
+            .zip([0.04, 0.0, 0.0, 0.04, 20.0, 20.0])
+            .all(|(a, b)| (a - b).abs() < 1e-5)
+    );
+    assert_eq!(glyphs.len(), 2);
+    assert_eq!(recorded.len(), 2);
+    assert!(page.dump().contains(
+        "font 0 type3 0.001 0 0 0.001 0 0 bbox=[0 0 1000 1000] enc=[97 /a]\n\
+         glyph /a 1000 0 [0 0 750 750] {\n  m 0 0\n  l 750 0\n  l 750 750\n  l 0 750\n  h\n  f\n}\nops:\n"
+    ));
+}
+
+#[test]
+fn type3_fonts_intern_by_family_and_encoding() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.define_font(1, &square_font(7)).unwrap();
+    let mut other = square_font(7);
+    other.encoding[97] = Some(b"b".to_vec());
+    g.define_font(2, &other).unwrap();
+    g.define_font(3, &square_font(8)).unwrap();
+    for instance in 0..4 {
+        g.moveto(p(0.0, 0.0)).unwrap();
+        g.set_font(Some(font(instance, 10.0))).unwrap();
+        capture_square(&mut g, font(instance, 10.0), b"a", false);
+        g.show(&[glyph(97, 1000.0)]).unwrap();
+    }
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert_eq!(pages[0].resources.fonts.len(), 3);
+    let fonts: Vec<usize> = pages[0]
+        .ops
+        .iter()
+        .filter_map(|o| match &o.op {
+            IrOp::Text { font, .. } => Some(font.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fonts, [0, 0, 1, 2]);
+}
+
+#[test]
+fn measured_and_abandoned_glyphs_store_nothing() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    capture_square(&mut g, font(0, 10.0), b"a", true);
+    assert!(g.ops().is_empty());
+    // An abandoned procedure: the VM ends it with no width and no box.
+    g.gsave().unwrap();
+    g.begin_glyph(font(0, 10.0), 98, b"b", false).unwrap();
+    g.rectfill(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    }])
+    .unwrap();
+    g.end_glyph((0.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    assert!(g.ops().is_empty());
+    assert_eq!(g.end_glyph((1.0, 0.0), None), Err(VmError::InvalidAccess));
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert!(pages[0].resources.fonts.is_empty());
+    assert!(pages[0].ops.is_empty());
+}
+
+#[test]
+fn a_glyph_keeps_its_own_settings_clips_and_nested_text_only() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.define_font(1, &helvetica()).unwrap();
+    g.set_color_space(&SpaceSpec::DeviceRGB).unwrap();
+    g.set_color(&[1.0, 0.0, 0.0]).unwrap();
+    g.rectclip(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 500.0,
+        height: 500.0,
+    }])
+    .unwrap();
+    g.set_line_width(3.0).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(10.0, 10.0)).unwrap();
+    // The glyph: a colour of its own in the inherited space, a clip, a
+    // stroke, and a nested run in a resident font.
+    g.gsave().unwrap();
+    let ctm = font(0, 10.0)
+        .matrix
+        .then(Matrix::translation(10.0, 10.0))
+        .then(g.current_matrix());
+    g.set_matrix(ctm).unwrap();
+    g.newpath().unwrap();
+    g.begin_glyph(font(0, 10.0), 97, b"a", false).unwrap();
+    g.set_color(&[0.0, 0.0, 1.0]).unwrap();
+    g.rectclip(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 600.0,
+        height: 600.0,
+    }])
+    .unwrap();
+    line(&mut g, p(0.0, 0.0), p(500.0, 500.0));
+    g.stroke().unwrap();
+    g.set_font(Some(font(1, 400.0))).unwrap();
+    g.moveto(p(100.0, 100.0)).unwrap();
+    g.show(&[glyph(72, 722.0)]).unwrap();
+    g.end_glyph((1000.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    g.show(&[glyph(97, 1000.0)]).unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let dump = pages[0].dump();
+    assert_eq!(
+        dump,
+        "ir/1\npage 612 792\nresources:\ncs 0 DeviceRGB\nfont 0 Helvetica\n\
+         font 1 type3 0.001 0 0 0.001 0 0 bbox=[0 0 1000 1000] enc=[97 /a]\n\
+         glyph /a 1000 0 {\n  q\n  m 0 0\n  l 600 0\n  l 600 600\n  l 0 600\n  h\n  W n\n\
+         \x20 cs 0\n  sc 0 0 1\n  m 0 0\n  l 500 500\n  S\n\
+         \x20 text 0 0.4 0 0 0.4 100 100 (H) 722 0\n  Q\n}\n\
+         ops:\nq\nm 0 0\nl 500 0\nl 500 500\nl 0 500\nh\nW n\ncs 0\nsc 1 0 0\nw 3\n\
+         text 1 0.01 0 0 0.01 10 10 (a) 1000 0\nQ\n"
+    );
+}
+
+#[test]
+fn page_operations_are_refused_while_capturing() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    g.gsave().unwrap();
+    g.begin_glyph(font(0, 10.0), 97, b"a", false).unwrap();
+    assert_eq!(g.showpage(), Err(VmError::InvalidAccess));
+    assert_eq!(g.copypage(), Err(VmError::InvalidAccess));
+    assert_eq!(g.erasepage(), Err(VmError::InvalidAccess));
+    assert_eq!(
+        g.set_media_box(Bounds::new(0.0, 0.0, 1.0, 1.0)),
+        Err(VmError::InvalidAccess)
+    );
+    g.end_glyph((0.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    g.showpage().unwrap();
+    assert_eq!(pages.borrow().len(), 1);
+}
+
+#[test]
+fn a_glyph_name_keeps_its_first_procedure() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    capture_square(&mut g, font(0, 10.0), b"a", false);
+    g.gsave().unwrap();
+    g.begin_glyph(font(0, 10.0), 97, b"a", false).unwrap();
+    g.end_glyph((500.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    g.show(&[glyph(97, 1000.0), glyph(97, 500.0)]).unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let FontSpec::Type3 { glyphs, .. } = &pages[0].resources.fonts[0] else {
+        panic!("a Type 3 resource");
+    };
+    assert_eq!(glyphs.len(), 1);
+    assert_eq!(glyphs[b"a".as_slice()].width, (1000.0, 0.0));
+    assert_eq!(pages[0].resources.fonts[0].width(97), (1000.0, 0.0));
+    assert_eq!(pages[0].resources.fonts[0].width(0), (0.0, 0.0));
+    let _ = GlyphProc {
+        ops: Vec::new(),
+        width: (0.0, 0.0),
+        bbox: None,
+    };
+}

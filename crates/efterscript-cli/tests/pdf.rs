@@ -105,3 +105,34 @@ fn host_failures_exit_two() {
         .unwrap();
     assert_eq!(usage.status.code(), Some(2));
 }
+
+fn text_corpus(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/unit/text")
+        .join(name)
+}
+
+#[test]
+fn substituted_fonts_are_reported_on_stderr_in_one_line() {
+    let out = scratch("substitution").join("arial.pdf");
+    let output = efterscript()
+        .arg("pdf")
+        .arg(text_corpus("substitution-arial.ps"))
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "efterscript: 1 font substituted: Arial -> Helvetica\n"
+    );
+    assert!(looks_like_a_pdf(&std::fs::read(&out).unwrap()));
+    let quiet = efterscript()
+        .arg("pdf")
+        .arg(text_corpus("text-operation-shape.ps"))
+        .arg(scratch("substitution").join("hi.pdf"))
+        .output()
+        .unwrap();
+    assert!(quiet.status.success());
+    assert!(quiet.stderr.is_empty());
+}

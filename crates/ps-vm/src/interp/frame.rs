@@ -6,6 +6,7 @@
 use crate::object::Object;
 use crate::ops::Num;
 use crate::ops::image::ImageAcquisition;
+use crate::ops::show::ShowFrame;
 use crate::scanner::Scanner;
 use crate::source::{FileSource, StringSource};
 
@@ -114,18 +115,45 @@ pub enum LoopFrame {
         body: Object,
         acquisition: Box<ImageAcquisition>,
     },
+    /// A `show`-family operator or `stringwidth` in progress: glyphs are
+    /// consumed one step at a time so a Type 3 glyph procedure or a
+    /// `kshow` procedure can run as frames above it.
+    Show(Box<ShowFrame>),
+    /// `resourceforall`: each of `names` is written into `scratch` and
+    /// the body runs with the filled interval.
+    ResourceForAll {
+        body: Object,
+        names: Vec<Vec<u8>>,
+        scratch: Object,
+        next: usize,
+    },
 }
 
 impl LoopFrame {
-    /// The procedure the loop runs.
+    /// The procedure the loop runs; for a show frame, the glyph or
+    /// `kshow` procedure it runs between its own steps (null if none).
     pub fn body(&self) -> Object {
         match self {
             LoopFrame::For { body, .. }
             | LoopFrame::Repeat { body, .. }
             | LoopFrame::Loop { body }
             | LoopFrame::ForAll { body, .. }
-            | LoopFrame::ImageData { body, .. } => *body,
+            | LoopFrame::ImageData { body, .. }
+            | LoopFrame::ResourceForAll { body, .. } => *body,
+            LoopFrame::Show(frame) => frame.procedure(),
         }
+    }
+
+    /// Every object the frame still needs, for `restore`'s check.
+    pub fn references(&self) -> Vec<Object> {
+        let mut objects = vec![self.body()];
+        match self {
+            LoopFrame::ForAll { container, .. } => objects.push(*container),
+            LoopFrame::ResourceForAll { scratch, .. } => objects.push(*scratch),
+            LoopFrame::Show(frame) => objects.extend(frame.references()),
+            _ => {}
+        }
+        objects
     }
 }
 

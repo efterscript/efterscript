@@ -22,6 +22,9 @@ mod real;
 mod state;
 
 pub use backend::Graphics;
-pub use ir::{FillRule, Image, ImageRef, IrOp, Op, Page, PageSink, Resources, SpaceRef};
+pub use ir::{
+    FillRule, FontIndex, FontSpec, GlyphName, GlyphNames, GlyphProc, Image, ImageRef, IrOp, Op,
+    Page, PageSink, Resources, SpaceRef, glyph_names,
+};
 pub use real::{fmt_real, fmt_reals};
 pub use state::{ClipEntry, GState, Path};

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 23.0
+% expect-output: 0.0
+% Scenario: widthshow adds its displacement to every occurrence of the
+% given code, here the space in (a b) at Courier 10: 6 + (6 + 5) + 6.
+% Expect: 23.0 and 0.0.
+/r { 1000 mul round 1000 div } def
+/Courier findfont 10 scalefont setfont
+0 0 moveto 5 0 32 (a b) widthshow currentpoint r exch r = =

@@ -186,6 +186,7 @@ version = "0.0.1"
 dependencies = [
  "pdf-out",
  "proptest",
+ "ps-fonts",
  "ps-vm",
 ]
 
@@ -194,6 +195,7 @@ name = "ps-vm"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "ps-fonts",
 ]
 
 [[package]]

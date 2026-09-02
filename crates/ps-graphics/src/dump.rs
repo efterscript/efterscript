@@ -12,9 +12,20 @@
 //! resources:
 //! cs <n> <space>                      one per colour space, in index order
 //! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate]
+//! font <n> <BaseName> [diff=[<code> /<name>…]]
+//! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
+//! glyph /<name> <wx> <wy> [<llx> <lly> <urx> <ury>] {
+//!   <op>                              the glyph's procedure, indented
+//! }
 //! ops:
 //! <op>                                one per line, in page order
 //! ```
+//!
+//! A resident font lists only the codes whose glyph differs from the
+//! base font's built-in encoding (`/.notdef` where the program removed
+//! one); a Type 3 font lists the codes of the glyphs it captured, then
+//! one `glyph` block per captured glyph in name order, the box present
+//! for a `setcachedevice` glyph.
 //!
 //! Colour spaces are described by family: `DeviceGray`, `DeviceRGB`,
 //! `DeviceCMYK`, `Separation (<name>) alt=<space> tint=<len> bytes`,
@@ -37,6 +48,12 @@
 //!                                     when the CTM at the stroke is not
 //!                                     the identity
 //! Do img <n> <a> <b> <c> <d> <tx> <ty>   image with its unit-square matrix
+//! text <n> <a> <b> <c> <d> <tx> <ty> (<bytes>) <dx> <dy>…
+//!                                     a glyph run: font, the matrix from
+//!                                     glyph space to default user space
+//!                                     at the first glyph, the codes, and
+//!                                     each glyph's displacement in glyph
+//!                                     space
 //! ```
 //!
 //! Numbers use the project's canonical real syntax ([`crate::fmt_real`]).
@@ -45,7 +62,7 @@
 
 use ps_vm::{Bounds, ImageSpec, Matrix, Seg, SpaceSpec};
 
-use crate::ir::{FillRule, Image, IrOp, Page};
+use crate::ir::{FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page};
 use crate::real::{fmt_real, fmt_reals};
 
 pub const VERSION: &str = "ir/1";
@@ -64,6 +81,98 @@ fn ps_string(bytes: &[u8]) -> String {
     }
     out.push(')');
     out
+}
+
+/// A glyph name as `/name`, with the bytes that would end or confuse a
+/// token written as octal escapes.
+fn ps_name(bytes: &[u8]) -> String {
+    let mut out = String::from("/");
+    for &b in bytes {
+        match b {
+            b'!'..=b'~'
+                if !matches!(
+                    b,
+                    b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%' | b'\\'
+                ) =>
+            {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("\\{b:03o}")),
+        }
+    }
+    out
+}
+
+/// `code /name` pairs for the codes of `encoding` that `differs` selects.
+fn code_names(encoding: &GlyphNames, differs: impl Fn(u8, Option<&[u8]>) -> bool) -> String {
+    let mut parts = Vec::new();
+    for (code, name) in encoding.iter().enumerate() {
+        let code = code as u8;
+        let name = name.as_deref();
+        if differs(code, name) {
+            parts.push(format!("{code} {}", ps_name(name.unwrap_or(b".notdef"))));
+        }
+    }
+    parts.join(" ")
+}
+
+fn glyph(name: &[u8], proc_: &GlyphProc) -> String {
+    let mut line = format!(
+        "glyph {} {}",
+        ps_name(name),
+        fmt_reals(&[proc_.width.0, proc_.width.1])
+    );
+    if let Some(b) = proc_.bbox {
+        line.push_str(&format!(" [{}]", fmt_reals(&[b.llx, b.lly, b.urx, b.ury])));
+    }
+    line.push_str(" {\n");
+    let mut body = String::new();
+    ops(&mut body, &proc_.ops);
+    for inner in body.lines() {
+        line.push_str("  ");
+        line.push_str(inner);
+        line.push('\n');
+    }
+    line.push_str("}\n");
+    line
+}
+
+/// The `font` line of a resource and, for a Type 3 font, its glyph
+/// blocks; every line ends in a newline.
+fn font(index: usize, spec: &FontSpec) -> String {
+    match spec {
+        FontSpec::Resident { base, encoding } => {
+            let builtin = base.builtin_encoding();
+            let diff = code_names(encoding, |code, name| {
+                name != builtin[usize::from(code)].map(str::as_bytes)
+            });
+            let mut line = format!("font {index} {}", base.postscript_name());
+            if !diff.is_empty() {
+                line.push_str(&format!(" diff=[{diff}]"));
+            }
+            line.push('\n');
+            line
+        }
+        FontSpec::Type3 {
+            font_matrix,
+            font_bbox: b,
+            encoding,
+            glyphs,
+        } => {
+            let enc = code_names(encoding, |_, name| {
+                name.is_some_and(|name| glyphs.contains_key(name))
+            });
+            let mut out = format!(
+                "font {index} type3 {} bbox=[{}] enc=[{enc}]\n",
+                matrix(*font_matrix),
+                fmt_reals(&[b.llx, b.lly, b.urx, b.ury])
+            );
+            for (name, proc_) in glyphs {
+                out.push_str(&glyph(name, proc_));
+            }
+            out
+        }
+    }
 }
 
 fn space(spec: &SpaceSpec) -> String {
@@ -190,6 +299,27 @@ fn op(out: &mut String, op: &IrOp) {
             image: r,
             matrix: m,
         } => out.push_str(&format!("Do img {} {}\n", r.0, matrix(*m))),
+        IrOp::Text {
+            font,
+            matrix: m,
+            glyphs,
+        } => {
+            let codes: Vec<u8> = glyphs.iter().map(|g| g.code).collect();
+            let displacements: Vec<f32> = glyphs.iter().flat_map(|g| [g.dx, g.dy]).collect();
+            out.push_str(&format!(
+                "text {} {} {} {}\n",
+                font.0,
+                matrix(*m),
+                ps_string(&codes),
+                fmt_reals(&displacements)
+            ));
+        }
+    }
+}
+
+fn ops(out: &mut String, ops: &[Op]) {
+    for entry in ops {
+        op(out, &entry.op);
     }
 }
 
@@ -208,10 +338,11 @@ pub fn page(page: &Page) -> String {
         out.push_str(&image(i, img));
         out.push('\n');
     }
-    out.push_str("ops:\n");
-    for entry in &page.ops {
-        op(&mut out, &entry.op);
+    for (i, spec) in page.resources.fonts.iter().enumerate() {
+        out.push_str(&font(i, spec));
     }
+    out.push_str("ops:\n");
+    ops(&mut out, &page.ops);
     out
 }
 

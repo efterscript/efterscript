@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 60.0
+% expect-output: 0.0
+% expect-output: 3.0
+% expect-output: 5.0
+% Scenario: xshow positions each glyph by its own number, replacing the
+% width; yshow and xyshow likewise for the other axis and both.
+% Expect: 60.0 0.0 after xshow, then 3.0 5.0 after xyshow.
+/r { 1000 mul round 1000 div } def
+/Helvetica findfont 10 scalefont setfont
+0 0 moveto (abc) [10 20 30] xshow currentpoint r exch r = =
+0 0 moveto (ab) [1 2 2 3] xyshow currentpoint r exch r = =

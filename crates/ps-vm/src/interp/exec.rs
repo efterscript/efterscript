@@ -299,10 +299,46 @@ impl Interp {
     }
 
     fn advance_loop(&mut self) {
+        if let Some(Frame::Loop(LoopFrame::Show(_))) = self.estack.last() {
+            ops::show::step(self);
+            return;
+        }
         let Some(Frame::Loop(frame)) = self.estack.last_mut() else {
             return;
         };
         let step = match frame {
+            // Stepped above.
+            LoopFrame::Show(_) => LoopStep::Finished,
+            LoopFrame::ResourceForAll {
+                body,
+                names,
+                scratch,
+                next,
+            } => match names.get(*next) {
+                None => LoopStep::Finished,
+                Some(name) => {
+                    let filled = u32::try_from(name.len())
+                        .ok()
+                        .and_then(|n| scratch.with_interval(0, n))
+                        .ok_or(VmError::RangeCheck)
+                        .and_then(|interval| {
+                            self.mem
+                                .string_put_bytes(*scratch, 0, name)
+                                .map(|()| interval)
+                        });
+                    match filled {
+                        Ok(interval) => {
+                            *next += 1;
+                            LoopStep::Iterate {
+                                body: *body,
+                                values: [Some(interval), None],
+                                operator: "resourceforall",
+                            }
+                        }
+                        Err(e) => LoopStep::Failed(e, "resourceforall"),
+                    }
+                }
+            },
             LoopFrame::For {
                 body,
                 current,
@@ -617,12 +653,7 @@ impl Interp {
                     }
                 }
                 Frame::Source(frame) => objects.extend(frame.slot.object()),
-                Frame::Loop(frame) => {
-                    objects.push(frame.body());
-                    if let LoopFrame::ForAll { container, .. } = frame {
-                        objects.push(*container);
-                    }
-                }
+                Frame::Loop(frame) => objects.extend(frame.references()),
                 Frame::Stopped | Frame::Marker(_) => {}
             }
         }

@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: [10.0 0.0 0.0 10.0 0.0 0.0]
+% expect-output: true
+% Scenario: a defined font round-trips. definefont registers a Type 3
+% dictionary under its key and gives it an FID; scalefont composes the
+% FontMatrix with the scale; setfont/currentfont return the scaled copy.
+% Expect: the scaled matrix, then true for the FID.
+/Sq 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [1 0 0 1 0 0] def
+  /Encoding 256 array def
+  /FontBBox [0 0 1 1] def
+  /BuildGlyph { pop pop 1 0 0 0 1 1 setcachedevice 0 0 1 1 rectfill } def
+end definefont pop
+/Sq findfont 10 scalefont setfont currentfont /FontMatrix get ==
+/Sq findfont /FID known =

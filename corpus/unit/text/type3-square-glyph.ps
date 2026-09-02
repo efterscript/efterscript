@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 30
+% expect-output: 10
+% Scenario: a square glyph. A Type 3 font whose BuildGlyph declares a
+% width of 1000 and fills the em square, shown once at size 20 from
+% (10, 10): the glyph procedure is captured in glyph space under the
+% font resource, the text operation lists the glyph, and the current
+% point advances by 20.
+% Expect: 30 and 10.
+/Sq 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 1000 1000] def
+  /BuildGlyph { pop pop 1000 0 0 0 1000 1000 setcachedevice 0 0 1000 1000 rectfill } def
+end definefont pop
+/Sq findfont 20 scalefont setfont
+10 10 moveto (a) show
+currentpoint round cvi exch round cvi = =
+showpage

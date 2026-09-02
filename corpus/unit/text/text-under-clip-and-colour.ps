@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: text under a clip and colour. The clip opens a save, the
+% colour is set before the run, then the text operation, and nothing
+% else.
+/Helvetica findfont 12 scalefont setfont
+0 0 200 200 rectclip
+1 0 0 setrgbcolor
+50 50 moveto (Hi) show
+showpage

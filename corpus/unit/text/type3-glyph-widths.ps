@@ -1,0 +1,27 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 20.0
+% expect-output: 0.0
+% expect-output: 50.0
+% expect-output: 10.0
+% expect-output: 98
+% Scenario: Type 3 glyph widths. stringwidth runs BuildGlyph and reads
+% the width setcachedevice declares; show advances by it; a BuildChar
+% font receives the code instead of the name.
+% Expect: 20.0 0.0, 50.0 10.0, then 98.
+/r { 1000 mul round 1000 div } def
+/Sq 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 1000 1000] def
+  /BuildGlyph { pop pop 1000 0 0 0 1000 1000 setcachedevice 0 0 1000 1000 rectfill } def
+end definefont pop
+/Sq findfont 20 scalefont setfont
+(a) stringwidth r exch r = =
+10 10 moveto (aa) show currentpoint r exch r = =
+/Codes << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding
+  /BuildChar { exch pop /seen exch def 600 0 setcharwidth } >> definefont
+10 scalefont setfont
+(b) stringwidth pop pop seen =

@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 20
+% expect-output: 0
+% Scenario: stringwidth paints nothing. Measuring a Type 3 glyph runs its
+% procedure without recording anything: the page delivered afterwards
+% has no operations and no font resource.
+% Expect: 20 and 0.
+/Sq 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 1000 1000] def
+  /BuildGlyph { pop pop 1000 0 0 0 1000 1000 setcachedevice 0 0 1000 1000 rectfill } def
+end definefont pop
+/Sq findfont 20 scalefont setfont
+(a) stringwidth round cvi exch round cvi = =
+showpage

@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 97
+% expect-output: 98
+% expect-output: 98
+% expect-output: 99
+% Scenario: kshow runs its procedure between consecutive glyphs with the
+% two codes on the stack (proc string kshow, PLRM3 §8.2).
+% Expect: 97 98, then 98 99.
+/Courier findfont 10 scalefont setfont
+0 0 moveto { exch = = } (abc) kshow

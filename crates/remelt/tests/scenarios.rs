@@ -48,7 +48,9 @@ fn a_stroked_line_distils() {
         run.report,
         Report {
             outcome: Outcome::Ok,
-            pages: 1
+            pages: 1,
+            substitutions: Vec::new(),
+            notes: Vec::new(),
         }
     );
     let pdf = check(&run.pdf);
@@ -87,7 +89,9 @@ fn a_job_with_no_pages() {
         run.report,
         Report {
             outcome: Outcome::Ok,
-            pages: 0
+            pages: 0,
+            substitutions: Vec::new(),
+            notes: Vec::new(),
         }
     );
     let pdf = check(&run.pdf);
@@ -234,11 +238,11 @@ fn error_after_the_first_page() {
 }
 
 #[test]
-fn two_runs_agree_on_every_corpus_graphics_file() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/unit/graphics");
-    let mut files: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
-        .flatten()
+fn two_runs_agree_on_every_corpus_graphics_and_text_file() {
+    let unit = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/unit");
+    let mut files: Vec<_> = ["graphics", "text"]
+        .into_iter()
+        .flat_map(|dir| std::fs::read_dir(unit.join(dir)).unwrap().flatten())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "ps"))
         .collect();
@@ -273,4 +277,100 @@ fn the_default_options_compress() {
         b"FlateDecode"
     );
     assert!(content(&pdf, 0).ends_with("h\nf\n"));
+}
+
+// --- text -----------------------------------------------------------------------------
+
+use ps_vm::FontSubstitution;
+use support::{font, font_ref};
+
+// text-operation-shape.ps
+#[test]
+fn standard_font_text() {
+    let run = distil("/Helvetica findfont 12 scalefont setfont 100 700 moveto (Hi) show showpage");
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    assert!(run.report.substitutions.is_empty());
+    assert!(run.report.notes.is_empty());
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n12 0 0 12 100 700 Tm\n(Hi) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type1");
+    assert_eq!(font.get("BaseFont").unwrap().as_name(), b"Helvetica");
+    let first = font.get("FirstChar").unwrap().as_int();
+    let widths = array(font.get("Widths").unwrap());
+    assert_eq!(number(&widths[(72 - first) as usize]), 722.0);
+    let cmap = decoded(pdf.resolve(font.get("ToUnicode").unwrap().as_reference()));
+    assert!(String::from_utf8(cmap).unwrap().contains("<48> <0048>\n"));
+}
+
+// type3-square-glyph.ps
+#[test]
+fn type3_charprocs() {
+    let run = distil(
+        "/Sq 7 dict dup begin /FontType 3 def /FontMatrix [0.001 0 0 0.001 0 0] def \
+         /Encoding StandardEncoding def /FontBBox [0 0 1000 1000] def \
+         /BuildGlyph { pop pop 1000 0 0 0 1000 1000 setcachedevice 0 0 1000 1000 rectfill } def \
+         end definefont pop /Sq findfont 20 scalefont setfont 10 10 moveto (a) show showpage",
+    );
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n20 0 0 20 10 10 Tm\n(a) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type3");
+    let matrix: Vec<f64> = array(font.get("FontMatrix").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(matrix, [0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    assert_eq!(differences[0].as_int(), 97);
+    assert_eq!(differences[1].as_name(), b"a");
+    let charprocs = font.get("CharProcs").unwrap();
+    let charproc = pdf.resolve(charprocs.get("a").unwrap().as_reference());
+    assert!(
+        String::from_utf8(decoded(charproc))
+            .unwrap()
+            .starts_with("1000 0 0 0 1000 1000 d1\n0 0 m\n1000 0 l\n")
+    );
+}
+
+// fonts-shared-across-pages.ps
+#[test]
+fn fonts_shared_across_pages() {
+    let run = distil(
+        "/Helvetica findfont 12 scalefont setfont 72 700 moveto (First) show showpage \
+         /Helvetica findfont 24 scalefont setfont 72 700 moveto (Second) show showpage",
+    );
+    assert_eq!(run.report.pages, 2);
+    let pdf = check(&run.pdf);
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    assert_eq!(
+        String::from_utf8_lossy(&run.pdf)
+            .matches("/BaseFont /Helvetica")
+            .count(),
+        1
+    );
+}
+
+// substitution-arial.ps
+#[test]
+fn substitutions_are_reported() {
+    let run = distil("/Arial findfont 12 scalefont setfont 72 72 moveto (Arial) show showpage");
+    assert_eq!(
+        run.report.substitutions,
+        [FontSubstitution {
+            requested: b"Arial".to_vec(),
+            substitute: "Helvetica",
+        }]
+    );
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        font(&pdf, 0, "F0").get("BaseFont").unwrap().as_name(),
+        b"Helvetica"
+    );
 }

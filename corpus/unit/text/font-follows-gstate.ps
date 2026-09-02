@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: Helvetica
+% expect-output: Courier
+% Scenario: the font follows the graphics state. gsave/grestore save and
+% restore the current font like any other parameter; save/restore too.
+% Expect: Helvetica after grestore, Courier after restore.
+/Helvetica findfont 12 scalefont setfont
+gsave /Courier findfont 8 scalefont setfont grestore
+currentfont /FontName get =
+/Courier findfont 10 scalefont setfont
+save /Times-Roman findfont 10 scalefont setfont restore
+currentfont /FontName get =

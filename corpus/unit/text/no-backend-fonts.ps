@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: 6.0
+% expect-output: 0.0
+% expect-output: Courier
+% expect-output: false
+% expect-output: 5.0
+% Scenario: fonts without a graphics backend. A scripting embedder can
+% find, scale, select, and measure fonts, resident or Type 3; only the
+% painting operators are undefined.
+% Expect: 6.0 0.0, Courier, false, then 5.0 from a Type 3 glyph.
+/r { 1000 mul round 1000 div } def
+/Courier findfont 10 scalefont setfont
+(a) stringwidth r exch r = =
+currentfont /FontName get =
+systemdict /show known =
+/T3 << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding
+  /BuildGlyph { pop pop 500 0 setcharwidth } >> definefont
+10 scalefont setfont
+(x) stringwidth pop r =

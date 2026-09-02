@@ -12,6 +12,8 @@
 //! PostScript: procedure-driven work (image data, tint transforms) is
 //! resolved by the operators before the call.
 
+use ps_fonts::StdFont;
+
 use crate::error::VmError;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -268,6 +270,62 @@ impl ImageSpec {
     }
 }
 
+/// The current font as the graphics state holds it: the VM's instance id
+/// for the font dictionary (see `Interp::font_dict`) and that dictionary's
+/// `FontMatrix`, which maps glyph space to text space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontRef {
+    pub instance: u32,
+    pub matrix: Matrix,
+}
+
+/// One glyph of a shown run: its character code and the displacement, in
+/// glyph space, applied to the current point after it. The displacement is
+/// the glyph's width plus whatever the show variant added, taken back
+/// through the font matrix.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Glyph {
+    pub code: u8,
+    pub dx: f32,
+    pub dy: f32,
+}
+
+impl Glyph {
+    /// The sum of the displacements of a run, in glyph space.
+    pub fn total(glyphs: &[Glyph]) -> Point {
+        glyphs.iter().fold(Point::default(), |acc, g| {
+            Point::new(acc.x + g.dx, acc.y + g.dy)
+        })
+    }
+}
+
+/// Where a font instance's glyphs come from, as a backend recording text
+/// needs to know it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FontSource {
+    /// One of the standard fourteen; widths come from its metrics.
+    Resident(StdFont),
+    /// A Type 3 font, whose glyphs are procedures the VM runs between
+    /// `begin_glyph` and `end_glyph`. `family` is the `FID` every derived
+    /// instance shares; `font_matrix` is the matrix the font was defined
+    /// with, before any scaling, and glyph procedures paint in its space.
+    Type3 {
+        family: u32,
+        font_matrix: Matrix,
+        font_bbox: Bounds,
+    },
+}
+
+/// What the VM tells the backend about a font instance before the first
+/// `show` or `begin_glyph` that names it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontInfo {
+    pub source: FontSource,
+    /// The glyph name each code selects, `None` where the encoding's
+    /// entry is not a name; 256 entries.
+    pub encoding: Vec<Option<Vec<u8>>>,
+}
+
 /// A path segment, in user space, as `clippath` reports the clip.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Seg {
@@ -372,6 +430,42 @@ pub trait GraphicsBackend {
     fn image(&mut self, spec: &ImageSpec, data: &[u8]) -> Result<(), VmError>;
     fn imagemask(&mut self, spec: &ImageSpec, data: &[u8]) -> Result<(), VmError>;
 
+    // --- text ---------------------------------------------------------------------
+
+    /// Describes a font instance before the first `show` or `begin_glyph`
+    /// that names it; the VM sends each instance once per backend. A
+    /// backend that records nothing about text may ignore it.
+    fn define_font(&mut self, instance: u32, info: &FontInfo) -> Result<(), VmError> {
+        let _ = (instance, info);
+        Ok(())
+    }
+    /// Makes `font` the current font of the graphics state (`None` clears
+    /// it); saved and restored with the rest of the state.
+    fn set_font(&mut self, font: Option<FontRef>) -> Result<(), VmError>;
+    fn font(&self) -> Option<FontRef>;
+    /// Shows a run of glyphs in the current font, starting at the current
+    /// point. The backend records the run and advances the current point
+    /// by the sum of the glyph displacements taken through the font matrix
+    /// (a user-space delta); the path is otherwise left alone. Without a
+    /// current point it is `nocurrentpoint`, without a font `invalidfont`.
+    fn show(&mut self, glyphs: &[Glyph]) -> Result<(), VmError>;
+    /// Starts capturing a Type 3 glyph: until `end_glyph`, marks go into
+    /// the glyph's own procedure in the coordinates of the CTM in effect
+    /// now (glyph space), and page operations are refused. With `measure`
+    /// nothing is kept; the glyph is only being measured.
+    fn begin_glyph(
+        &mut self,
+        font: FontRef,
+        code: u8,
+        name: &[u8],
+        measure: bool,
+    ) -> Result<(), VmError>;
+    /// Ends the capture begun by `begin_glyph`. `width` is the glyph's
+    /// displacement in glyph space; `bbox` is present for a glyph declared
+    /// with `setcachedevice` (colour-independent) and absent for one
+    /// declared with `setcharwidth`.
+    fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError>;
+
     // --- page and device ---------------------------------------------------------
 
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError>;
@@ -419,6 +513,24 @@ mod tests {
         assert!(close(inv.apply_delta(m.apply_delta(p)), p));
         assert_eq!(Matrix::scaling(0.0, 1.0).inverse(), None);
         assert_eq!(Matrix([1.0, 2.0, 2.0, 4.0, 0.0, 0.0]).inverse(), None);
+    }
+
+    #[test]
+    fn glyph_runs_sum_their_displacements() {
+        let run = [
+            Glyph {
+                code: 72,
+                dx: 722.0,
+                dy: 0.0,
+            },
+            Glyph {
+                code: 105,
+                dx: 222.0,
+                dy: 5.0,
+            },
+        ];
+        assert_eq!(Glyph::total(&run), Point::new(944.0, 5.0));
+        assert_eq!(Glyph::total(&[]), Point::default());
     }
 
     #[test]

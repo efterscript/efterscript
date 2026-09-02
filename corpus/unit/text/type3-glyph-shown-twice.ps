@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a glyph shown twice yields one procedure. Both occurrences
+% run the glyph procedure; the captures are equal, so the font resource
+% holds the glyph once and the text operation lists it twice with its
+% displacement.
+/Sq 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 1000 1000] def
+  /BuildGlyph { pop pop 1000 0 0 0 1000 1000 setcachedevice 0 0 1000 1000 rectfill } def
+end definefont pop
+/Sq findfont 20 scalefont setfont
+10 10 moveto (aa) show
+showpage

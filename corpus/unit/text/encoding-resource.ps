@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: eacute
+% expect-output: quoteright
+% expect-output: 256
+% expect-output: false
+% expect-output: true
+% Scenario: the two encodings are read-only arrays in systemdict and
+% instances of the Encoding category.
+% Expect: eacute, quoteright, 256, false (not writable), true (same
+% array through both routes).
+/ISOLatin1Encoding /Encoding findresource 233 get =
+StandardEncoding 39 get =
+StandardEncoding length =
+StandardEncoding wcheck =
+/StandardEncoding /Encoding findresource StandardEncoding eq =

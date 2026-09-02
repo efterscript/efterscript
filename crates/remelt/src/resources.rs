@@ -11,12 +11,16 @@
 //!
 //! The objects a page needs are written before the page itself, so a
 //! `Resources` dictionary only ever refers to objects already in the file.
+//! Fonts are `/Fn` (n the `FontIndex`), written once per document by
+//! `fonts`.
 
 use std::io::Write;
 
 use pdf_out::{DictBuilder, Document, Filter, Ref, Val};
-use ps_graphics::{Image, ImageRef, Page, SpaceRef};
+use ps_graphics::{FontIndex, Image, ImageRef, Page, SpaceRef};
 use ps_vm::{ImageSpec, SpaceSpec};
+
+use crate::fonts::{FontTable, Refs, write_fonts};
 
 pub(crate) fn space_name(space: SpaceRef) -> String {
     format!("CS{}", space.0)
@@ -24,6 +28,10 @@ pub(crate) fn space_name(space: SpaceRef) -> String {
 
 pub(crate) fn image_name(image: ImageRef) -> String {
     format!("Im{}", image.0)
+}
+
+pub(crate) fn font_name(font: FontIndex) -> String {
+    format!("F{}", font.0)
 }
 
 /// A colour space with its function streams already written.
@@ -225,16 +233,20 @@ fn write_image<W: Write>(
 pub(crate) struct Objects {
     spaces: Vec<Form>,
     images: Vec<Ref>,
+    fonts: Vec<Ref>,
 }
 
 impl Objects {
-    /// Writes the function streams and image XObjects `page` needs;
-    /// `filter` applies to the function streams (image data is always
-    /// Flate).
+    /// Writes the function streams, image XObjects, and font objects
+    /// `page` needs (fonts the document already has are reused through
+    /// `fonts`); `filter` applies to the text streams (image data is
+    /// always Flate). Text the fonts could not carry is noted in `notes`.
     pub(crate) fn write<W: Write>(
         doc: &mut Document<W>,
         page: &Page,
         filter: Filter,
+        fonts: &mut FontTable,
+        notes: &mut Vec<String>,
     ) -> Result<Self, pdf_out::Error> {
         let mut spaces = Vec::with_capacity(page.resources.color_spaces.len());
         for spec in &page.resources.color_spaces {
@@ -245,26 +257,75 @@ impl Objects {
             let space = image.color_space.map(|r| &spaces[r.0]);
             images.push(write_image(doc, image, space)?);
         }
-        Ok(Objects { spaces, images })
+        let mut objects = Objects {
+            spaces,
+            images,
+            fonts: Vec::new(),
+        };
+        objects.fonts = write_fonts(doc, page, filter, fonts, &objects, notes)?;
+        Ok(objects)
     }
 
     /// Fills the page's `Resources` dictionary: `ColorSpace` for the
-    /// non-device spaces and `XObject` for the images, each only when
-    /// there is something to list.
+    /// non-device spaces, `XObject` for the images, and `Font` for the
+    /// fonts, each only when there is something to list.
     pub(crate) fn resources(&self, d: &mut DictBuilder<'_>) {
-        if self.spaces.iter().any(|form| !form.is_device()) {
+        self.resources_dict(d, &self.fonts, None);
+    }
+
+    fn listed_spaces<'a>(&'a self, only: Option<&'a Refs>) -> impl Iterator<Item = usize> + 'a {
+        (0..self.spaces.len()).filter(move |&i| {
+            !self.spaces[i].is_device() && only.is_none_or(|refs| refs.spaces.contains(&i))
+        })
+    }
+
+    fn listed_images<'a>(&'a self, only: Option<&'a Refs>) -> impl Iterator<Item = usize> + 'a {
+        (0..self.images.len()).filter(move |&i| only.is_none_or(|refs| refs.images.contains(&i)))
+    }
+
+    fn listed_fonts<'a>(
+        &'a self,
+        fonts: &'a [Ref],
+        only: Option<&'a Refs>,
+    ) -> impl Iterator<Item = usize> + 'a {
+        (0..fonts.len()).filter(move |&i| only.is_none_or(|refs| refs.fonts.contains(&i)))
+    }
+
+    /// Whether a resources dictionary restricted to `only` would list
+    /// anything.
+    pub(crate) fn names_anything(&self, only: &Refs, fonts: &[Ref]) -> bool {
+        self.listed_spaces(Some(only)).next().is_some()
+            || self.listed_images(Some(only)).next().is_some()
+            || self.listed_fonts(fonts, Some(only)).next().is_some()
+    }
+
+    /// A resources dictionary over the page's objects, restricted to the
+    /// indices in `only` when given; `fonts` are the page's font objects
+    /// by index.
+    pub(crate) fn resources_dict(
+        &self,
+        d: &mut DictBuilder<'_>,
+        fonts: &[Ref],
+        only: Option<&Refs>,
+    ) {
+        if self.listed_spaces(only).next().is_some() {
             d.key("ColorSpace").dict(|cs| {
-                for (i, form) in self.spaces.iter().enumerate() {
-                    if !form.is_device() {
-                        form.put(cs.key(&space_name(SpaceRef(i))));
-                    }
+                for i in self.listed_spaces(only) {
+                    self.spaces[i].put(cs.key(&space_name(SpaceRef(i))));
                 }
             });
         }
-        if !self.images.is_empty() {
+        if self.listed_images(only).next().is_some() {
             d.key("XObject").dict(|x| {
-                for (i, image) in self.images.iter().enumerate() {
-                    x.key(&image_name(ImageRef(i))).reference(*image);
+                for i in self.listed_images(only) {
+                    x.key(&image_name(ImageRef(i))).reference(self.images[i]);
+                }
+            });
+        }
+        if self.listed_fonts(fonts, only).next().is_some() {
+            d.key("Font").dict(|f| {
+                for i in self.listed_fonts(fonts, only) {
+                    f.key(&font_name(FontIndex(i))).reference(fonts[i]);
                 }
             });
         }
@@ -316,5 +377,6 @@ mod tests {
     fn names_follow_the_ir_index() {
         assert_eq!(space_name(SpaceRef(0)), "CS0");
         assert_eq!(image_name(ImageRef(12)), "Im12");
+        assert_eq!(font_name(FontIndex(3)), "F3");
     }
 }

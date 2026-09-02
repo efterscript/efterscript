@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 9.44
+% expect-output: 0.0
+% Scenario: re-encoding changes widths. A copy of Helvetica whose
+% Encoding maps code 65 to /W keeps the resident marker, so (A) measures
+% as W (944 units) at size 10.
+% Expect: 9.44 and 0.0.
+/r { 1000 mul round 1000 div } def
+/Helvetica findfont dup length dict copy
+dup /Encoding get 256 array copy dup 65 /W put
+1 index exch /Encoding exch put
+/H2 exch definefont pop
+/H2 findfont 10 scalefont setfont
+(A) stringwidth r exch r = =

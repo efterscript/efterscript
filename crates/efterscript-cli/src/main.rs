@@ -121,7 +121,31 @@ fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
     let result = remelt::distill(bytes, config, &options, BufWriter::new(out));
     let _ = std::io::stdout().flush();
     match result {
-        Ok((report, _)) => exit_code(report.outcome),
+        Ok((report, _)) => {
+            if !report.substitutions.is_empty() {
+                let pairs: Vec<String> = report
+                    .substitutions
+                    .iter()
+                    .map(|s| {
+                        format!(
+                            "{} -> {}",
+                            String::from_utf8_lossy(&s.requested),
+                            s.substitute
+                        )
+                    })
+                    .collect();
+                let plural = if pairs.len() == 1 { "" } else { "s" };
+                eprintln!(
+                    "efterscript: {} font{plural} substituted: {}",
+                    pairs.len(),
+                    pairs.join(", ")
+                );
+            }
+            for note in &report.notes {
+                eprintln!("efterscript: {note}");
+            }
+            exit_code(report.outcome)
+        }
         Err(e) => {
             eprintln!("efterscript: {e}");
             ExitCode::from(2)

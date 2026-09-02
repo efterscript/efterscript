@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: invalidfont
+% Scenario: invalid font dictionaries are rejected. A dictionary without
+% FontType, FontMatrix, and Encoding is not a font (PLRM3 §5.2).
+% Expect: the job ends with invalidfont.
+/Bad 3 dict definefont

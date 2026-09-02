@@ -11,9 +11,11 @@
 //! serializer can scale them or wrap the stroke in its own transform.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use ps_vm::{Bounds, ImageSpec, LineCap, LineJoin, Matrix, Seg, SpaceSpec, Span};
+use ps_fonts::StdFont;
+use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, Matrix, Seg, SpaceSpec, Span};
 
 pub use crate::state::FillRule;
 
@@ -24,6 +26,94 @@ pub struct SpaceRef(pub usize);
 /// Index into [`Resources::images`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ImageRef(pub usize);
+
+/// Index into [`Resources::fonts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontIndex(pub usize);
+
+/// A glyph name, as the bytes of the PostScript name.
+pub type GlyphName = Vec<u8>;
+
+/// An encoding vector: the glyph name each code selects, `None` for a
+/// code that selects no glyph.
+pub type GlyphNames = Box<[Option<GlyphName>; 256]>;
+
+/// Builds an encoding vector from the VM's names; `.notdef` is the absence
+/// of a glyph.
+pub fn glyph_names(names: &[Option<Vec<u8>>]) -> GlyphNames {
+    let mut out: Vec<Option<GlyphName>> = names
+        .iter()
+        .take(256)
+        .map(|name| name.clone().filter(|n| n != b".notdef"))
+        .collect();
+    out.resize(256, None);
+    out.into_boxed_slice()
+        .try_into()
+        .expect("exactly 256 entries")
+}
+
+/// A captured Type 3 glyph: its procedure in glyph space, its
+/// displacement, and the bounding box a `setcachedevice` glyph declared
+/// (absent for a `setcharwidth` glyph, which may set its own colour).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphProc {
+    pub ops: Vec<Op>,
+    pub width: (f32, f32),
+    pub bbox: Option<Bounds>,
+}
+
+/// A font a text operation draws with. Resident fonts carry no widths:
+/// they come from the metrics in `ps-fonts` by glyph name.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FontSpec {
+    /// One of the standard fourteen with the encoding in effect; glyph
+    /// space is thousandths of the em.
+    Resident { base: StdFont, encoding: GlyphNames },
+    /// A Type 3 font: `font_matrix` maps glyph space to text space, and
+    /// every glyph shown on the page has its captured procedure here.
+    Type3 {
+        font_matrix: Matrix,
+        font_bbox: Bounds,
+        encoding: GlyphNames,
+        glyphs: BTreeMap<GlyphName, GlyphProc>,
+    },
+}
+
+impl FontSpec {
+    pub fn encoding(&self) -> &GlyphNames {
+        match self {
+            FontSpec::Resident { encoding, .. } | FontSpec::Type3 { encoding, .. } => encoding,
+        }
+    }
+
+    /// The matrix mapping glyph space to text space.
+    pub fn font_matrix(&self) -> Matrix {
+        match self {
+            FontSpec::Resident { .. } => Matrix::scaling(0.001, 0.001),
+            FontSpec::Type3 { font_matrix, .. } => *font_matrix,
+        }
+    }
+
+    /// The glyph name `code` selects.
+    pub fn glyph_name(&self, code: u8) -> Option<&GlyphName> {
+        self.encoding()[usize::from(code)].as_ref()
+    }
+
+    /// The displacement of `code` in glyph space as the font itself has
+    /// it, zero for a code without a glyph.
+    pub fn width(&self, code: u8) -> (f32, f32) {
+        let Some(name) = self.glyph_name(code) else {
+            return (0.0, 0.0);
+        };
+        match self {
+            FontSpec::Resident { base, .. } => std::str::from_utf8(name)
+                .ok()
+                .and_then(|name| base.width(name))
+                .map_or((0.0, 0.0), |w| (f32::from(w), 0.0)),
+            FontSpec::Type3 { glyphs, .. } => glyphs.get(name).map_or((0.0, 0.0), |g| g.width),
+        }
+    }
+}
 
 /// An image with its raw sample data, exactly as acquired.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,9 +131,24 @@ pub struct Image {
 pub struct Resources {
     pub color_spaces: Vec<SpaceSpec>,
     pub images: Vec<Image>,
+    pub fonts: Vec<FontSpec>,
 }
 
 impl Resources {
+    /// The index of a font structurally equal to `spec`, added if there
+    /// is none; how resident fonts are interned.
+    pub fn intern_font(&mut self, spec: FontSpec) -> FontIndex {
+        if let Some(i) = self.fonts.iter().position(|f| *f == spec) {
+            return FontIndex(i);
+        }
+        self.add_font(spec)
+    }
+
+    pub fn add_font(&mut self, spec: FontSpec) -> FontIndex {
+        self.fonts.push(spec);
+        FontIndex(self.fonts.len() - 1)
+    }
+
     pub fn intern_space(&mut self, space: &SpaceSpec) -> SpaceRef {
         if let Some(i) = self.color_spaces.iter().position(|s| s == space) {
             return SpaceRef(i);
@@ -97,6 +202,14 @@ pub enum IrOp {
     Image {
         image: ImageRef,
         matrix: Matrix,
+    },
+    /// Shows a run of glyphs. `matrix` maps glyph space to default user
+    /// space at the first glyph; each glyph's displacement, in glyph
+    /// space, is applied after it, so the run positions itself.
+    Text {
+        font: FontIndex,
+        matrix: Matrix,
+        glyphs: Vec<Glyph>,
     },
 }
 

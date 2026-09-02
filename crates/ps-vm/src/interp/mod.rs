@@ -8,15 +8,15 @@ mod exec;
 mod frame;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
-use crate::graphics::GraphicsBackend;
+use crate::graphics::{FontRef, GraphicsBackend, Matrix};
 use crate::io::Io;
 use crate::memory::Memory;
-use crate::object::{Access, Object, Type};
+use crate::object::{Access, CompositeRef, Object, Type};
 use crate::ops::{self, Num, OpEntry, Visibility};
 
 pub(crate) use exec::scan_error;
@@ -71,12 +71,46 @@ pub struct Capabilities {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Quirks {}
 
+/// Font behaviour the embedder chooses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontConfig {
+    /// Whether `findfont` of a name no font is defined under resolves to
+    /// one of the resident fonts by name; `false` raises `invalidfont`,
+    /// as the reference specifies.
+    pub substitute: bool,
+}
+
+impl Default for FontConfig {
+    fn default() -> Self {
+        FontConfig { substitute: true }
+    }
+}
+
+/// One `findfont` that resolved through substitution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontSubstitution {
+    /// The key the program asked for.
+    pub requested: Vec<u8>,
+    /// The PostScript name of the resident font it received.
+    pub substitute: &'static str,
+}
+
 #[derive(Default)]
 pub struct Config {
     pub limits: Limits,
     pub io: Io,
     pub capabilities: Capabilities,
     pub quirks: Quirks,
+    pub fonts: FontConfig,
+}
+
+/// A resource category's instance dictionaries: one per VM, so
+/// `defineresource` follows the allocation mode and `restore` reverts
+/// only the local one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Category {
+    pub local: Object,
+    pub global: Object,
 }
 
 /// The `$error` contents an uncaught error leaves behind, as text.
@@ -139,6 +173,30 @@ pub struct Interp {
     // gsave that `save` performed, below which `grestore` must not pop.
     gstate_floors: Vec<usize>,
     page_device: Object,
+    pub(crate) fonts_config: FontConfig,
+    /// `FontDirectory` and `GlobalFontDirectory`.
+    pub(crate) font_category: Category,
+    pub(crate) encoding_category: Category,
+    pub(crate) standard_encoding: Object,
+    pub(crate) iso_latin1_encoding: Object,
+    pub(crate) resident_fonts: [Option<Object>; 14],
+    // The font instance table: the graphics state names a font by its
+    // index here (D1). Entries are never removed; one that `restore`
+    // invalidated is never looked up again, because the graphics state
+    // that referred to it was restored too.
+    font_instances: Vec<Object>,
+    instance_index: HashMap<CompositeRef, u32>,
+    // Instances the current backend has been told about.
+    described_fonts: HashSet<u32>,
+    // The `FontMatrix` each `FID` was first defined with, which derived
+    // fonts compose their own from and which a backend records Type 3
+    // glyphs against.
+    defined_matrices: HashMap<u32, Matrix>,
+    // The current font of a VM without a graphics backend, which has no
+    // graphics state to keep it in.
+    font_without_backend: Option<FontRef>,
+    next_fid: u32,
+    substitutions: Vec<FontSubstitution>,
     #[allow(dead_code)]
     pub(crate) quirks: Quirks,
     pub(crate) dicts: StandardDicts,
@@ -172,6 +230,7 @@ impl Interp {
             io,
             capabilities,
             quirks,
+            fonts,
         } = config;
         let mut mem = Memory::new();
         mem.set_file_capability(capabilities.file);
@@ -192,10 +251,19 @@ impl Interp {
         let globaldict = mem.new_dict(200);
         let statusdict = mem.new_dict(16);
         let page_device = mem.new_dict(32);
+        let global_font_directory = mem.new_dict(32);
+        let global_encodings = mem.new_dict(8);
+        let standard_encoding = ops::font::encoding_array(&mut mem, &ps_fonts::STANDARD_ENCODING)
+            .expect("names are simple objects");
+        let iso_latin1_encoding =
+            ops::font::encoding_array(&mut mem, &ps_fonts::ISO_LATIN1_ENCODING)
+                .expect("names are simple objects");
         mem.set_global(false);
         let userdict = mem.new_dict(200);
         let errordict = mem.new_dict(32);
         let error = mem.new_dict(16);
+        let font_directory = mem.new_dict(32);
+        let local_encodings = mem.new_dict(8);
 
         let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
         let atoms = Atoms {
@@ -224,6 +292,25 @@ impl Interp {
             graphics: None,
             gstate_floors: Vec::new(),
             page_device,
+            fonts_config: fonts,
+            font_category: Category {
+                local: font_directory,
+                global: global_font_directory,
+            },
+            encoding_category: Category {
+                local: local_encodings,
+                global: global_encodings,
+            },
+            standard_encoding,
+            iso_latin1_encoding,
+            resident_fonts: [None; 14],
+            font_instances: Vec::new(),
+            instance_index: HashMap::new(),
+            described_fonts: HashSet::new(),
+            defined_matrices: HashMap::new(),
+            font_without_backend: None,
+            next_fid: 0,
+            substitutions: Vec::new(),
             quirks,
             dicts: StandardDicts {
                 systemdict,
@@ -275,6 +362,10 @@ impl Interp {
             ("errordict", dicts.errordict),
             ("$error", dicts.error),
             ("statusdict", dicts.statusdict),
+            ("FontDirectory", self.font_category.local),
+            ("GlobalFontDirectory", self.font_category.global),
+            ("StandardEncoding", self.standard_encoding),
+            ("ISOLatin1Encoding", self.iso_latin1_encoding),
         ];
         for (name, value) in constants {
             let key = self.intern(name);
@@ -315,6 +406,7 @@ impl Interp {
         }
         let first = self.graphics.is_none();
         self.graphics = Some(backend);
+        self.described_fonts.clear();
         if !first {
             return;
         }
@@ -369,6 +461,83 @@ impl Interp {
     pub(crate) fn truncate_gstate_floors(&mut self) {
         let live = self.mem.save_depth();
         self.gstate_floors.truncate(live);
+    }
+
+    // --- fonts ---------------------------------------------------------------
+
+    /// The current font: the graphics state's, or the VM's own slot when
+    /// no backend is installed.
+    pub fn current_font(&self) -> Option<FontRef> {
+        match &self.graphics {
+            Some(backend) => backend.font(),
+            None => self.font_without_backend,
+        }
+    }
+
+    pub(crate) fn set_current_font(&mut self, font: Option<FontRef>) -> Result<(), VmError> {
+        match self.graphics.as_deref_mut() {
+            Some(backend) => backend.set_font(font),
+            None => {
+                self.font_without_backend = font;
+                Ok(())
+            }
+        }
+    }
+
+    /// The instance id the graphics state refers to `dict` by, allocated
+    /// on first use.
+    pub(crate) fn font_instance(&mut self, dict: Object) -> Result<u32, VmError> {
+        let key = dict.composite_ref().ok_or(VmError::TypeCheck)?;
+        if let Some(&instance) = self.instance_index.get(&key) {
+            return Ok(instance);
+        }
+        let instance = u32::try_from(self.font_instances.len()).map_err(|_| VmError::LimitCheck)?;
+        self.font_instances.push(dict);
+        self.instance_index.insert(key, instance);
+        Ok(instance)
+    }
+
+    /// The font dictionary behind an instance id of a `FontRef`.
+    pub fn font_dict(&self, instance: u32) -> Option<Object> {
+        self.font_instances.get(instance as usize).copied()
+    }
+
+    /// Whether the backend has been told about `instance`.
+    pub(crate) fn font_described(&self, instance: u32) -> bool {
+        self.described_fonts.contains(&instance)
+    }
+
+    pub(crate) fn mark_font_described(&mut self, instance: u32) {
+        self.described_fonts.insert(instance);
+    }
+
+    /// Records the matrix `fid` was defined with; a font redefined under
+    /// another key keeps its first.
+    pub(crate) fn record_defined_matrix(&mut self, fid: u32, matrix: Matrix) {
+        self.defined_matrices.entry(fid).or_insert(matrix);
+    }
+
+    pub(crate) fn defined_matrix(&self, fid: u32) -> Option<Matrix> {
+        self.defined_matrices.get(&fid).copied()
+    }
+
+    /// Every `findfont` so far that resolved through substitution, in
+    /// order.
+    pub fn font_substitutions(&self) -> &[FontSubstitution] {
+        &self.substitutions
+    }
+
+    pub(crate) fn record_substitution(&mut self, requested: Vec<u8>, substitute: &'static str) {
+        self.substitutions.push(FontSubstitution {
+            requested,
+            substitute,
+        });
+    }
+
+    pub(crate) fn allocate_fid(&mut self) -> Object {
+        let id = self.next_fid;
+        self.next_fid += 1;
+        Object::font_id(id)
     }
 
     // --- state -------------------------------------------------------------
@@ -650,6 +819,9 @@ impl Interp {
         let frame = self.estack.pop()?;
         if frame.is_counted() {
             self.exec_count -= 1;
+        }
+        if let Frame::Loop(LoopFrame::Show(show)) = &frame {
+            ops::show::abandon(self, show);
         }
         Some(frame)
     }

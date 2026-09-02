@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: true
+% expect-output: Courier
+% expect-output: 12.0
+% expect-output: 0.0
+% expect-output: 6.0
+% expect-output: Helvetica
+% Scenario: scalefont, makefont, and selectfont derive fonts that share
+% the original's FID and entries; only the matrix differs. A translation
+% in the matrix places glyphs but does not change the advance.
+% Expect: true true, Courier, 12.0 0.0 after showing two glyphs at size
+% 10, 6.0 for one glyph under a translated makefont, then Helvetica from
+% undefinefont falling back to the resident font.
+/r { 1000 mul round 1000 div } def
+/Helvetica findfont dup 12 scalefont /FID get exch /FID get eq =
+/Helvetica findfont dup [12 0 0 12 0 0] makefont /Encoding get exch /Encoding get eq =
+/Courier 10 selectfont currentfont /FontName get =
+0 0 moveto (ab) show currentpoint r exch r = =
+/Courier findfont [10 0 0 10 3 0] makefont setfont 0 0 moveto (a) show currentpoint pop r =
+/Helvetica findfont /Mine exch definefont pop /Mine undefinefont
+/Mine findfont /FontName get =

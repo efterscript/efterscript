@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use ps_vm::{Bounds, LineCap, LineJoin, Matrix, Point, Rect, Seg, SpaceSpec, VmError};
+use ps_vm::{Bounds, FontRef, LineCap, LineJoin, Matrix, Point, Rect, Seg, SpaceSpec, VmError};
 
 /// The inside rule of a fill or clip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +164,8 @@ pub struct GState {
     /// Whether the null device is installed: marks are discarded and page
     /// operators do nothing until a state without it is restored.
     pub null_device: bool,
+    /// The current font, `None` until `setfont`.
+    pub font: Option<FontRef>,
 }
 
 impl Default for GState {
@@ -182,17 +184,20 @@ impl Default for GState {
             media_box: DEFAULT_MEDIA_BOX,
             path: Path::default(),
             null_device: false,
+            font: None,
         }
     }
 }
 
 impl GState {
     /// What `initgraphics` leaves: the defaults with the device untouched
-    /// (media box and null device kept).
+    /// (media box and null device kept) and the font kept, since
+    /// `initgraphics` and `showpage` do not reset it (PLRM3 §8.2).
     pub fn reinitialized(&self) -> GState {
         GState {
             media_box: self.media_box,
             null_device: self.null_device,
+            font: self.font,
             ..GState::default()
         }
     }

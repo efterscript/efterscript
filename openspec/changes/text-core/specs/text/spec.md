@@ -50,8 +50,8 @@ without being defined by the job, as Type 1 font dictionaries with the
 built-in encoding (`StandardEncoding` for the text fonts, the font's own
 for Symbol and ZapfDingbats). `stringwidth` SHALL return the sum of the
 glyph widths of the string's characters through the current encoding,
-transformed by the font matrix and the CTM, and the `show` family SHALL
-advance the current point by the same amount.
+transformed by the font matrix into user space, and the `show` family
+SHALL advance the current point by the same amount.
 
 #### Scenario: Helvetica widths
 
@@ -162,11 +162,11 @@ outlines are available.
 - **GIVEN** `/Helvetica findfont 10 scalefont setfont 0 0 moveto (abc)
   [10 20 30] xshow currentpoint`
 - **THEN** the results printed are `60 0` and the IR's text operation
-  carries displacements 10, 20, and 30
+  carries displacements of 1000, 2000, and 3000 glyph units
 
 #### Scenario: kshow runs between glyphs
 
-- **GIVEN** `(ab) { exch = = } kshow` in a resident font
+- **GIVEN** `{ exch = = } (ab) kshow` in a resident font
 - **THEN** the output is `97` then `98`
 
 ### Requirement: Encodings and resource categories

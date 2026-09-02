@@ -29,11 +29,13 @@ pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
-    Bounds, GraphicsBackend, ImageSpec, LineCap, LineJoin, Matrix, Point, Rect, Seg, SpaceSpec,
+    Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
+    Matrix, Point, Rect, Seg, SpaceSpec,
 };
 pub use interp::{
-    Capabilities, Config, ErrorSummary, Frame, Interp, Limits, LoopFrame,
-    MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, Quirks, SourceFrame, SourceSlot, StandardDicts,
+    Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,
+    LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, Quirks, SourceFrame, SourceSlot,
+    StandardDicts,
 };
 pub use io::{Capture, Io};
 pub use memory::{

@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: Times-Italic
+% expect-output: Courier
+% expect-output: Helvetica-Bold
+% expect-output: Symbol
+% Scenario: style heuristic. A name outside the alias table is classed by
+% hints in it (serif, monospace, symbol) and styled by weight and slope
+% hints; a subset tag is ignored; the default is Helvetica.
+% Expect: Times-Italic, Courier, Helvetica-Bold, Symbol.
+/Garamond-Italic findfont /FontName get =
+/LucidaConsole findfont /FontName get =
+/ABCDEF+Verdana-Bold findfont /FontName get =
+/SymbolMT findfont /FontName get =

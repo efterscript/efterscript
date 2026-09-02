@@ -14,12 +14,57 @@
 //! invertible matrix, including skew and non-uniform scale. A singular
 //! matrix has no inverse and would collapse the page's transform; that
 //! stroke is written unwrapped with the width as recorded.
+//!
+//! A text run becomes one text object (ISO 32000-1 §9.4): the font at
+//! size 1, a text matrix derived from the run's glyph matrix, and the
+//! glyph codes. A glyph whose recorded displacement is the font's own
+//! width needs nothing more; a horizontal difference is a `TJ`
+//! adjustment, and any vertical difference moves the line with `Td`.
 
 use pdf_out::fmt_real;
-use ps_graphics::{FillRule, IrOp, Page, Resources, SpaceRef};
-use ps_vm::{Matrix, Point, Seg, SpaceSpec};
+use ps_graphics::{FillRule, FontIndex, FontSpec, IrOp, Op, Page, Resources, SpaceRef};
+use ps_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
-use crate::resources::{image_name, space_name};
+use crate::resources::{font_name, image_name, space_name};
+
+/// Content-stream text and what could not be written into it.
+pub(crate) struct Rendered {
+    pub bytes: Vec<u8>,
+    pub notes: Vec<String>,
+}
+
+/// A string operand: literal when every byte is printable ASCII,
+/// hexadecimal otherwise.
+fn pdf_string(bytes: &[u8]) -> String {
+    if bytes.iter().all(|b| (0x20..=0x7E).contains(b)) {
+        let mut out = String::from("(");
+        for &b in bytes {
+            if matches!(b, b'(' | b')' | b'\\') {
+                out.push('\\');
+            }
+            out.push(b as char);
+        }
+        out.push(')');
+        out
+    } else {
+        let mut out = String::from("<");
+        for b in bytes {
+            out.push_str(&format!("{b:02X}"));
+        }
+        out.push('>');
+        out
+    }
+}
+
+/// One element of a `TJ` array.
+enum Piece {
+    Codes(Vec<u8>),
+    Adjust(f32),
+}
+
+fn same(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-5
+}
 
 /// Which colour operator the space in effect takes: the device families
 /// have direct operators, everything else is selected by resource name.
@@ -69,12 +114,103 @@ struct Writer<'a> {
     /// The colour operator in effect, one entry per open `q` plus the
     /// base: `Q` restores the colour space with the rest of the state.
     color_ops: Vec<ColorOp>,
+    notes: Vec<String>,
 }
 
 impl Writer<'_> {
     fn line(&mut self, text: &str) {
         self.out.push_str(text);
         self.out.push('\n');
+    }
+
+    /// Writes the pieces of a run gathered since the last positioning:
+    /// `Tj` for a plain string, `TJ` when adjustments are among them.
+    fn show(&mut self, pieces: &mut Vec<Piece>) {
+        match pieces.as_slice() {
+            [] => {}
+            [Piece::Codes(codes)] => {
+                let text = format!("{} Tj", pdf_string(codes));
+                self.line(&text);
+            }
+            _ => {
+                let items: Vec<String> = pieces
+                    .iter()
+                    .map(|piece| match piece {
+                        Piece::Codes(codes) => pdf_string(codes),
+                        Piece::Adjust(v) => fmt_real(*v),
+                    })
+                    .collect();
+                let text = format!("[{}] TJ", items.join(" "));
+                self.line(&text);
+            }
+        }
+        pieces.clear();
+    }
+
+    /// One text object for the run. Positions are tracked in text space:
+    /// where PDF's own advance leaves the pen after each glyph against
+    /// where the recorded displacement puts the next one.
+    fn text(&mut self, font: FontIndex, matrix: Matrix, glyphs: &[Glyph]) {
+        let spec = &self.resources.fonts[font.0];
+        let glyph_to_text = spec.font_matrix();
+        let tm = match spec {
+            FontSpec::Resident { .. } => {
+                let [a, b, c, d, tx, ty] = matrix.0;
+                Matrix([a * 1000.0, b * 1000.0, c * 1000.0, d * 1000.0, tx, ty])
+            }
+            FontSpec::Type3 { font_matrix, .. } => match font_matrix.inverse() {
+                Some(inverse) => inverse.then(matrix),
+                None => {
+                    self.notes.push(format!(
+                        "text in font {} skipped: its font matrix is singular",
+                        font_name(font)
+                    ));
+                    return;
+                }
+            },
+        };
+        self.line("BT");
+        let select = format!("/{} 1 Tf", font_name(font));
+        self.line(&select);
+        let place = format!("{} Tm", reals(&tm.0));
+        self.line(&place);
+        let mut pieces: Vec<Piece> = Vec::new();
+        // Positions accumulate in double precision so an adjustment of
+        // whole glyph units prints as one.
+        let mut line_start = (0.0f64, 0.0f64);
+        let mut pen = (0.0f64, 0.0f64);
+        let mut wanted = (0.0f64, 0.0f64);
+        for glyph in glyphs {
+            if !same(pen.1, wanted.1) {
+                self.show(&mut pieces);
+                let step = format!(
+                    "{} Td",
+                    reals(&[
+                        (wanted.0 - line_start.0) as f32,
+                        (wanted.1 - line_start.1) as f32
+                    ])
+                );
+                self.line(&step);
+                line_start = wanted;
+                pen = wanted;
+            } else if !same(pen.0, wanted.0) {
+                pieces.push(Piece::Adjust(((pen.0 - wanted.0) * 1000.0) as f32));
+                pen.0 = wanted.0;
+            }
+            match pieces.last_mut() {
+                Some(Piece::Codes(codes)) => codes.push(glyph.code),
+                _ => pieces.push(Piece::Codes(vec![glyph.code])),
+            }
+            let (wx, _) = spec.width(glyph.code);
+            pen.0 += f64::from(wx) * f64::from(glyph_to_text.0[0]);
+            let advance = glyph_to_text.apply_delta(Point::new(glyph.dx, glyph.dy));
+            wanted = (
+                wanted.0 + f64::from(advance.x),
+                wanted.1 + f64::from(advance.y),
+            );
+        }
+        self.show(&mut pieces);
+        self.line("ET");
     }
 
     fn color_op(&self) -> ColorOp {
@@ -179,21 +315,36 @@ impl Writer<'_> {
             IrOp::Image { image, matrix: m } => {
                 self.line(&format!("q {} cm /{} Do Q", matrix(*m), image_name(*image)));
             }
+            IrOp::Text {
+                font,
+                matrix,
+                glyphs,
+            } => self.text(*font, *matrix, glyphs),
         }
     }
 }
 
-/// The content stream of `page`, as text bytes.
-pub(crate) fn content(page: &Page) -> Vec<u8> {
+/// `ops` as content-stream text against `resources`: a page's stream or
+/// a glyph procedure's.
+pub(crate) fn render(ops: &[Op], resources: &Resources) -> Rendered {
     let mut writer = Writer {
         out: String::new(),
-        resources: &page.resources,
+        resources,
         color_ops: vec![ColorOp::Gray],
+        notes: Vec::new(),
     };
-    for entry in &page.ops {
+    for entry in ops {
         writer.op(&entry.op);
     }
-    writer.out.into_bytes()
+    Rendered {
+        bytes: writer.out.into_bytes(),
+        notes: writer.notes,
+    }
+}
+
+/// The content stream of `page`.
+pub(crate) fn content(page: &Page) -> Rendered {
+    render(&page.ops, &page.resources)
 }
 
 #[cfg(test)]
@@ -210,7 +361,7 @@ mod tests {
     }
 
     fn text(page: &Page) -> String {
-        String::from_utf8(content(page)).unwrap()
+        String::from_utf8(content(page).bytes).unwrap()
     }
 
     fn p(x: f32, y: f32) -> Point {

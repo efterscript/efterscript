@@ -108,10 +108,13 @@ pub mod control;
 pub mod dict;
 pub mod errors;
 pub mod file;
+pub mod font;
 pub mod graphics;
 pub mod image;
 pub mod output;
 pub mod pagedevice;
+pub mod resource;
+pub mod show;
 pub mod stack;
 pub mod types;
 pub mod vm;
@@ -131,6 +134,9 @@ const MODULES: &[&[OpEntry]] = &[
     file::OPS,
     pagedevice::OPS,
     graphics::OPS,
+    font::OPS,
+    font::PAINT_OPS,
+    resource::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -215,6 +221,11 @@ mod tests {
         assert!(find("moveto", Visibility::Graphics).is_some());
         assert!(find("moveto", Visibility::Public).is_none());
         assert!(find("setpagedevice", Visibility::Public).is_some());
+        assert!(find("findfont", Visibility::Public).is_some());
+        assert!(find("stringwidth", Visibility::Public).is_some());
+        assert!(find("show", Visibility::Graphics).is_some());
+        assert!(find("show", Visibility::Public).is_none());
+        assert!(find("findresource", Visibility::Public).is_some());
     }
 
     #[test]

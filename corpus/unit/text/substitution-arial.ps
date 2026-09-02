@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a substituted font. Arial is not resident; findfont resolves
+% it to Helvetica, the job runs, and the distillation report counts the
+% substitution, which the command-line tool prints on standard error.
+/Arial findfont 12 scalefont setfont
+72 72 moveto (Arial) show
+showpage

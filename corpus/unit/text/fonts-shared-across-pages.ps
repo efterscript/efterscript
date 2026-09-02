@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: fonts shared across pages. Helvetica with the same encoding on
+% two pages is one font object in the document, referenced from both
+% pages' resources; a second size is the same resource.
+/Helvetica findfont 12 scalefont setfont
+72 700 moveto (First) show
+showpage
+/Helvetica findfont 24 scalefont setfont
+72 700 moveto (Second) show
+showpage

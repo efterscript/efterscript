@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: invalidfont
+% Scenario: a Type 1 dictionary the job builds is structurally a font,
+% so definefont accepts it, but it has no glyph program and no resident
+% metrics, so show cannot measure or draw it until font programs are
+% parsed.
+% Expect: true (the FID exists), then invalidfont from show.
+/F1 << /FontType 1 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding >>
+definefont /FID known =
+/F1 findfont 10 scalefont setfont
+0 0 moveto { (x) show } stopped pop $error /errorname get =

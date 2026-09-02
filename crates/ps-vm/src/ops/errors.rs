@@ -23,6 +23,7 @@ op_table! { internal HANDLERS {
     VmError::InvalidAccess.name() => |i| default_error(i, VmError::InvalidAccess);
     VmError::InvalidExit.name() => |i| default_error(i, VmError::InvalidExit);
     VmError::InvalidFileAccess.name() => |i| default_error(i, VmError::InvalidFileAccess);
+    VmError::InvalidFont.name() => |i| default_error(i, VmError::InvalidFont);
     VmError::InvalidRestore.name() => |i| default_error(i, VmError::InvalidRestore);
     VmError::IoError.name() => |i| default_error(i, VmError::IoError);
     VmError::LimitCheck.name() => |i| default_error(i, VmError::LimitCheck);

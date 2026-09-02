@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: xshow positions each glyph. The user-space distances 10, 20,
+% and 30 at size 10 are displacements of 1000, 2000, and 3000 glyph
+% units in the text operation; the PDF expresses each as a TJ adjustment
+% against the glyph's own width.
+/Helvetica findfont 10 scalefont setfont
+100 100 moveto (abc) [10 20 30] xshow
+showpage

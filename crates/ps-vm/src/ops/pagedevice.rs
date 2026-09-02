@@ -59,7 +59,8 @@ fn page_size(i: &Interp, size: Object) -> Result<Bounds, VmError> {
     Ok(Bounds::new(0.0, 0.0, width, height))
 }
 
-fn in_global<T>(i: &mut Interp, f: impl FnOnce(&mut Interp) -> T) -> T {
+/// Runs `f` in global allocation mode, restoring the mode afterwards.
+pub(crate) fn in_global<T>(i: &mut Interp, f: impl FnOnce(&mut Interp) -> T) -> T {
     let mode = i.mem.current_global();
     i.mem.set_global(true);
     let result = f(i);

@@ -14,6 +14,7 @@ use std::io::Write;
 use pdf_out::{Document, Filter, PageTree, write_info};
 use ps_graphics::{Page, PageSink};
 
+use crate::fonts::FontTable;
 use crate::{Error, Options, content, resources::Objects};
 
 /// Names the project and its version; the only Info entry, since dates
@@ -26,6 +27,8 @@ pub struct PdfSink<W: Write> {
     options: Options,
     pages: usize,
     error: Option<pdf_out::Error>,
+    fonts: FontTable,
+    notes: Vec<String>,
 }
 
 impl<W: Write> PdfSink<W> {
@@ -39,6 +42,8 @@ impl<W: Write> PdfSink<W> {
             options,
             pages: 0,
             error: None,
+            fonts: FontTable::default(),
+            notes: Vec::new(),
         })
     }
 
@@ -51,6 +56,12 @@ impl<W: Write> PdfSink<W> {
     /// Pages written so far.
     pub fn pages(&self) -> usize {
         self.pages
+    }
+
+    /// What could not be written as it was recorded, one line each,
+    /// prefixed with the page it concerns.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
 
     /// Closes the document — page tree, catalog, Info, cross-reference
@@ -82,15 +93,23 @@ impl<W: Write> PdfSink<W> {
     }
 
     fn write_page(&mut self, page: &Page) -> Result<(), pdf_out::Error> {
-        let content = content::content(page);
         let filter = self.text_filter();
-        let objects = Objects::write(&mut self.doc, page, filter)?;
+        let number = self.pages + 1;
+        let mut notes = Vec::new();
+        let objects = Objects::write(&mut self.doc, page, filter, &mut self.fonts, &mut notes)?;
+        let content = content::content(page);
+        notes.extend(content.notes);
+        self.notes.extend(
+            notes
+                .into_iter()
+                .map(|note| format!("page {number}: {note}")),
+        );
         let media_box = page.media_box;
         self.tree.add_page(
             &mut self.doc,
             [media_box.llx, media_box.lly, media_box.urx, media_box.ury],
             filter,
-            &content,
+            &content.bytes,
             |d| objects.resources(d),
         )?;
         Ok(())

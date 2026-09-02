@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 27.336
+% expect-output: 0.0
+% Scenario: Helvetica widths. stringwidth sums the resident metrics of
+% the string's glyphs through the scaled font matrix. The sum is rounded
+% to a thousandth for printing, since the scaled matrix is a single-
+% precision product.
+% Expect: 27.336 and 0.0.
+/r { 1000 mul round 1000 div } def
+/Helvetica findfont 12 scalefont setfont
+(Hello) stringwidth r exch r = =

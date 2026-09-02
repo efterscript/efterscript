@@ -120,3 +120,18 @@ pub fn number(value: &Value) -> f64 {
         other => panic!("expected a number, got {other:?}"),
     }
 }
+
+/// The reference of the named font resource of page `index`.
+pub fn font_ref(pdf: &Pdf, index: usize, name: &str) -> u32 {
+    resources(pdf, index)
+        .get("Font")
+        .unwrap_or_else(|| panic!("page {index} declares no fonts"))
+        .get(name)
+        .unwrap_or_else(|| panic!("page {index} has no font {name}"))
+        .as_reference()
+}
+
+/// The named font dictionary of page `index`.
+pub fn font<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
+    pdf.resolve(font_ref(pdf, index, name))
+}

@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: Type 3 glyphs are captured in glyph space. With a font matrix
+% of 0.01 and the page scaled by two, the glyph's fill of 0 0 50 50 is
+% recorded as that rectangle in glyph units, and the text operation's
+% matrix carries the scale: 0.02.
+/Sm 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.01 0 0 0.01 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 100 100] def
+  /BuildGlyph { pop pop 60 0 0 0 50 50 setcachedevice 0 0 50 50 rectfill } def
+end definefont pop
+2 2 scale
+/Sm findfont setfont
+5 5 moveto (a) show
+showpage

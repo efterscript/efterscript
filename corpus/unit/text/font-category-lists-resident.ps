@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: (Courier)
+% expect-output: (Courier-Bold)
+% expect-output: (Courier-BoldOblique)
+% expect-output: (Courier-Oblique)
+% expect-output: (Helvetica)
+% expect-output: (Helvetica-Bold)
+% expect-output: (Helvetica-BoldOblique)
+% expect-output: (Helvetica-Oblique)
+% expect-output: (Symbol)
+% expect-output: (Times-Bold)
+% expect-output: (Times-BoldItalic)
+% expect-output: (Times-Italic)
+% expect-output: (Times-Roman)
+% expect-output: (ZapfDingbats)
+% expect-output: (Times-Bold)
+% expect-output: (Times-BoldItalic)
+% expect-output: (Times-Italic)
+% expect-output: (Times-Roman)
+% Scenario: the Font category lists the resident set in sorted order;
+% a template narrows the list.
+% Expect: the fourteen names, then the four Times names.
+(*) { == } 128 string /Font resourceforall
+(Times-*) { == } 128 string /Font resourceforall

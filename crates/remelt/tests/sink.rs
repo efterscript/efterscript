@@ -540,3 +540,467 @@ fn the_first_write_error_is_latched_and_reported_at_finish() {
         Err(Error::Pdf(pdf_out::Error::Io(_)))
     ));
 }
+
+// --- text ---------------------------------------------------------------------------------
+
+use std::collections::BTreeMap;
+
+use ps_fonts::{STANDARD_ENCODING, StdFont};
+use ps_graphics::{FontIndex, FontSpec, GlyphProc, glyph_names};
+use ps_vm::Glyph;
+use support::{font, font_ref};
+
+fn standard() -> ps_graphics::GlyphNames {
+    let names: Vec<Option<Vec<u8>>> = STANDARD_ENCODING
+        .iter()
+        .map(|n| n.map(|n| n.as_bytes().to_vec()))
+        .collect();
+    glyph_names(&names)
+}
+
+fn helvetica() -> FontSpec {
+    FontSpec::Resident {
+        base: StdFont::Helvetica,
+        encoding: standard(),
+    }
+}
+
+fn glyph(code: u8, dx: f32, dy: f32) -> Glyph {
+    Glyph { code, dx, dy }
+}
+
+fn square_glyph(ops: Vec<IrOp>, bbox: Option<Bounds>) -> GlyphProc {
+    GlyphProc {
+        ops: ops.into_iter().map(Op::from).collect(),
+        width: (1000.0, 0.0),
+        bbox,
+    }
+}
+
+fn square_path(size: f32) -> Vec<Seg> {
+    vec![
+        Seg::Move(p(0.0, 0.0)),
+        Seg::Line(p(size, 0.0)),
+        Seg::Line(p(size, size)),
+        Seg::Line(p(0.0, size)),
+        Seg::Close,
+    ]
+}
+
+fn square_font(glyph: GlyphProc) -> FontSpec {
+    let mut glyphs = BTreeMap::new();
+    glyphs.insert(b"a".to_vec(), glyph);
+    FontSpec::Type3 {
+        font_matrix: Matrix::scaling(0.001, 0.001),
+        font_bbox: Bounds::new(0.0, 0.0, 1000.0, 1000.0),
+        encoding: standard(),
+        glyphs,
+    }
+}
+
+fn text_page(spec: FontSpec, matrix: Matrix, glyphs: Vec<Glyph>) -> Page {
+    let mut page = Page::new(LETTER);
+    let font = page.resources.add_font(spec);
+    page.ops = vec![Op::from(IrOp::Text {
+        font,
+        matrix,
+        glyphs,
+    })];
+    page
+}
+
+fn numbers(value: &Value) -> Vec<f64> {
+    array(value).iter().map(number).collect()
+}
+
+#[test]
+fn a_resident_font_is_an_unembedded_type1_with_widths_and_tounicode() {
+    let page = text_page(
+        helvetica(),
+        Matrix([0.012, 0.0, 0.0, 0.012, 100.0, 700.0]),
+        vec![glyph(72, 722.0, 0.0), glyph(105, 222.0, 0.0)],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n12 0 0 12 100 700 Tm\n(Hi) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Type").unwrap().as_name(), b"Font");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type1");
+    assert_eq!(font.get("BaseFont").unwrap().as_name(), b"Helvetica");
+    assert!(
+        font.get("Encoding").is_none(),
+        "no differences from the built-in encoding"
+    );
+    assert!(font.get("FontFile").is_none());
+    let first = font.get("FirstChar").unwrap().as_int();
+    assert_eq!(first, 32);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 251);
+    let widths = numbers(font.get("Widths").unwrap());
+    assert_eq!(widths.len(), 251 - 32 + 1);
+    assert_eq!(widths[(72 - first) as usize], 722.0);
+    assert_eq!(widths[(105 - first) as usize], 222.0);
+    // Code 127 is unassigned in the standard encoding.
+    assert_eq!(widths[(127 - first) as usize], 0.0);
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("FontName").unwrap().as_name(), b"Helvetica");
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 32);
+    assert_eq!(number(descriptor.get("StemV").unwrap()), 88.0);
+    assert_eq!(
+        numbers(descriptor.get("FontBBox").unwrap()),
+        [-166.0, -225.0, 1000.0, 931.0]
+    );
+    let cmap = String::from_utf8(decoded(
+        pdf.resolve(font.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(cmap.contains("<48> <0048>\n"));
+    assert!(cmap.contains("<69> <0069>\n"));
+    assert!(
+        cmap.contains("<27> <2019>\n"),
+        "quoteright maps to the typographic quote"
+    );
+    assert!(cmap.contains("1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"));
+    assert!(!cmap.contains("<7F>"), "an unassigned code has no entry");
+}
+
+#[test]
+fn encoding_differences_and_symbolic_fonts() {
+    let mut encoding = standard();
+    encoding[65] = Some(b"W".to_vec());
+    encoding[66] = None;
+    encoding[67] = Some(b"nosuchglyph".to_vec());
+    let reencoded = FontSpec::Resident {
+        base: StdFont::Helvetica,
+        encoding,
+    };
+    let mut page = text_page(
+        reencoded,
+        Matrix([0.01, 0.0, 0.0, 0.01, 0.0, 0.0]),
+        vec![glyph(65, 944.0, 0.0)],
+    );
+    let symbol = FontSpec::Resident {
+        base: StdFont::Symbol,
+        encoding: glyph_names(
+            &StdFont::Symbol
+                .builtin_encoding()
+                .iter()
+                .map(|n| n.map(|n| n.as_bytes().to_vec()))
+                .collect::<Vec<_>>(),
+        ),
+    };
+    let symbol = page.resources.add_font(symbol);
+    page.ops.push(
+        IrOp::Text {
+            font: symbol,
+            matrix: Matrix::scaling(0.01, 0.01),
+            glyphs: vec![glyph(97, 631.0, 0.0)],
+        }
+        .into(),
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let font = font(&pdf, 0, "F0");
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    let shown: Vec<String> = differences
+        .iter()
+        .map(|v| match v {
+            Value::Int(i) => i.to_string(),
+            Value::Name(n) => format!("/{}", String::from_utf8_lossy(n)),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(shown, ["65", "/W", "/.notdef", "/nosuchglyph"]);
+    let widths = numbers(font.get("Widths").unwrap());
+    let first = font.get("FirstChar").unwrap().as_int();
+    assert_eq!(widths[(65 - first) as usize], 944.0);
+    assert_eq!(widths[(66 - first) as usize], 0.0);
+    assert_eq!(widths[(67 - first) as usize], 0.0);
+    let symbol = support::font(&pdf, 0, "F1");
+    assert_eq!(symbol.get("BaseFont").unwrap().as_name(), b"Symbol");
+    assert!(symbol.get("Encoding").is_none());
+    let descriptor = pdf.resolve(symbol.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    assert!(descriptor.get("CapHeight").is_none());
+    let cmap = String::from_utf8(decoded(
+        pdf.resolve(symbol.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(cmap.contains("<61> <03B1>\n"), "alpha");
+}
+
+#[test]
+fn a_type3_font_has_charprocs_written_through_the_content_writer() {
+    let glyph_proc = square_glyph(
+        vec![IrOp::Fill {
+            path: square_path(1000.0),
+            rule: FillRule::NonZero,
+        }],
+        Some(Bounds::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+    let page = text_page(
+        square_font(glyph_proc),
+        Matrix([0.02, 0.0, 0.0, 0.02, 10.0, 10.0]),
+        vec![glyph(97, 1000.0, 0.0), glyph(97, 1000.0, 0.0)],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n20 0 0 20 10 10 Tm\n(aa) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type3");
+    assert_eq!(
+        numbers(font.get("FontMatrix").unwrap()),
+        [0.001, 0.0, 0.0, 0.001, 0.0, 0.0]
+    );
+    assert_eq!(
+        numbers(font.get("FontBBox").unwrap()),
+        [0.0, 0.0, 1000.0, 1000.0]
+    );
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    assert_eq!(differences[0].as_int(), 97);
+    assert_eq!(differences[1].as_name(), b"a");
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 97);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 97);
+    assert_eq!(numbers(font.get("Widths").unwrap()), [1000.0]);
+    assert!(font.get("Resources").is_none());
+    let charproc = pdf.resolve(
+        font.get("CharProcs")
+            .unwrap()
+            .get("a")
+            .unwrap()
+            .as_reference(),
+    );
+    assert_eq!(
+        String::from_utf8(decoded(charproc)).unwrap(),
+        "1000 0 0 0 1000 1000 d1\n0 0 m\n1000 0 l\n1000 1000 l\n0 1000 l\nh\nf\n"
+    );
+    let cmap = String::from_utf8(decoded(
+        pdf.resolve(font.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(cmap.contains("1 beginbfchar\n<61> <0061>\nendbfchar\n"));
+}
+
+#[test]
+fn a_charwidth_glyph_opens_with_d0_and_carries_its_resources() {
+    let mut page = Page::new(LETTER);
+    let spot = page.resources.intern_space(&spot());
+    let nested = page.resources.add_font(helvetica());
+    let glyph_proc = GlyphProc {
+        ops: vec![
+            IrOp::SetColorSpace(spot).into(),
+            IrOp::SetColor(vec![0.6]).into(),
+            IrOp::Fill {
+                path: square_path(500.0),
+                rule: FillRule::NonZero,
+            }
+            .into(),
+            IrOp::Text {
+                font: nested,
+                matrix: Matrix::scaling(0.4, 0.4),
+                glyphs: vec![glyph(72, 722.0, 0.0)],
+            }
+            .into(),
+        ],
+        width: (600.0, 0.0),
+        bbox: None,
+    };
+    let font_index = page.resources.add_font(square_font(glyph_proc));
+    page.ops = vec![Op::from(IrOp::Text {
+        font: font_index,
+        matrix: Matrix::scaling(0.01, 0.01),
+        glyphs: vec![glyph(97, 600.0, 0.0)],
+    })];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let font = font(&pdf, 0, "F1");
+    let charproc = pdf.resolve(
+        font.get("CharProcs")
+            .unwrap()
+            .get("a")
+            .unwrap()
+            .as_reference(),
+    );
+    assert_eq!(
+        String::from_utf8(decoded(charproc)).unwrap(),
+        "600 0 d0\n/CS0 cs\n0.6 scn\n0 0 m\n500 0 l\n500 500 l\n0 500 l\nh\nf\n\
+         BT\n/F0 1 Tf\n400 0 0 400 0 0 Tm\n(H) Tj\nET\n"
+    );
+    let resources = font.get("Resources").unwrap();
+    assert_eq!(
+        array(resources.get("ColorSpace").unwrap().get("CS0").unwrap())[0].as_name(),
+        b"Separation"
+    );
+    assert_eq!(
+        resources
+            .get("Font")
+            .unwrap()
+            .get("F0")
+            .unwrap()
+            .as_reference(),
+        font_ref(&pdf, 0, "F0")
+    );
+    assert!(resources.get("XObject").is_none());
+    assert_eq!(numbers(font.get("Widths").unwrap()), [600.0]);
+}
+
+#[test]
+fn displacements_become_adjustments_or_moves() {
+    // xshow: 10, 20, 30 user units at size 10 are 1000, 2000, 3000 glyph
+    // units; a, b, c are 556 wide.
+    let page = text_page(
+        helvetica(),
+        Matrix::scaling(0.01, 0.01),
+        vec![
+            glyph(97, 1000.0, 0.0),
+            glyph(98, 2000.0, 0.0),
+            glyph(99, 3000.0, 0.0),
+        ],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 0 0 Tm\n[(a) -444 (b) -1444 (c)] TJ\nET\n"
+    );
+    // A vertical displacement moves the line; the move is relative to
+    // the line start, and the run continues after it.
+    let page = text_page(
+        helvetica(),
+        Matrix::scaling(0.01, 0.01),
+        vec![
+            glyph(97, 556.0, 0.0),
+            glyph(98, 556.0, 100.0),
+            glyph(99, 500.0, 0.0),
+            glyph(100, 556.0, 0.0),
+        ],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 0 0 Tm\n(ab) Tj\n1.112 0.1 Td\n(cd) Tj\nET\n"
+    );
+    // Type 3 adjustments go through the font matrix's x scale.
+    let glyph_proc = square_glyph(Vec::new(), None);
+    let mut glyphs = BTreeMap::new();
+    glyphs.insert(b"a".to_vec(), glyph_proc);
+    let spec = FontSpec::Type3 {
+        font_matrix: Matrix::scaling(0.01, 0.01),
+        font_bbox: Bounds::new(0.0, 0.0, 100.0, 100.0),
+        encoding: standard(),
+        glyphs,
+    };
+    let page = text_page(
+        spec,
+        Matrix::scaling(0.02, 0.02),
+        vec![
+            glyph(97, 1000.0, 0.0),
+            glyph(97, 1500.0, 0.0),
+            glyph(97, 1000.0, 0.0),
+        ],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n2 0 0 2 0 0 Tm\n[(aa) -5000 (a)] TJ\nET\n"
+    );
+}
+
+#[test]
+fn a_singular_type3_matrix_skips_the_run_with_a_note() {
+    let mut glyphs = BTreeMap::new();
+    glyphs.insert(b"a".to_vec(), square_glyph(Vec::new(), None));
+    let spec = FontSpec::Type3 {
+        font_matrix: Matrix::scaling(0.0, 0.0),
+        font_bbox: Bounds::new(0.0, 0.0, 0.0, 0.0),
+        encoding: standard(),
+        glyphs,
+    };
+    let mut page = text_page(spec, Matrix::IDENTITY, vec![glyph(97, 0.0, 0.0)]);
+    page.ops.push(
+        IrOp::Fill {
+            path: line(),
+            rule: FillRule::NonZero,
+        }
+        .into(),
+    );
+    let mut sink = PdfSink::new(Vec::new(), uncompressed()).unwrap();
+    sink.page(page);
+    assert_eq!(
+        sink.notes(),
+        ["page 1: text in font F0 skipped: its font matrix is singular"]
+    );
+    let bytes = sink.finish().unwrap();
+    let pdf = check(&bytes);
+    assert_eq!(content(&pdf, 0), "10 10 m\n100 10 l\nf\n");
+}
+
+#[test]
+fn fonts_are_written_once_per_document_and_shared_by_equal_pages() {
+    let first = text_page(
+        helvetica(),
+        Matrix::scaling(0.012, 0.012),
+        vec![glyph(72, 722.0, 0.0)],
+    );
+    let second = text_page(
+        helvetica(),
+        Matrix::scaling(0.024, 0.024),
+        vec![glyph(105, 222.0, 0.0)],
+    );
+    let mut reencoded = standard();
+    reencoded[65] = Some(b"W".to_vec());
+    let third = text_page(
+        FontSpec::Resident {
+            base: StdFont::Helvetica,
+            encoding: reencoded,
+        },
+        Matrix::scaling(0.012, 0.012),
+        vec![glyph(65, 944.0, 0.0)],
+    );
+    let bytes = distil_pages(vec![first, second, third], uncompressed());
+    let pdf = check(&bytes);
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    assert_ne!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 2, "F0"));
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(text.matches("/Subtype /Type1").count(), 2);
+    let _ = FontIndex(0);
+}
+
+#[test]
+fn a_type3_font_is_shared_only_when_its_references_mean_the_same() {
+    let make = |space: SpaceSpec| {
+        let mut page = Page::new(LETTER);
+        let cs = page.resources.intern_space(&space);
+        let glyph_proc = GlyphProc {
+            ops: vec![
+                IrOp::SetColorSpace(cs).into(),
+                IrOp::SetColor(vec![0.5]).into(),
+                IrOp::Fill {
+                    path: square_path(100.0),
+                    rule: FillRule::NonZero,
+                }
+                .into(),
+            ],
+            width: (1000.0, 0.0),
+            bbox: None,
+        };
+        let font = page.resources.add_font(square_font(glyph_proc));
+        page.ops = vec![Op::from(IrOp::Text {
+            font,
+            matrix: Matrix::scaling(0.01, 0.01),
+            glyphs: vec![glyph(97, 1000.0, 0.0)],
+        })];
+        page
+    };
+    let other = SpaceSpec::Separation {
+        name: b"Other".to_vec(),
+        alternate: Box::new(SpaceSpec::DeviceGray),
+        tint_source: b"{}".to_vec(),
+    };
+    let pdf = check(&distil_pages(
+        vec![make(spot()), make(spot()), make(other)],
+        uncompressed(),
+    ));
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    assert_ne!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 2, "F0"));
+}
