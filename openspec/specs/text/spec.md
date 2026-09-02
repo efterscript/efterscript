@@ -147,8 +147,11 @@ to that glyph.
 semantics for their extra displacements and per-glyph procedures, each
 character's displacement SHALL be recorded with its glyph, and `kshow`
 SHALL run its procedure between consecutive glyphs with the two codes on
-the stack. `charpath` SHALL be registered and raise `invalidfont` until
-outlines are available.
+the stack. These operators SHALL work with resident fonts, Type 3 fonts,
+and Type 1 and Type 42 fonts defined by the job; a font dictionary with
+a `FontType` the interpreter cannot draw SHALL raise `invalidfont`.
+`charpath` SHALL append outlines for Type 1 and Type 42 fonts and raise
+`invalidfont` for resident and Type 3 fonts.
 
 #### Scenario: widthshow adds to spaces
 
@@ -167,6 +170,12 @@ outlines are available.
 
 - **GIVEN** `{ exch = = } (ab) kshow` in a resident font
 - **THEN** the output is `97` then `98`
+
+#### Scenario: Showing an embedded font
+
+- **GIVEN** a synthesised Type 1 font defined by the job and `(a) show`
+- **THEN** the page's IR has one text operation over an embedded-font
+  resource and no error
 
 ### Requirement: Encodings and resource categories
 
