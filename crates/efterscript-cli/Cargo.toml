@@ -16,4 +16,5 @@ path = "src/main.rs"
 
 [dependencies]
 ps-vm.workspace = true
+ps-graphics.workspace = true
 remelt.workspace = true

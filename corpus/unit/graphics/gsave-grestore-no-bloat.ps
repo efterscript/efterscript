@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: gsave/grestore does not bloat the IR. Fifty pairs that
+% change settings and restore them, then one fill: the page holds
+% exactly one paint operation and no save/restore churn.
+50 { gsave 3 setlinewidth 0.5 setgray grestore } repeat
+0 0 moveto 10 0 lineto 10 10 lineto closepath fill
+showpage

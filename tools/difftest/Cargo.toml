@@ -12,3 +12,4 @@ repository.workspace = true
 
 [dependencies]
 ps-vm.workspace = true
+ps-graphics.workspace = true

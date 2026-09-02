@@ -125,7 +125,10 @@ fn put_string(buf: &mut Vec<u8>, s: &[u8]) {
 ///
 /// The digits come from Rust's shortest-round-trip float formatting, which is
 /// pure code — identical on every platform — so output is byte-deterministic.
-pub(crate) fn fmt_real(v: f32) -> String {
+///
+/// Public so that other crates producing text meant to agree with PDF
+/// output can test their own formatting against this one.
+pub fn fmt_real(v: f32) -> String {
     if v == 0.0 {
         return "0".to_string();
     }

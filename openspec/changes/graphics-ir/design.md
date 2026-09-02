@@ -270,3 +270,110 @@ save/restore plumbing. The graphics crate is untouched.
   `gsave`/`grestore`; §3 above has been corrected before part 2 builds the
   gstate stack. `save`/`restore` likewise include it (§3.7.7 lists the
   current path among the saved elements).
+
+### Part 2
+
+Covers the graphics crate, the tools, and the corpus goldens. The trait
+from part 1 needed no change; `ps-vm` is untouched. Decisions the code
+pins down, by the section they touch:
+
+- **Graphics state (§3).** `GState` is a plain value on a `Vec`; `gsave`
+  clones it. The current path's segments and each clip entry's path sit
+  behind an `Rc` and are copied on the first write after a save
+  (`Rc::make_mut`), so a save costs reference bumps whatever the path
+  size. Path points go through the CTM as they are added — the stored
+  path is in default user space and a later CTM change leaves it alone —
+  and `currentpoint`/`pathbbox` answer through the inverse CTM (a singular
+  CTM is `undefinedresult`; the box includes control points).
+  `initgraphics` and `showpage` reset to the defaults keeping the media
+  box and the null-device flag; the default matrix is the identity, since
+  default user space is the IR's space. `setflat` clamps to [0.2, 100],
+  `setlinewidth` takes the magnitude, and non-finite operands to the
+  line parameters and the arc radius are `rangecheck` (the ranges the
+  reference names are checked by the operator layer).
+- **Arcs.** A sweep is cut into pieces of at most a quarter turn, each a
+  cubic with control points `4/3·tan(θ/4)` radii along the tangents;
+  `arc`/`arcn` first append a line to the start point (a move on an empty
+  path). Sines and cosines are exact at multiples of 90°, so axis-aligned
+  arc points carry no rounding residue into dumps. `arcto` with a negative
+  radius is `undefinedresult`; when no arc fits (the current point is the
+  corner, or the three points are collinear) a straight line to the
+  corner is appended and both tangent points are the corner. The
+  reference's wording for these degenerate cases should be checked
+  against the vault copy; only the Rust tests pin the behaviour.
+- **Colour (§4).** `setcolorspace` selects the space's initial colour;
+  `setcolor` checks arity (`rangecheck`) and clamps components to [0, 1]
+  (to [0, hival] for Indexed). Spaces are interned per page by structural
+  equality, so identical specifications share one resource index.
+- **Clip (§3).** The clip is the list of (rule, path) entries applied
+  since `initclip`, each with a per-backend id; no intersection is
+  computed — the IR records the sequence, as a PDF `W n` sequence does.
+  `clippath` returns the most recent entry's segments mapped to the
+  current user space, or the media-box rectangle when no clip is set;
+  with several entries the true clip is their intersection, which this
+  simplification does not compute. `clip`/`eoclip` leave the current path
+  in place; `rectclip` empties it.
+- **The IR (§4) has no `Concat`.** Paths reach the IR in default user
+  space, so `cm` would move nothing. What still depends on the CTM at
+  paint time is a stroke — line width and dash lengths are user-space
+  quantities — so `IrOp::Stroke` carries the CTM in effect (`ctm`), which
+  a serializer can emit as `q cm … Q` around the stroke (with the path
+  taken back through the inverse) or use to scale the widths. The dump
+  writes it as `stroke-ctm a b c d tx ty` before the path, only when it
+  is not the identity. Images carry the composed matrix mapping the unit
+  square to default user space in PDF's convention (first row at the
+  top); the flip from the image-space convention is composed in.
+- **Lazy emission (§4).** The emitter keeps, per open `Save`, the
+  settings the IR last set, and at each paint records only the
+  differences the paint depends on: a fill needs colour and flatness, a
+  stroke the line parameters too, a mask only the colour, an image
+  nothing. Clips are synchronised at the paint as well: entries not yet
+  open in the IR are opened with `Save` + `Clip`, entries no longer in
+  effect are closed with `Restore` — so the `Restore` for a clip popped by
+  `grestore`/`initclip` appears at the next paint or at page end, a clip
+  nothing paints under leaves no trace, and `gsave`/`grestore` churn
+  leaves none either. `copypage` closes the open clips in the delivered
+  copy only.
+- **Spans.** Every op carries `Option<Span>`, always `None`: the operator
+  layer does not pass the triggering token's span across the trait yet.
+  Follow-up: thread it through the backend calls once the distillation
+  side needs marks-to-source.
+- **Pages (§5).** `showpage` closes open clips, delivers the page, starts
+  a new one with the same media box, and reinitialises the graphics state
+  (the stack is left alone); `copypage` delivers a clone without
+  resetting; `erasepage` discards the ops recorded so far. `nulldevice`
+  is a flag in the graphics state: it resets the CTM and clears the clip,
+  and while it is set paints and images are discarded and
+  `showpage`/`copypage` deliver nothing (`showpage` still reinitialises
+  the state). It ends when a state without it is restored, per the
+  trait's contract — not at the next `showpage`.
+- **Real formatting (§5).** The dump's real syntax is the PDF writer's
+  algorithm, duplicated as `ps_graphics::fmt_real` rather than shared:
+  ps-graphics must not depend on pdf-out, and a crate for one function is
+  not worth its weight. `pdf_out::fmt_real` is now public, and a property
+  test in ps-graphics (pdf-out as a dev-dependency) holds the two
+  together over arbitrary `f32`.
+- **Dump format (`ir/1`).** Documented in `ps_graphics::dump`. Beyond
+  §5: `origin llx lly` follows `page w h` when the media box origin is
+  not zero; images are listed as `img n WxH bpc=… cs=<index>|mask
+  decode=[…] <n> bytes [interpolate]` and painted as `Do img n <matrix>`;
+  sample data, lookup tables, and tint procedures appear as byte counts
+  only. Several pages concatenate with a blank line between.
+- **Tooling (§5).** `efterscript run` installs the backend with a
+  discarding sink. `efterscript ir` prints the dump of every page to
+  standard output, pages separated by a blank line, with the program's
+  own output sent to standard error so the dump can be piped. `difftest
+  run` installs the backend with a collecting sink for every file unless
+  the file's leading comment block says `% backend: none` (the two
+  scripting-only corpus files); a file under `corpus/unit` with a golden
+  at the same relative path under `corpus/golden/ir` (extension `.ir`)
+  has its concatenated dump compared exactly, `#` lines in the golden
+  skipped. `--update-ir` (re)writes the goldens: `ir/1` stays the first
+  line, the SPDX and `GENERATED-BY` comments follow, then the rest of the
+  dump; a file that produces no pages gets none.
+- **Corpus.** One file per spec scenario that needs the real backend,
+  each with a sidecar golden: `stroked-line`, `unpainted-paths`,
+  `gsave-grestore-no-bloat`, `separation-survives`, `translate-then-draw`,
+  `restore-restores-linewidth`, and `clip-and-pages` for the sidecar
+  golden scenario (clip bracketing, an arc, a dash, an image mask,
+  `copypage`; three pages).

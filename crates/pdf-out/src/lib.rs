@@ -25,6 +25,6 @@ mod write;
 mod xref;
 
 pub use doc::{Document, Error};
-pub use obj::{ArrayBuilder, DictBuilder, Ref, Val};
+pub use obj::{ArrayBuilder, DictBuilder, Ref, Val, fmt_real};
 pub use pages::{PageTree, write_info};
 pub use stream::Filter;

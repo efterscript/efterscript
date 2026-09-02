@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.6
+% Scenario: Separation survives. The page resources carry a Separation
+% space named Spot with a CMYK alternate and the captured tint
+% transform; the fill carries the single component 0.6, unconverted.
+[/Separation /Spot /DeviceCMYK {0 0 0 4 -1 roll}] setcolorspace
+0.6 setcolor
+currentcolor =
+0 0 moveto 10 0 lineto 10 10 lineto closepath fill
+showpage

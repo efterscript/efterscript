@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: unpainted paths leave no trace. The first path is discarded
+% by newpath; the page holds exactly one stroke, of the second path.
+0 0 moveto 5 5 lineto newpath
+1 1 moveto 2 2 lineto stroke
+showpage

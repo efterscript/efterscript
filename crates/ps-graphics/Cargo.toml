@@ -13,3 +13,9 @@ repository.workspace = true
 
 [dependencies]
 ps-vm.workspace = true
+
+[dev-dependencies]
+# Only to check that the dump's real syntax agrees with the PDF writer's;
+# the library itself knows nothing about PDF.
+pdf-out.workspace = true
+proptest = "1.11.0"

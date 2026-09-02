@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 1.0
+% expect-output: 10.0
+% expect-output: 10.0
+% Scenario: restore restores line width. save performs the implicit
+% graphics save and restore returns to it; the current path is part of
+% the state too (PLRM3 §4.2), so gsave/grestore brings back the current
+% point. The stroke that follows needs no width setting in the IR.
+1 setlinewidth save 5 setlinewidth restore currentlinewidth =
+10 10 moveto gsave 20 20 lineto grestore currentpoint exch = =
+50 50 lineto stroke
+showpage

@@ -3,10 +3,25 @@
 
 //! Graphics-state machine and vector IR.
 //!
-//! Implements the graphics-operator trait exposed by `ps-vm`, maintaining
-//! graphics state and producing a PDF-shaped, resolution-independent vector IR
-//! (a per-page display list carrying font references, N-channel color spaces,
-//! and group/soft-mask/blend hooks). Backends consume the IR through sink
-//! traits; the v1 sink is the PDF writer, with raster/SVG/GPU slots reserved.
+//! [`Graphics`] implements the graphics-operator trait exposed by `ps-vm`:
+//! it keeps the graphics-state stack (PLRM3 §4.2), builds paths through
+//! the CTM, and turns each paint into an operation of a PDF-shaped,
+//! resolution-independent page IR ([`Page`], [`IrOp`]) that is delivered
+//! to a [`PageSink`] at `showpage`. Colour is a colour-space resource plus
+//! a component vector of the space's arity; nothing is converted. The IR
+//! has one canonical text form ([`dump`]) for golden comparison.
 //!
-//! Independently useful as a vector-capture layer.
+//! Independently useful as a vector-capture layer: the backend needs no
+//! interpreter, only calls.
+
+mod arc;
+mod backend;
+pub mod dump;
+mod ir;
+mod real;
+mod state;
+
+pub use backend::Graphics;
+pub use ir::{FillRule, Image, ImageRef, IrOp, Op, Page, PageSink, Resources, SpaceRef};
+pub use real::{fmt_real, fmt_reals};
+pub use state::{ClipEntry, GState, Path};

@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.0
+% expect-output: 0.0
+% Scenario: translate then draw. Path points are transformed through the
+% CTM as they are added, so the stroke is Move(72,72) Line(144,72) in
+% default user space, while currentpoint answers in the current space.
+72 72 translate
+0 0 moveto currentpoint exch = =
+72 0 lineto stroke
+showpage

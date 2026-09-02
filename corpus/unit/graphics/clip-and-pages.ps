@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: sidecar golden. Three delivered pages — a clipped stroke
+% bracketed by save/restore and an arc filled in DeviceRGB, then a
+% dashed stroke with an image mask delivered twice by copypage and
+% showpage — whose concatenated dump the sidecar golden pins.
+gsave
+  10 10 50 50 rectclip
+  0 0 moveto 100 100 lineto stroke
+grestore
+1 0 0 setrgbcolor
+50 50 20 0 360 arc closepath fill
+showpage
+0.5 setgray [4 2] 0 setdash 2 setlinecap
+20 20 moveto 80 20 lineto stroke
+2 2 true [2 0 0 2 0 0] <4080> imagemask
+copypage
+showpage

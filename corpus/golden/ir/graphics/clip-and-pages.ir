@@ -1,0 +1,54 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 DeviceRGB
+ops:
+q
+m 10 10
+l 60 10
+l 60 60
+l 10 60
+h
+W n
+m 0 0
+l 100 100
+S
+Q
+cs 0
+sc 1 0 0
+m 70 50
+c 70 61.0457 61.0457 70 50 70
+c 38.9543 70 30 61.0457 30 50
+c 30 38.9543 38.9543 30 50 30
+c 61.0457 30 70 38.9543 70 50
+h
+f
+
+ir/1
+page 612 792
+resources:
+img 0 2x2 bpc=1 cs=mask decode=[1 0] 2 bytes
+ops:
+sc 0.5
+J 2
+d [4 2] 0
+m 20 20
+l 80 20
+S
+Do img 0 1 0 0 -1 0 1
+
+ir/1
+page 612 792
+resources:
+img 0 2x2 bpc=1 cs=mask decode=[1 0] 2 bytes
+ops:
+sc 0.5
+J 2
+d [4 2] 0
+m 20 20
+l 80 20
+S
+Do img 0 1 0 0 -1 0 1

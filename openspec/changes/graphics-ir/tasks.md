@@ -10,25 +10,25 @@
 
 ## 2. Graphics state (ps-graphics)
 
-- [ ] 2.1 `GState` stack, CTM math, defaults; current path beside the stack
-- [ ] 2.2 Path building incl. arc-to-Bézier; `currentpoint`, `pathbbox`
-- [ ] 2.3 Colour spaces as resources: device spaces, Separation, DeviceN, Indexed; captured tint-transform source
-- [ ] 2.4 Clip stack; clip ops into the IR
+- [x] 2.1 `GState` stack, CTM math, defaults; current path beside the stack
+- [x] 2.2 Path building incl. arc-to-Bézier; `currentpoint`, `pathbbox`
+- [x] 2.3 Colour spaces as resources: device spaces, Separation, DeviceN, Indexed; captured tint-transform source
+- [x] 2.4 Clip stack; clip ops into the IR
 
 ## 3. IR and delivery
 
-- [ ] 3.1 `Page`, `IrOp`, `Seg`, `Resources`; spans on ops
-- [ ] 3.2 Lazy state emission with dedup; paint ops carry their path
-- [ ] 3.3 `PageSink`; `showpage`/`copypage`/`erasepage` semantics
-- [ ] 3.4 Versioned canonical dump (`ir/1`) with shared number formatting
+- [x] 3.1 `Page`, `IrOp`, `Seg`, `Resources`; spans on ops
+- [x] 3.2 Lazy state emission with dedup; paint ops carry their path
+- [x] 3.3 `PageSink`; `showpage`/`copypage`/`erasepage` semantics
+- [x] 3.4 Versioned canonical dump (`ir/1`) with shared number formatting
 
 ## 4. Tooling and corpus
 
-- [ ] 4.1 `efterscript ir <file>`
-- [ ] 4.2 `difftest run`: sidecar `.ir` golden comparison under `corpus/golden/ir/`
-- [ ] 4.3 Corpus files under `corpus/unit/graphics/` for every scenario, with goldens
+- [x] 4.1 `efterscript ir <file>`
+- [x] 4.2 `difftest run`: sidecar `.ir` golden comparison under `corpus/golden/ir/`
+- [x] 4.3 Corpus files under `corpus/unit/graphics/` for every scenario, with goldens
 
 ## 5. Verification
 
-- [ ] 5.1 Unit tests per scenario; backend tested without an interpreter
-- [ ] 5.2 Property tests: CTM round trips (`transform`/`itransform`), dump determinism
+- [x] 5.1 Unit tests per scenario; backend tested without an interpreter
+- [x] 5.2 Property tests: CTM round trips (`transform`/`itransform`), dump determinism
