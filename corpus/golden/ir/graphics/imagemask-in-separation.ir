@@ -1,0 +1,12 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Separation (Spot) alt=DeviceCMYK tint=17 bytes
+img 0 2x2 bpc=1 cs=mask decode=[1 0] 2 bytes
+ops:
+cs 0
+sc 0.6
+Do img 0 50 0 0 50 100 100

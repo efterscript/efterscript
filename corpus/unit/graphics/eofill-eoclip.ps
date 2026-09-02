@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: even-odd fill and clip. A five-point star is a
+% self-intersecting path whose centre has winding number two; used as an
+% even-odd clip and then filled even-odd, the page carries `W* n` and
+% `f*`, each preceded by the path.
+50 90 moveto 20 10 lineto 90 60 lineto 10 60 lineto 80 10 lineto closepath
+eoclip
+eofill
+showpage

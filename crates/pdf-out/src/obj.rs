@@ -118,6 +118,19 @@ fn put_string(buf: &mut Vec<u8>, s: &[u8]) {
     }
 }
 
+/// Hexadecimal form regardless of content, for data that is bytes rather
+/// than text (a lookup table, say), so its appearance does not depend on
+/// whether the bytes happen to be printable.
+fn put_hex_string(buf: &mut Vec<u8>, s: &[u8]) {
+    sep(buf);
+    buf.push(b'<');
+    for &b in s {
+        buf.push(HEX[usize::from(b >> 4)]);
+        buf.push(HEX[usize::from(b & 0xF)]);
+    }
+    buf.push(b'>');
+}
+
 /// Canonical real syntax: the shortest plain-decimal form of at most six
 /// significant digits that round-trips the `f32` (rounded to six when none
 /// does, ties away from zero), trailing zeros and dot trimmed, `-0` written
@@ -250,6 +263,11 @@ impl<'a> Val<'a> {
         put_string(self.buf, s);
     }
 
+    pub fn hex_string(mut self, s: &[u8]) {
+        self.written = true;
+        put_hex_string(self.buf, s);
+    }
+
     pub fn reference(mut self, r: Ref) {
         self.written = true;
         put_ref(self.buf, r);
@@ -352,6 +370,11 @@ impl ArrayBuilder<'_> {
         self
     }
 
+    pub fn hex_string(&mut self, s: &[u8]) -> &mut Self {
+        self.item().hex_string(s);
+        self
+    }
+
     pub fn reference(&mut self, r: Ref) -> &mut Self {
         self.item().reference(r);
         self
@@ -431,6 +454,19 @@ mod tests {
         assert_eq!(value(|v| v.string(b"")), "()");
         assert_eq!(value(|v| v.string(b"a\\b")), r"(a\\b)");
         assert_eq!(value(|v| v.string(b"line\n")), "<6C696E650A>");
+    }
+
+    #[test]
+    fn hex_string_ignores_printability() {
+        assert_eq!(value(|v| v.hex_string(b"AB")), "<4142>");
+        assert_eq!(value(|v| v.hex_string(b"\xFF\x00")), "<FF00>");
+        assert_eq!(value(|v| v.hex_string(b"")), "<>");
+        assert_eq!(
+            value(|v| v.array(|a| {
+                a.hex_string(b"\x01").int(2);
+            })),
+            "[ <01> 2 ]"
+        );
     }
 
     #[test]

@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a 2x2 gray image. Four 8-bit samples drawn through the
+% standard unit-square matrix at a translated and scaled CTM become one
+% image XObject painted as `q 50 0 0 50 100 100 cm /Im0 Do Q`.
+100 100 translate
+50 50 scale
+2 2 8 [2 0 0 -2 0 2] <0055AAFF> image
+showpage

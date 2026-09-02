@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: undefined
+% Scenario: error after the first page. The page shown before the
+% undefined name is in the document, which is closed well-formed; the
+% error is reported alongside.
+0 0 100 100 rectfill
+showpage
+nosuchname

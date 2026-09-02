@@ -41,6 +41,7 @@ version = "0.0.1"
 dependencies = [
  "ps-graphics",
  "ps-vm",
+ "remelt",
 ]
 
 [[package]]
@@ -275,6 +276,7 @@ name = "remelt"
 version = "0.0.1"
 dependencies = [
  "pdf-out",
+ "proptest",
  "ps-fonts",
  "ps-graphics",
  "ps-vm",

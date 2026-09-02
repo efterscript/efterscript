@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: scaled stroke keeps its width. The stroke records the CTM it
+% was measured in; the PDF wraps it in that matrix with the path taken
+% back through the inverse, so the width of 1 is read in the scaled
+% space, as the program set it.
+2 2 scale
+1 setlinewidth
+5 5 moveto 50 5 lineto stroke
+showpage

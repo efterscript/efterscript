@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: dash and line parameters. The dash array with its phase, the
+% cap, the join, and the mitre limit are set before the stroke; the line
+% width is left at its default and so is not set at all.
+[3 1] 0 setdash
+1 setlinecap
+2 setlinejoin
+4 setmiterlimit
+10 10 moveto 100 10 lineto stroke
+showpage

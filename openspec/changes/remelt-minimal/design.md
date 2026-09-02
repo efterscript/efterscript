@@ -156,3 +156,66 @@ same rule `efterscript ir` follows for the dump.
 - Whether the corpus PDF goldens should be run through the external
   checker in CI by default once one is available there. Does not change
   this design; the hook exists either way.
+
+## Implementation notes
+
+Recorded where the code departs from, or pins down, the decisions above.
+
+- **D1/D3, the writer's lifetime.** The interpreter holds its backend as
+  a `Box<dyn GraphicsBackend>`, which is `'static`, and the backend owns
+  the sink, so `distill` requires `W: Write + 'static`: a `&mut Vec<u8>`
+  cannot be the writer. `distill` therefore hands the writer back with
+  the report — `Result<(Report, W), Error>` — the way
+  `pdf_out::Document::finish` returns its sink, so a caller writing to
+  memory keeps its bytes and one writing to a file can close it. `Report`
+  stays plain data. The shared cell is wrapped in a private `Shared<W>`
+  newtype implementing `PageSink`, so `ps-graphics` did not need a
+  `PageSink for Option<S>`.
+- **D2.** `PdfSink::new` can fail (the header is written at once).
+  `finish` returns the latched error without attempting to close the
+  document: an object that failed mid-write has already broken the file.
+  `pages()` counts pages actually written.
+- **D5, device spaces.** The emitter records `cs n` without a following
+  `sc` when only the space changed, relying on `setcolorspace` selecting
+  the space's initial colour; PDF's `cs` does the same, so a device-space
+  `SetColorSpace` is written as `/DeviceGray cs` (`/DeviceRGB`,
+  `/DeviceCMYK`), which needs no resource, and `SetColor` in a device
+  space as `g`/`rg`/`k`. The content stream thus mirrors the dump line
+  for line. Non-device spaces are inline arrays both in the page's
+  `ColorSpace` dictionary and in an image dictionary that uses them; the
+  function streams behind them are written once and shared by reference.
+  Function streams follow `Options::compress` like content streams. The
+  Indexed lookup is always hexadecimal: `pdf-out` gained
+  `Val::hex_string`/`ArrayBuilder::hex_string` (additive) so binary data
+  does not switch form when its bytes happen to be printable.
+- **D6.** A mask is an image whose `color_space` resource is `None`.
+  `BitsPerComponent` is written for masks too (always 1). The default
+  `Decode` compared against is `[0 1]` per component, `[0 2^bits−1]` for
+  Indexed, `[0 1]` for a mask. `Interpolate` appears only when true. The
+  paint is one line, `q a b c d e f cm /Imn Do Q`, mirroring the dump's
+  `Do img` line; the stroke wrapper is the one place the stream has a
+  line the dump lacks (the closing `Q`).
+- **D7.** Dash is written `[a b] phase d`. The scaled-stroke scenario
+  sets a width of 1, which is PDF's initial value as well, so the emitter
+  records nothing and the stream carries no `w`; the scenario's "the line
+  width is 1" holds by default.
+- **D8.** Per page the objects are written in the order functions, image
+  XObjects, content stream, page dictionary; the page tree, catalog, and
+  Info close the file.
+- **D10.** `difftest` already collects the delivered pages, so it feeds
+  them into a `PdfSink` instead of running the program a second time
+  through `distill`; the sink is deterministic per page, so the bytes are
+  those `distill` would write. The produced document is part of `Actual`
+  and is built for every run. PDF goldens carry the two SPDX comments
+  before the `GENERATED-BY` comment, as the `.ir` goldens do. Command-line
+  paths are made absolute so goldens are found for a relative
+  `corpus/unit/...`. The checker's output is captured into the failure
+  report; the files it is run on stay under `target/difftest/` for
+  inspection. Poppler's `pdfinfo` and `pdftotext` (25.03) accept every
+  golden with no warning; nothing in CI runs a checker yet.
+- **D11.** Host failures — unreadable input, uncreatable output, a write
+  error — exit 2, as `run` and `ir` already do for an unreadable file; 0
+  and 1 are reserved for the job's outcome. Output goes through a
+  `BufWriter`, which `Document::finish` flushes.
+- **Tests.** `remelt`'s tests include `pdf-out`'s test-side reader by
+  `#[path]` rather than copying it. `ps-graphics` is unchanged.

@@ -15,3 +15,6 @@ ps-vm.workspace = true
 ps-graphics.workspace = true
 ps-fonts.workspace = true
 pdf-out.workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

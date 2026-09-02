@@ -6,7 +6,8 @@
 //! interpreter as streams.
 
 use std::cell::RefCell;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 
@@ -62,6 +63,7 @@ impl Stream for HostStdin {
 fn usage() -> ExitCode {
     eprintln!("usage: efterscript run <file.ps>");
     eprintln!("       efterscript ir <file.ps>");
+    eprintln!("       efterscript pdf <file.ps> [<out.pdf> | -]");
     eprintln!("       efterscript --version");
     ExitCode::from(2)
 }
@@ -107,6 +109,53 @@ fn ir(bytes: &[u8]) -> ExitCode {
     exit_code(outcome)
 }
 
+/// Distils the program into `out`. The exit code follows the job's
+/// outcome once the document is written, so a partially distilled job is
+/// still inspectable; 2 means the document itself could not be written.
+fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
+    let config = Config {
+        io,
+        ..Default::default()
+    };
+    let options = remelt::Options::default();
+    let result = remelt::distill(bytes, config, &options, BufWriter::new(out));
+    let _ = std::io::stdout().flush();
+    match result {
+        Ok((report, _)) => exit_code(report.outcome),
+        Err(e) => {
+            eprintln!("efterscript: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// Writes the PDF to `target`, or to standard output for `-`, in which
+/// case the program's own output moves to standard error so the PDF can
+/// be piped.
+fn pdf(bytes: &[u8], target: &Path) -> ExitCode {
+    if target == Path::new("-") {
+        let io = Io::new(HostStderr, HostStderr).with_stdin(HostStdin);
+        return distill_to(bytes, io, std::io::stdout());
+    }
+    match std::fs::File::create(target) {
+        Ok(file) => {
+            let io = Io::new(HostStdout, HostStderr).with_stdin(HostStdin);
+            distill_to(bytes, io, file)
+        }
+        Err(e) => {
+            eprintln!("efterscript: cannot create {}: {e}", target.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn read_program(path: &str) -> Result<Vec<u8>, ExitCode> {
+    std::fs::read(path).map_err(|e| {
+        eprintln!("efterscript: cannot read {path}: {e}");
+        ExitCode::from(2)
+    })
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args
@@ -119,14 +168,21 @@ fn main() -> ExitCode {
             println!("efterscript {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        [command @ ("run" | "ir"), path] => match std::fs::read(path) {
+        [command @ ("run" | "ir"), path] => match read_program(path) {
             Ok(bytes) if *command == "run" => run(&bytes),
             Ok(bytes) => ir(&bytes),
-            Err(e) => {
-                eprintln!("efterscript: cannot read {path}: {e}");
-                ExitCode::from(2)
-            }
+            Err(code) => code,
         },
+        ["pdf", input, rest @ ..] if rest.len() <= 1 => {
+            let target = rest
+                .first()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| Path::new(input).with_extension("pdf"));
+            match read_program(input) {
+                Ok(bytes) => pdf(&bytes, &target),
+                Err(code) => code,
+            }
+        }
         _ => usage(),
     }
 }
