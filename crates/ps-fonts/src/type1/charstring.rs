@@ -5,7 +5,10 @@
 //! outline, `hsbw`/`sbw` give the advance, subroutines run through an
 //! explicit call stack, flex is reconstructed from the other-subroutine
 //! convention, hints are accepted and dropped, and `seac` composes two
-//! other charstrings.
+//! other charstrings. Every subroutine index executed is recorded, so a
+//! subset can tell which subroutines its charstrings reach.
+
+use std::collections::BTreeSet;
 
 use super::Type1Program;
 use crate::encoding::STANDARD_ENCODING;
@@ -20,6 +23,9 @@ const MAX_STACK: usize = 24;
 pub(crate) struct Interpreted {
     pub glyph: Glyph,
     pub components: Vec<Vec<u8>>,
+    /// Every subroutine index executed, nested calls and the components
+    /// of a `seac` glyph included.
+    pub subrs: BTreeSet<usize>,
 }
 
 /// Interprets the charstring of `name`; `None` when there is none.
@@ -35,9 +41,11 @@ pub(crate) fn interpret(
     if let Some(seac) = machine.seac.take() {
         return machine.compose(seac).map(Some);
     }
+    let subrs = std::mem::take(&mut machine.subrs);
     Ok(Some(Interpreted {
         glyph: machine.into_glyph(),
         components: Vec::new(),
+        subrs,
     }))
 }
 
@@ -62,6 +70,8 @@ struct Machine<'a> {
     /// The points collected while a flex is in progress.
     flex: Option<Vec<(f32, f32)>>,
     seac: Option<Seac>,
+    /// The subroutine indices called so far.
+    subrs: BTreeSet<usize>,
 }
 
 enum Step<'a> {
@@ -73,6 +83,10 @@ enum Step<'a> {
 
 /// One number of the charstring encoding, or `None` for an operator byte.
 fn number(code: &[u8], pc: &mut usize) -> Result<Option<f32>, FontError> {
+    Ok(decode_number(code, pc)?.map(|v| v as f32))
+}
+
+fn decode_number(code: &[u8], pc: &mut usize) -> Result<Option<i32>, FontError> {
     let v = code[*pc];
     *pc += 1;
     let value = match v {
@@ -96,7 +110,71 @@ fn number(code: &[u8], pc: &mut usize) -> Result<Option<f32>, FontError> {
         }
         _ => return Ok(None),
     };
-    Ok(Some(value as f32))
+    Ok(Some(value))
+}
+
+/// Appends `v` in the charstring number encoding.
+pub fn encode_number(v: i32, out: &mut Vec<u8>) {
+    match v {
+        -107..=107 => out.push((v + 139) as u8),
+        108..=1131 => {
+            let w = v - 108;
+            out.push((w / 256 + 247) as u8);
+            out.push((w % 256) as u8);
+        }
+        -1131..=-108 => {
+            let w = -v - 108;
+            out.push((w / 256 + 251) as u8);
+            out.push((w % 256) as u8);
+        }
+        _ => {
+            out.push(255);
+            out.extend_from_slice(&v.to_be_bytes());
+        }
+    }
+}
+
+/// One unit of a charstring: a number, a one-byte operator, or a
+/// two-byte (escaped) operator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Token {
+    Num(i32),
+    Op(u8),
+    Esc(u8),
+}
+
+/// The tokens of `code`, in order.
+pub(crate) fn tokens(code: &[u8]) -> Result<Vec<Token>, FontError> {
+    let mut out = Vec::new();
+    let mut pc = 0;
+    while pc < code.len() {
+        if let Some(v) = decode_number(code, &mut pc)? {
+            out.push(Token::Num(v));
+            continue;
+        }
+        let op = code[pc - 1];
+        if op == 12 {
+            let esc = *code.get(pc).ok_or(FontError::Truncated("charstring"))?;
+            pc += 1;
+            out.push(Token::Esc(esc));
+        } else {
+            out.push(Token::Op(op));
+        }
+    }
+    Ok(out)
+}
+
+/// `tokens` back in the charstring encoding.
+pub(crate) fn encode(tokens: &[Token]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for token in tokens {
+        match *token {
+            Token::Num(v) => encode_number(v, &mut out),
+            Token::Op(op) => out.push(op),
+            Token::Esc(esc) => out.extend_from_slice(&[12, esc]),
+        }
+    }
+    out
 }
 
 impl<'a> Machine<'a> {
@@ -112,6 +190,7 @@ impl<'a> Machine<'a> {
             advance: (0.0, 0.0),
             flex: None,
             seac: None,
+            subrs: BTreeSet::new(),
         }
     }
 
@@ -170,14 +249,15 @@ impl<'a> Machine<'a> {
             }
             10 => {
                 let index = self.stack.pop().ok_or(FontError::Operands("callsubr"))?;
-                let subr = usize::try_from(index as i32)
+                let k = usize::try_from(index as i32)
                     .ok()
-                    .and_then(|k| self.program.subrs().get(k))
+                    .filter(|k| *k < self.program.subrs().len())
                     .ok_or(FontError::SubrIndex(index as i32))?;
                 if depth >= MAX_CALL_DEPTH {
                     return Err(FontError::CallDepth);
                 }
-                Ok(Step::Call(subr.as_slice()))
+                self.subrs.insert(k);
+                Ok(Step::Call(self.program.subrs()[k].as_slice()))
             }
             11 => Ok(Step::Return),
             _ => self.plain(op),
@@ -393,21 +473,24 @@ impl<'a> Machine<'a> {
 
     /// The composite glyph: the base as it is, the accent displaced so its
     /// sidebearing point lands at `adx − asb` from this glyph's own.
-    fn compose(self, seac: Seac) -> Result<Interpreted, FontError> {
-        let component = |name: &[u8]| -> Result<Glyph, FontError> {
-            let code = self
-                .program
+    fn compose(mut self, seac: Seac) -> Result<Interpreted, FontError> {
+        let program = self.program;
+        let component = |name: &[u8]| -> Result<(Glyph, BTreeSet<usize>), FontError> {
+            let code = program
                 .charstring(name)
                 .ok_or_else(|| FontError::MissingComponent(name.to_vec()))?;
-            let mut machine = Machine::new(self.program);
+            let mut machine = Machine::new(program);
             machine.run(code)?;
             if machine.seac.is_some() {
                 return Err(FontError::Malformed("nested seac"));
             }
-            Ok(machine.into_glyph())
+            let subrs = std::mem::take(&mut machine.subrs);
+            Ok((machine.into_glyph(), subrs))
         };
-        let base = component(&seac.base)?;
-        let accent = component(&seac.accent)?;
+        let (base, base_subrs) = component(&seac.base)?;
+        let (accent, accent_subrs) = component(&seac.accent)?;
+        self.subrs.extend(base_subrs);
+        self.subrs.extend(accent_subrs);
         let mut outline = base.outline;
         let dx = self.sbx - seac.asb + seac.adx;
         outline
@@ -419,13 +502,14 @@ impl<'a> Machine<'a> {
                 outline,
             },
             components: vec![seac.base, seac.accent],
+            subrs: self.subrs,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
     use crate::outline::OutlineOp::{Close, CurveTo, LineTo, MoveTo};
@@ -468,6 +552,47 @@ mod tests {
         );
         assert_eq!(
             number(&[247], &mut 0),
+            Err(FontError::Truncated("charstring"))
+        );
+    }
+
+    #[test]
+    fn tokens_round_trip_through_the_encoding() {
+        let code = CharstringBuilder::new()
+            .hsbw(50, 600)
+            .num(-107)
+            .num(107)
+            .num(108)
+            .num(1131)
+            .num(-108)
+            .num(-1131)
+            .num(1132)
+            .num(-40000)
+            .div()
+            .rmoveto(0, 0)
+            .callsubr(5)
+            .num(4)
+            .num(1)
+            .num(3)
+            .callothersubr()
+            .pop()
+            .op(10)
+            .endchar()
+            .bytes();
+        let list = tokens(&code).unwrap();
+        assert_eq!(
+            &list[..3],
+            &[Token::Num(50), Token::Num(600), Token::Op(13)]
+        );
+        assert_eq!(list[11], Token::Esc(12));
+        assert_eq!(list[list.len() - 1], Token::Op(14));
+        assert_eq!(list[list.len() - 2], Token::Op(10));
+        assert_eq!(list[list.len() - 3], Token::Esc(17));
+        assert_eq!(encode(&list), code);
+        assert_eq!(tokens(&[247]), Err(FontError::Truncated("charstring")));
+        assert_eq!(tokens(&[12]), Err(FontError::Truncated("charstring")));
+        assert_eq!(
+            tokens(&[255, 0, 0]),
             Err(FontError::Truncated("charstring"))
         );
     }
@@ -661,6 +786,62 @@ mod tests {
         let p = program(vec![("h", code)], subrs);
         let g = glyph(&p, "h");
         assert_eq!(g.outline.ops, vec![MoveTo(6.0, 5.0)]);
+    }
+
+    #[test]
+    fn subroutine_calls_are_traced_through_nesting_hint_replacement_and_seac() {
+        let hint = CharstringBuilder::new().hstem(0, 10).r#return().bytes();
+        let inner = CharstringBuilder::new().rlineto(5, 5).r#return().bytes();
+        let outer = CharstringBuilder::new().callsubr(5).r#return().bytes();
+        let unused = CharstringBuilder::new().rlineto(1, 1).r#return().bytes();
+        let mut subrs: Vec<Vec<u8>> = (0..4)
+            .map(|_| CharstringBuilder::new().r#return().bytes())
+            .collect();
+        subrs.extend([hint, inner, outer, unused]);
+        // Subroutine 4 is reached only through the hint-replacement
+        // other-subroutine: `4 1 3 callothersubr pop callsubr`.
+        let h = CharstringBuilder::new()
+            .hsbw(0, 300)
+            .num(4)
+            .num(1)
+            .num(3)
+            .callothersubr()
+            .pop()
+            .op(10)
+            .rmoveto(0, 0)
+            .callsubr(6)
+            .endchar()
+            .bytes();
+        let acute = CharstringBuilder::new()
+            .hsbw(0, 300)
+            .rmoveto(0, 500)
+            .callsubr(7)
+            .endchar()
+            .bytes();
+        let hacute = CharstringBuilder::new()
+            .hsbw(0, 300)
+            .seac(0, 0, 0, 104, 194)
+            .bytes();
+        let plain = CharstringBuilder::new().hsbw(0, 100).endchar().bytes();
+        let p = program(
+            vec![
+                ("h", h),
+                ("acute", acute),
+                ("hacute", hacute),
+                ("plain", plain),
+            ],
+            subrs,
+        );
+        let set = |list: &[usize]| list.iter().copied().collect::<BTreeSet<usize>>();
+        assert_eq!(p.reached_subrs(b"h").unwrap(), set(&[4, 5, 6]));
+        assert_eq!(p.reached_subrs(b"acute").unwrap(), set(&[7]));
+        assert_eq!(p.reached_subrs(b"hacute").unwrap(), set(&[4, 5, 6, 7]));
+        assert_eq!(p.reached_subrs(b"plain").unwrap(), set(&[]));
+        assert_eq!(p.reached_subrs(b"nosuch").unwrap(), set(&[]));
+        assert_eq!(
+            glyph(&p, "h").outline.ops,
+            vec![MoveTo(0.0, 0.0), LineTo(5.0, 5.0)]
+        );
     }
 
     #[test]

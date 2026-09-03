@@ -6,12 +6,12 @@
 //! are interpreted into outlines, a reader for font files ([`file`]),
 //! and the writer that regenerates a program for embedding ([`write`]).
 
-mod charstring;
+pub(crate) mod charstring;
 pub mod file;
 pub mod write;
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::outline::Glyph;
@@ -281,6 +281,16 @@ impl Type1Program {
     pub fn seac_components(&self, name: &[u8]) -> Result<Vec<Vec<u8>>, FontError> {
         Ok(charstring::interpret(self, name)?
             .map(|interpreted| interpreted.components)
+            .unwrap_or_default())
+    }
+
+    /// The indices of every subroutine the charstring of `name` runs,
+    /// transitively — through nested calls, through the hint-replacement
+    /// other-subroutine, and inside the components of a `seac` glyph;
+    /// empty for a name the program lacks.
+    pub fn reached_subrs(&self, name: &[u8]) -> Result<BTreeSet<usize>, FontError> {
+        Ok(charstring::interpret(self, name)?
+            .map(|interpreted| interpreted.subrs)
             .unwrap_or_default())
     }
 }

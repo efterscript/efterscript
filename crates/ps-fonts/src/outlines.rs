@@ -8,7 +8,7 @@
 //! use. A glyph is found by name — a Type 1 charstring, a TrueType
 //! `post` name, else the name's Unicode value through the `(3,1)` cmap —
 //! and answered in the 1000-unit space the metrics use, with the advance
-//! taken from the face's AFM rather than from the asset.
+//! taken from the face's metrics rather than from the asset.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -231,7 +231,7 @@ impl ResidentFace {
     }
 
     /// The outline of the glyph named `name` in thousandths of the em,
-    /// its advance the AFM width (0 when the metrics lack the name);
+    /// its advance the metrics' width (0 when the metrics lack the name);
     /// `Ok(None)` when the asset has no such glyph or there is no asset.
     pub fn outline(self, name: &[u8]) -> Result<Option<Rc<Glyph>>, FontError> {
         let Some(outlines) = self.outlines() else {
@@ -336,7 +336,11 @@ mod tests {
         // Metric-compatible in advance; the outline's width is within
         // twenty units (two at size 100) of the Helvetica AFM's H box.
         let [llx, _, urx, _] = h.outline.control_box().unwrap();
-        let [allx, _, aurx, _] = ResidentFace::Helvetica.metrics().glyph("H").unwrap().bbox;
+        let [allx, _, aurx, _] = crate::resident::StdFont::Helvetica
+            .metrics()
+            .glyph("H")
+            .unwrap()
+            .bbox;
         assert!(((urx - llx) - (aurx - allx)).abs() < 20.0, "{llx} {urx}");
         assert!(ResidentFace::Helvetica.has_outlines());
         let first = ResidentFace::Helvetica.outlines().unwrap();

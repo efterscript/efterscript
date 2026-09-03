@@ -4,13 +4,16 @@
 //! The resident set: the fourteen standard fonts ([`StdFont`], whose
 //! standard-14 status the PDF writer relies on) and the thirty-five
 //! resident faces ([`ResidentFace`]) — the fourteen plus the twenty-one
-//! LaserWriter faces — with their metrics, read from the embedded AFM
-//! files on first use, and the outline asset each is drawn from.
+//! LaserWriter faces — with their metrics ([`Metrics`]: the Core 14 AFM
+//! for the fourteen, a table derived from the outline program for the
+//! twenty-one), read from the embedded files on first use, and the
+//! outline asset each is drawn from.
 
 use std::sync::OnceLock;
 
 use crate::afm::Afm;
 use crate::encoding::{Encoding, STANDARD_ENCODING};
+use crate::metrics::MetricTable;
 use crate::outlines::OutlineAsset;
 
 /// The standard fourteen, in the order `resourceforall` lists them
@@ -61,6 +64,68 @@ impl Family {
                 | Family::Palatino
                 | Family::ZapfChancery
         )
+    }
+}
+
+/// A face's metrics: the Core 14 AFM for the fourteen, the table derived
+/// from the outline program for the twenty-one. Callers that only need
+/// widths, the bounding box, and the encoding use the shared accessors;
+/// the AFM's descriptor values exist for the fourteen alone.
+#[derive(Clone, Debug)]
+pub enum Metrics<'a> {
+    Afm(Afm<'a>),
+    Table(MetricTable<'a>),
+}
+
+impl<'a> Metrics<'a> {
+    /// The advance width of the named glyph in thousandths of the em, if
+    /// the face has the glyph.
+    pub fn width(&self, glyph: &str) -> Option<u16> {
+        match self {
+            Metrics::Afm(afm) => afm.width(glyph),
+            Metrics::Table(table) => table.width(glyph),
+        }
+    }
+
+    /// The font bounding box `[llx lly urx ury]` in glyph units.
+    pub fn bbox(&self) -> [f32; 4] {
+        match self {
+            Metrics::Afm(afm) => afm.font_bbox,
+            Metrics::Table(table) => table.bbox(),
+        }
+    }
+
+    /// The glyph name at each code of the font's own encoding: the AFM's
+    /// codes for the fourteen, the program file's for the twenty-one.
+    pub fn encoding(&self) -> &[Option<&'a str>; 256] {
+        match self {
+            Metrics::Afm(afm) => afm.encoding(),
+            Metrics::Table(table) => table.encoding(),
+        }
+    }
+
+    /// The number of glyphs the metrics list.
+    pub fn glyph_count(&self) -> usize {
+        match self {
+            Metrics::Afm(afm) => afm.chars().len(),
+            Metrics::Table(table) => table.widths().len(),
+        }
+    }
+
+    /// The AFM behind one of the fourteen; `None` for a derived table.
+    pub fn afm(&self) -> Option<&Afm<'a>> {
+        match self {
+            Metrics::Afm(afm) => Some(afm),
+            Metrics::Table(_) => None,
+        }
+    }
+
+    /// The derived table behind one of the twenty-one; `None` for an AFM.
+    pub fn table(&self) -> Option<&MetricTable<'a>> {
+        match self {
+            Metrics::Afm(_) => None,
+            Metrics::Table(table) => Some(table),
+        }
     }
 }
 
@@ -157,9 +222,12 @@ impl StdFont {
         matches!(self, StdFont::Symbol | StdFont::ZapfDingbats)
     }
 
-    /// The font's metrics, parsed on first access.
+    /// The font's AFM metrics, parsed on first access.
     pub fn metrics(self) -> &'static Afm<'static> {
-        self.face().metrics()
+        self.face()
+            .metrics()
+            .afm()
+            .expect("the fourteen have AFM metrics")
     }
 
     /// The advance width of the named glyph in thousandths of the em, if
@@ -636,15 +704,27 @@ impl ResidentFace {
         self.record().asset
     }
 
-    fn source(self) -> &'static str {
+    /// The embedded metrics, parsed: the Core 14 AFM or the derived
+    /// table, both included whether or not the outlines are.
+    fn parse_metrics(self) -> Metrics<'static> {
         macro_rules! core14 {
             ($file:literal) => {
-                include_str!(concat!("../data/core14/", $file, ".afm"))
+                Metrics::Afm(
+                    Afm::parse(include_str!(concat!("../data/core14/", $file, ".afm")))
+                        .expect("the embedded AFM files are well formed"),
+                )
             };
         }
         macro_rules! tex_gyre {
             ($file:literal) => {
-                include_str!(concat!("../data/outlines/tex-gyre/", $file, ".afm"))
+                Metrics::Table(
+                    MetricTable::parse(include_str!(concat!(
+                        "../data/outlines/tex-gyre/",
+                        $file,
+                        ".metrics"
+                    )))
+                    .expect("the embedded metric tables are well formed"),
+                )
             };
         }
         match self {
@@ -686,14 +766,13 @@ impl ResidentFace {
         }
     }
 
-    /// The face's metrics — the Core 14 AFM for the fourteen, the TeX
-    /// Gyre AFM for the extras — parsed on first access.
-    pub fn metrics(self) -> &'static Afm<'static> {
-        static METRICS: [OnceLock<Afm<'static>>; ResidentFace::COUNT] =
+    /// The face's metrics — the Core 14 AFM for the fourteen, the table
+    /// derived from the outline program for the extras — parsed on first
+    /// access.
+    pub fn metrics(self) -> &'static Metrics<'static> {
+        static METRICS: [OnceLock<Metrics<'static>>; ResidentFace::COUNT] =
             [const { OnceLock::new() }; ResidentFace::COUNT];
-        METRICS[self.index()].get_or_init(|| {
-            Afm::parse(self.source()).expect("the embedded AFM files are well formed")
-        })
+        METRICS[self.index()].get_or_init(|| self.parse_metrics())
     }
 
     /// The advance width of the named glyph in thousandths of the em, if
@@ -704,7 +783,7 @@ impl ResidentFace {
 
     /// The font bounding box `[llx lly urx ury]` in glyph units.
     pub fn bbox(self) -> [f32; 4] {
-        self.metrics().font_bbox
+        self.metrics().bbox()
     }
 
     /// The encoding the face has before a program re-encodes it:
@@ -814,14 +893,17 @@ mod tests {
     }
 
     #[test]
-    fn all_thirty_five_parse_with_their_own_names() {
+    fn all_thirty_five_parse_with_their_own_metrics() {
         for face in ResidentFace::ALL {
-            let afm = face.metrics();
+            let metrics = face.metrics();
+            let name = face.postscript_name();
             match face.std_font() {
                 Some(font) => {
-                    assert_eq!(afm.font_name, face.postscript_name());
+                    let afm = metrics.afm().expect("the fourteen have AFM metrics");
+                    assert!(metrics.table().is_none(), "{name}");
+                    assert_eq!(afm.font_name, name);
                     assert_eq!(font.metrics().font_name, afm.font_name);
-                    assert!(afm.chars().len() >= 188, "{}", face.postscript_name());
+                    assert!(metrics.glyph_count() >= 188, "{name}");
                     assert_eq!(
                         afm.encoding_scheme,
                         Some(if face.is_symbolic() {
@@ -832,15 +914,19 @@ mod tests {
                     );
                 }
                 None => {
-                    assert!(afm.font_name.starts_with("TeXGyre"), "{}", afm.font_name);
-                    assert!(afm.chars().len() >= 800, "{}", face.postscript_name());
-                    for name in STANDARD_ENCODING.iter().flatten() {
-                        assert!(
-                            afm.width(name).is_some(),
-                            "{} lacks /{name}",
-                            face.postscript_name()
-                        );
+                    let table = metrics.table().expect("the extras have derived tables");
+                    assert!(metrics.afm().is_none(), "{name}");
+                    assert!(metrics.glyph_count() >= 800, "{name}");
+                    assert!(table.width(".notdef").is_some(), "{name}");
+                    for glyph in STANDARD_ENCODING.iter().flatten() {
+                        assert!(metrics.width(glyph).is_some(), "{name} lacks /{glyph}");
                     }
+                    // The file's own encoding is recorded; the face is
+                    // still offered with `StandardEncoding`.
+                    assert_eq!(metrics.encoding()[65], Some("A"), "{name}");
+                    assert_eq!(face.builtin_encoding()[39], Some("quoteright"), "{name}");
+                    let [llx, lly, urx, ury] = metrics.bbox();
+                    assert!(llx < urx && lly < ury, "{name}");
                 }
             }
         }
@@ -864,8 +950,15 @@ mod tests {
             Some("a")
         );
         assert_eq!(
+            ResidentFace::PalatinoRoman.bbox(),
+            [-851.0, -419.0, 1512.0, 1212.0]
+        );
+        // Bonum Italic computes `tie` as 500.667 with `div`; the table
+        // carries it rounded, as the metrics file it replaced did.
+        assert_eq!(ResidentFace::BookmanLightItalic.width("tie"), Some(501));
+        assert_eq!(
             ResidentFace::ZapfChanceryMediumItalic.bbox(),
-            ResidentFace::ZapfChanceryMediumItalic.metrics().font_bbox
+            ResidentFace::ZapfChanceryMediumItalic.metrics().bbox()
         );
     }
 

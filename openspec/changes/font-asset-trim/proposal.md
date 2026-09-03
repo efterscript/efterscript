@@ -26,9 +26,9 @@ subroutine a glyph calls.
 - **Subroutine pruning on Type 1 embedding.** The charstring interpreter
   gains a trace mode recording every subroutine index a charstring
   reaches, transitively; the writer keeps those plus the first four
-  (the flex and hint-replacement convention) and replaces every other
-  subroutine with a one-operator stub, so indices stay valid and no
-  charstring needs rewriting.
+  (the flex and hint-replacement convention), renumbers them densely,
+  and re-encodes the call operands in the kept charstrings and
+  subroutines, so a subset carries only the subroutines it uses.
 - **Feature-off behaviour unchanged**: with outlines disabled the
   extras keep their metrics from the tables, which are always included.
 - Out of scope: compressing the outline programs themselves; pruning

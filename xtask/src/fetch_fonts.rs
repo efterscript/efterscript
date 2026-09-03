@@ -5,21 +5,26 @@
 //! path for the resident set's outline assets. Downloads the exact
 //! upstream releases (through the system `curl`) into `target/fetch-fonts`,
 //! verifies the archives' SHA-256 against the constants below, extracts
-//! exactly the listed members (system `tar` and `unzip`), and compares
-//! each with the committed file and with its entry in
-//! `crates/ps-fonts/data/PROVENANCE.md`. The committed files are the
-//! source of truth; this tool is the audit trail.
+//! exactly the listed members (system `tar` and `unzip`), derives the
+//! metric table of each Type 1 program, and compares each file with the
+//! committed one and with its entry in `crates/ps-fonts/data/PROVENANCE.md`.
+//! The committed files are the source of truth; this tool is the audit
+//! trail.
 //!
 //! - `--check` reports without writing and fails unless every file is
-//!   committed, listed, and identical to upstream.
+//!   committed, listed, and identical to upstream (or, for a table, to
+//!   what the program yields).
 //! - Without it, files missing from the tree are written; a committed
-//!   file that differs from upstream is refused unless `--force`, which
-//!   overwrites it. Whenever something was written or a provenance entry
-//!   is missing or stale, the table rows to paste are printed.
+//!   file that differs is refused unless `--force`, which overwrites it.
+//!   Whenever something was written or a provenance entry is missing or
+//!   stale, the table rows to paste are printed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+
+use ps_fonts::metrics::MetricTable;
+use ps_fonts::type1::parse_file;
 
 use crate::sha256::hex_digest;
 
@@ -131,8 +136,8 @@ const UPSTREAMS: [Upstream; 4] = [
         url: "https://mirrors.ctan.org/fonts/tex-gyre.zip",
         sha256: "1773c470f9e388e087b68e3426e115af2cd236845a7e05ceb25b2a503409a7a3",
         kind: Kind::Zip,
-        // The Type 1 programs, metrics, licence, and manifests are listed
-        // by `tex_gyre_files`; the array form cannot be built in a const.
+        // The Type 1 programs, licence, and manifests are listed by
+        // `tex_gyre_files`; the array form cannot be built in a const.
         files: &[],
     },
     Upstream {
@@ -151,19 +156,24 @@ const UPSTREAMS: [Upstream; 4] = [
     },
 ];
 
-/// The TeX Gyre members: `type1/<face>.pfb` and `afm/<face>.afm` for
-/// the twenty-one faces, the licence, and the manifests of the six
-/// families used.
+/// The archive member holding a TeX Gyre face's Type 1 program.
+fn tex_gyre_program(face: &str) -> String {
+    format!("tex-gyre/type1/{face}.pfb")
+}
+
+/// The metric table derived from a face's program, by destination.
+fn tex_gyre_table(face: &str) -> String {
+    format!("outlines/tex-gyre/{face}.metrics")
+}
+
+/// The TeX Gyre members: `type1/<face>.pfb` for the twenty-one faces,
+/// the licence, and the manifests of the six families used.
 fn tex_gyre_files() -> Vec<(String, String)> {
     let mut files = Vec::new();
     for face in TEX_GYRE_FACES {
         files.push((
-            format!("tex-gyre/type1/{face}.pfb"),
+            tex_gyre_program(face),
             format!("outlines/tex-gyre/{face}.pfb"),
-        ));
-        files.push((
-            format!("tex-gyre/afm/{face}.afm"),
-            format!("outlines/tex-gyre/{face}.afm"),
         ));
     }
     files.push((
@@ -297,6 +307,22 @@ fn extract(
     }
 }
 
+/// The metric table of the program in `bytes`, rendered as the file to
+/// commit; every advance that had to be rounded is printed.
+fn derive_table(face: &str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let source = format!("{face}.pfb");
+    let font = parse_file(bytes).map_err(|e| format!("{source}: {e}"))?;
+    let derived = MetricTable::derive(&font).map_err(|e| format!("{source}: {e}"))?;
+    for (name, advance) in &derived.rounded {
+        println!(
+            "rounded   {}: /{name} {advance} to {}",
+            tex_gyre_table(face),
+            advance.round()
+        );
+    }
+    Ok(derived.table.render(&source).into_bytes())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {
     /// Committed, identical to upstream, listed with that checksum.
@@ -312,12 +338,14 @@ enum Status {
 struct Audit {
     dest: String,
     status: Status,
+    /// What the file should hold: the upstream member or the derived table.
+    bytes: Vec<u8>,
     upstream: String,
     committed: Option<String>,
 }
 
-fn audit(root: &Path, listed: &BTreeMap<String, String>, dest: &str, bytes: &[u8]) -> Audit {
-    let upstream = hex_digest(bytes);
+fn audit(root: &Path, listed: &BTreeMap<String, String>, dest: &str, bytes: Vec<u8>) -> Audit {
+    let upstream = hex_digest(&bytes);
     let committed = std::fs::read(dest_path(root, dest))
         .ok()
         .map(|b| hex_digest(&b));
@@ -330,6 +358,7 @@ fn audit(root: &Path, listed: &BTreeMap<String, String>, dest: &str, bytes: &[u8
     Audit {
         dest: dest.to_string(),
         status,
+        bytes,
         upstream,
         committed,
     }
@@ -361,19 +390,26 @@ fn fetch(check: bool, force: bool) -> Result<bool, String> {
     let work = root.join("target").join("fetch-fonts");
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let listed = provenance(&root);
+    let extracted = work.join("extract");
     let mut audits = Vec::new();
     for upstream in &UPSTREAMS {
         let archive = download(upstream, &work)?;
         let files = files_of(upstream);
         let members: Vec<String> = files.iter().map(|(m, _)| m.clone()).collect();
-        let extracted = work.join("extract");
         extract(upstream, &archive, &extracted, &members)?;
         for (member, dest) in &files {
             let path = extracted.join(member);
             let bytes = std::fs::read(&path)
                 .map_err(|e| format!("{member} not extracted from {}: {e}", upstream.file))?;
-            audits.push(audit(&root, &listed, dest, &bytes));
+            audits.push(audit(&root, &listed, dest, bytes));
         }
+    }
+    for face in TEX_GYRE_FACES {
+        let member = tex_gyre_program(face);
+        let bytes = std::fs::read(extracted.join(&member))
+            .map_err(|e| format!("{member} not extracted: {e}"))?;
+        let table = derive_table(face, &bytes)?;
+        audits.push(audit(&root, &listed, &tex_gyre_table(face), table));
     }
     let mut rows = Vec::new();
     let mut failed = false;
@@ -395,9 +431,7 @@ fn fetch(check: bool, force: bool) -> Result<bool, String> {
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
                 }
-                let member = audits_member(&a.dest);
-                let source = work.join("extract").join(member);
-                std::fs::copy(&source, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+                std::fs::write(&path, &a.bytes).map_err(|e| format!("{}: {e}", path.display()))?;
                 println!("wrote     {}", a.dest);
                 rows.push(a);
             }
@@ -426,23 +460,14 @@ fn fetch(check: bool, force: bool) -> Result<bool, String> {
     Ok(!failed)
 }
 
-/// The extracted member behind a destination, found by its listing.
-fn audits_member(dest: &str) -> String {
-    UPSTREAMS
-        .iter()
-        .flat_map(files_of)
-        .find(|(_, d)| d == dest)
-        .map(|(member, _)| member)
-        .expect("every destination has a member")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn every_destination_is_unique_and_the_tex_gyre_list_is_complete() {
-        let all: Vec<(String, String)> = UPSTREAMS.iter().flat_map(files_of).collect();
+        let mut all: Vec<(String, String)> = UPSTREAMS.iter().flat_map(files_of).collect();
+        all.extend(TEX_GYRE_FACES.map(|face| (tex_gyre_program(face), tex_gyre_table(face))));
         let mut dests: Vec<&str> = all.iter().map(|(_, d)| d.as_str()).collect();
         dests.sort_unstable();
         let count = dests.len();
@@ -451,7 +476,8 @@ mod tests {
         assert_eq!(count, 13 + 21 * 2 + 1 + 6 + 2);
         assert!(all.iter().any(|(m, d)| m == "tex-gyre/type1/qzcmi.pfb"
             && d == "outlines/tex-gyre/qzcmi.pfb"));
-        assert_eq!(audits_member("LICENSES/OFL-1.1.txt"), "OFL-1.1.txt");
+        assert_eq!(tex_gyre_table("qzcmi"), "outlines/tex-gyre/qzcmi.metrics");
+        assert!(!all.iter().any(|(m, _)| m.ends_with(".afm")));
     }
 
     #[test]
@@ -467,5 +493,17 @@ mod tests {
             dest_path(&root, "outlines/liberation/LICENSE")
                 .ends_with("crates/ps-fonts/data/outlines/liberation/LICENSE")
         );
+    }
+
+    #[test]
+    fn a_derived_table_is_the_programs_own_metrics() {
+        use ps_fonts::testing::{Type1Font, rectangle};
+        let font = Type1Font::new("Syn").glyph("a", 600, &rectangle(0.0, 0.0, 500.0, 500.0));
+        let table = derive_table("syn", &font.pfb()).unwrap();
+        let text = String::from_utf8(table).unwrap();
+        assert!(text.starts_with("metrics/1\n"));
+        assert!(text.contains("from syn.pfb\n"));
+        assert!(text.ends_with("w /.notdef 0\nw /a 600\n"));
+        assert!(derive_table("bad", b"not a font").is_err());
     }
 }

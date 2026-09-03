@@ -16,28 +16,8 @@ use crate::truetype::write::{self, Table};
 use crate::type1::write::encrypt_section_binary;
 use crate::type1::{CHARSTRING_KEY, EEXEC_KEY, Type1Dict, Type1Program, encrypt};
 
+pub use crate::type1::charstring::encode_number;
 pub use crate::type1::write::TRAILER;
-
-/// Appends `v` in the charstring number encoding.
-pub fn encode_number(v: i32, out: &mut Vec<u8>) {
-    match v {
-        -107..=107 => out.push((v + 139) as u8),
-        108..=1131 => {
-            let w = v - 108;
-            out.push((w / 256 + 247) as u8);
-            out.push((w % 256) as u8);
-        }
-        -1131..=-108 => {
-            let w = -v - 108;
-            out.push((w / 256 + 251) as u8);
-            out.push((w % 256) as u8);
-        }
-        _ => {
-            out.push(255);
-            out.extend_from_slice(&v.to_be_bytes());
-        }
-    }
-}
 
 /// A charstring assembled operator by operator.
 #[derive(Clone, Debug, Default)]

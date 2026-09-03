@@ -6,11 +6,11 @@ vault's `SHA256SUMS` by `tests/provenance.rs` whenever `EFTERSCRIPT_HELLBOX`
 names a checkout. The `outlines/` assets never passed through the vault:
 they are freely redistributable releases fetched straight from upstream by
 `cargo xtask fetch-fonts`, which verifies each archive's checksum, extracts
-exactly the files listed here, and audits them against this note
-(`--check`). Every file below is hashed by `tests/provenance.rs` on every
-run. Nothing here is a build dependency on the vault or the network: the
-files are embedded with `include_str!`/`include_bytes!` and the crate
-builds without either.
+exactly the files listed here, derives the metric tables beside the TeX
+Gyre programs, and audits everything against this note (`--check`). Every
+file below is hashed by `tests/provenance.rs` on every run. Nothing here
+is a build dependency on the vault or the network: the files are embedded
+with `include_str!`/`include_bytes!` and the crate builds without either.
 
 Table paths are relative to this directory, except those under
 `LICENSES/`, which name the repository's licence-text copies.
@@ -117,18 +117,20 @@ Table paths are relative to this directory, except those under
 | `outlines/liberation/LiberationSerif-Italic.ttf` | `0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e` |
 | `outlines/liberation/LiberationSerif-Regular.ttf` | `058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74` |
 
-## `outlines/tex-gyre/` — TeX Gyre Type 1 outlines, metrics, licence, manifests
+## `outlines/tex-gyre/` — TeX Gyre Type 1 outlines, licence, manifests
 
-- Files: `<face>.pfb` and `<face>.afm` for the twenty-one faces
+- Files: `<face>.pfb` for the twenty-one faces
   `qag{r,ri,b,bi}` (Adventor), `qbk{r,ri,b,bi}` (Bonum),
   `qcs{r,ri,b,bi}` (Schola), `qpl{r,ri,b,bi}` (Pagella), `qzcmi`
   (Chorus), `qhvc{r,ri,b,bi}` (Heros Condensed); `GUST-FONT-LICENSE.txt`;
   and `MANIFEST-TeX-Gyre-{Adventor,Bonum,Chorus,Heros,Pagella,Schola}.txt`.
+  The `.metrics` table beside each program is derived data, listed in
+  the next section.
 - Source: the TeX Gyre collection as distributed by CTAN,
   `https://mirrors.ctan.org/fonts/tex-gyre.zip` (SHA-256
   `1773c470f9e388e087b68e3426e115af2cd236845a7e05ceb25b2a503409a7a3`),
-  members `tex-gyre/type1/*.pfb`, `tex-gyre/afm/*.afm`, and
-  `tex-gyre/doc/*.txt`. The collection carries no single version: each
+  members `tex-gyre/type1/*.pfb` and `tex-gyre/doc/*.txt`. The
+  collection carries no single version: each
   family states its own in its font headers and manifest — Adventor
   2.501, Pagella 2.501, Bonum 2.004, Schola 2.005, Chorus 2.003, Heros
   2.004 — and the provenance test checks each manifest against its
@@ -143,12 +145,13 @@ Table paths are relative to this directory, except those under
   them, so the request does not apply. Copyright 2007–2018 for the TeX
   Gyre extensions by B. Jackowski, J.M. Nowacki, et al. (GUST e-foundry),
   as each file's `Notice` states.
-- Use: outlines and metrics for the twenty-one LaserWriter faces of the
-  resident set (AvantGarde, Bookman, NewCenturySchlbk, Palatino,
-  ZapfChancery, Helvetica-Narrow). The `.afm` widths are the width
-  authority for those faces; the `.pfb` programs are parsed by
-  `type1::parse_file` and embedded as subsets in the PDF output under
-  their TeX Gyre names.
+- Use: outlines for the twenty-one LaserWriter faces of the resident set
+  (AvantGarde, Bookman, NewCenturySchlbk, Palatino, ZapfChancery,
+  Helvetica-Narrow). The `.pfb` programs are parsed by
+  `type1::parse_file`, embedded as subsets in the PDF output under their
+  TeX Gyre names (with the subroutines no kept glyph reaches replaced by
+  stubs), and are the source of the derived metric tables below, which
+  are the width authority for those faces.
 
 | File | SHA-256 |
 |---|---|
@@ -159,48 +162,77 @@ Table paths are relative to this directory, except those under
 | `outlines/tex-gyre/MANIFEST-TeX-Gyre-Heros.txt` | `3263a067e409258be34027de883e618cc2c76c70135897835f65f3c569dec5d1` |
 | `outlines/tex-gyre/MANIFEST-TeX-Gyre-Pagella.txt` | `6ac4bc1448a1d71a3a7ad5fd13566f00855b37ca4db5b20451c88806ac3f5242` |
 | `outlines/tex-gyre/MANIFEST-TeX-Gyre-Schola.txt` | `db7d5f23bc3e684e81ed3f95e65b888b9e184f7002cdf6eb772ad8d7879ad5f6` |
-| `outlines/tex-gyre/qagb.afm` | `24846d8b63a478971f4dbc36e0461a0f131d21d828fd7e1d5cd327dc5a717cd0` |
 | `outlines/tex-gyre/qagb.pfb` | `39c2d6300620d8189915351d0e07276f3bbf95f9f346d1dbf46b8d2045aaec69` |
-| `outlines/tex-gyre/qagbi.afm` | `4863a874b631c7eacf04ca1410a44efe3e2849c6533256bfda4f173ed8c8db43` |
 | `outlines/tex-gyre/qagbi.pfb` | `c79838ffb851220844f4ddbed0d80a4c370f1a32643ba0479c7e6b89a40cde0a` |
-| `outlines/tex-gyre/qagr.afm` | `835fbfb312a485a8125b9712b135b2f089c0a948dc900385f9efa35045e5dd44` |
 | `outlines/tex-gyre/qagr.pfb` | `3ec36824b2b8d1e97657318b6b335e9189286d0995b1278d369dc088545fdd4d` |
-| `outlines/tex-gyre/qagri.afm` | `da0a83f2fa5bed6fdb7c7a42ca851a21abc12cad00ad71ea0f08cfa91ffe1f70` |
 | `outlines/tex-gyre/qagri.pfb` | `5b5d46d12373ab0da8121efd4e476a25178eb645b8d8e35988e3637e06888aa2` |
-| `outlines/tex-gyre/qbkb.afm` | `94cc7af5c95b0a255e87aa6f5f734d230a38d1ce5acad8c0c3391814c4473e9c` |
 | `outlines/tex-gyre/qbkb.pfb` | `53b5cf1527e3578cb04a6fb5a6ef2aa53fe8bb4fc16f6348303118144f3df29f` |
-| `outlines/tex-gyre/qbkbi.afm` | `365eb1c9f2316f8f854564276b0702af701e3eaa0404447c2a2d78778aa4b9a6` |
 | `outlines/tex-gyre/qbkbi.pfb` | `cae45a6941167a9179b6036e01befaf9270ce8cee525f4cef2dc99e4a0498dde` |
-| `outlines/tex-gyre/qbkr.afm` | `6e62d462c5975f0931e77b62a8c23f500dc147b3b16d33e52ade14a4318ee438` |
 | `outlines/tex-gyre/qbkr.pfb` | `ba3698cd56b3434239d415d2a4f4aa0fbafc83738d6887736cfc992f592fe326` |
-| `outlines/tex-gyre/qbkri.afm` | `8a3be3939f4ca993c7d5a83c222a012793783cd43234a4ac9dca9233a9884968` |
 | `outlines/tex-gyre/qbkri.pfb` | `610db05006d413f0b321114d781594f6f952b4d505d9f2988ef6b536d4a728c6` |
-| `outlines/tex-gyre/qcsb.afm` | `fc3f9d443526e1460abad0d78d2c0bc01b5a6d66f257325cb490de54efa843b6` |
 | `outlines/tex-gyre/qcsb.pfb` | `b7c14c4c57aba88e4a3f25fe29aa65c8fb7b6ec68550043b5fd12e47974dcf9b` |
-| `outlines/tex-gyre/qcsbi.afm` | `db15ff0b3aa519f1a8239fb7cfa4fc7be6a7ebd44dfee6feead03bb92bc6fea6` |
 | `outlines/tex-gyre/qcsbi.pfb` | `f769e241ec293960caf05b2507887c32ca3674c0196949d0c032d3e833b629e0` |
-| `outlines/tex-gyre/qcsr.afm` | `9118a311df0bbb368ff677e08f07ee1c24a7d8bdd24c154b1c8bebe6abcf0ad8` |
 | `outlines/tex-gyre/qcsr.pfb` | `c246b0bb606a1a5bb72df1967c550c107ffb4fbfecb005c855773880f7af7d74` |
-| `outlines/tex-gyre/qcsri.afm` | `edda57b310bb4f124f6147a75cee223cff6c72a0ffcc2c2a7da197174769be09` |
 | `outlines/tex-gyre/qcsri.pfb` | `4014a5b92b6004bdd4d8dc677031c763f1410bca07601e7aa0d7cc305e85056a` |
-| `outlines/tex-gyre/qhvcb.afm` | `d49bba56b61b289bc4f69e4f7ba4a7d8d9c4315e64f33f5b4a966427394a5788` |
 | `outlines/tex-gyre/qhvcb.pfb` | `757a354a8fbfaeae65bfa14f6dc46e23e0462fa986ed7307bc7f1394ac972a8d` |
-| `outlines/tex-gyre/qhvcbi.afm` | `bcbde7dc87058c5ba92631f0e1a0d73fd4a9e2bd1fc703fde5fa9d8a5e458e58` |
 | `outlines/tex-gyre/qhvcbi.pfb` | `a4599bb73b1100184169adf12c729563d78883d12f7629b530542e26c0d58553` |
-| `outlines/tex-gyre/qhvcr.afm` | `cf125e65d8b2a6c06854602bcec8767fdc9f208ea967cd763c6482ad8708b444` |
 | `outlines/tex-gyre/qhvcr.pfb` | `3733c6ce08b3278df4ea179d40faa7802eefe6b70ceb40fcb345b4e50f1613ae` |
-| `outlines/tex-gyre/qhvcri.afm` | `a5c6ce208609e36ad741871b9a60a5ebc88c320e37ccf2390b61f0a1b9c39dff` |
 | `outlines/tex-gyre/qhvcri.pfb` | `1814794ac4c10e3d2128fb9aa3e560ca7568bf273bd87b6f3002b0d80c76d3e9` |
-| `outlines/tex-gyre/qplb.afm` | `9ad0d982c76c1062c24ef58bce34f048558ca35e679e7687872ad61e3be3df03` |
 | `outlines/tex-gyre/qplb.pfb` | `0d8fafc4afb8ae7118cec522cd7c0d3016051feeb246c20b3a52d8b39a297aa1` |
-| `outlines/tex-gyre/qplbi.afm` | `22bc2fffd4600855d1aa115fda89dbe82277abb4a995a6235a3486aa66dfc7c1` |
 | `outlines/tex-gyre/qplbi.pfb` | `78d47ab576f36bce872987fac87aa34a3db32fbbc111e3a553937ae3a323635e` |
-| `outlines/tex-gyre/qplr.afm` | `74f75c9dc72bceec700dc1d800ea360d5d06a495cf1bb2c96b065097110f6d0f` |
 | `outlines/tex-gyre/qplr.pfb` | `8d422717983976fc42ddaf796ab001d0ac611dd5f161df5ffd32a1a30288e9d8` |
-| `outlines/tex-gyre/qplri.afm` | `bc31b48f7ed0009ecce1e892a3c510c6f9aa5dc7281f87aad08e56f3cb59d27d` |
 | `outlines/tex-gyre/qplri.pfb` | `3d815ef31b565c14fc620886f033fdb900e7b026afba64fd3dc91b543f0aa622` |
-| `outlines/tex-gyre/qzcmi.afm` | `bea53a868327b464bb9f48f38016544e3e92d3a7e2fef3f0072235f9a210f394` |
 | `outlines/tex-gyre/qzcmi.pfb` | `c0dd65cb3380efc9b5b0ae8db9b17280bcfcb20f3582994f49eb6e68e4d20327` |
+
+## `outlines/tex-gyre/*.metrics` — metric tables derived from the programs
+
+- Files: `<face>.metrics` for the twenty-one faces above, one beside
+  each `.pfb`.
+- Source: generated by `cargo xtask fetch-fonts` from the `.pfb` of the
+  same stem (its SHA-256 is in the table above): the program's
+  `FontBBox`, its `Encoding`, and every charstring's advance as the
+  charstring interpreter computes it — format `metrics/1`, read and
+  written by `ps_fonts::metrics`. Thirty-four advances in ten faces are
+  computed with `div` and are not integral; the tables carry them
+  rounded to the nearest unit (`tie`, `undertie`, `undertieinverted` in
+  the Bonum, Schola, and Heros Condensed italics; `hyphen.alt`,
+  `hyphendbl.alt` in the Schola and Heros Condensed faces), which is the
+  value the upstream `.afm` files gave them. Every width, box, and
+  encoding entry equals the upstream `.afm` files, which are therefore
+  no longer shipped. Generated 2026-09-03.
+- Grant: the tables are the project's own derived data, under the
+  repository's MIT licence, with the SPDX header in their comment lines;
+  they carry widths, not outlines. `REUSE.toml` names the upstream files
+  by extension so the tables keep their own licence.
+- Use: glyph widths, font bounding box, and file encoding for the
+  twenty-one LaserWriter faces, included whether or not the outlines
+  are. `tests/resident_assets.rs` regenerates every table from its
+  program and requires byte identity; `cargo xtask fetch-fonts --check`
+  audits the same way.
+
+| File | SHA-256 | Derived from |
+|---|---|---|
+| `outlines/tex-gyre/qagb.metrics` | `52e766ccd0cf4be228cf508a4216a14ebba5233c6d632e25fb1292e2f4752dd1` | `qagb.pfb` |
+| `outlines/tex-gyre/qagbi.metrics` | `5b889cc1d0a103003f882e1262a71803e04d8622810cdf6d929073ed327b43e2` | `qagbi.pfb` |
+| `outlines/tex-gyre/qagr.metrics` | `8f3687e7211764d9fb650c5402dd32aa1054e4a98365bfc3dd0787268b8ababe` | `qagr.pfb` |
+| `outlines/tex-gyre/qagri.metrics` | `2b06149ab0172aadf95508942c9ca5b2c556548a9f5939be6f37a2e4cd404da8` | `qagri.pfb` |
+| `outlines/tex-gyre/qbkb.metrics` | `a3761501147b293876a2f1055261cc0525b5b945a6a0b03659bd64492e229263` | `qbkb.pfb` |
+| `outlines/tex-gyre/qbkbi.metrics` | `f81861883d7016e180909417334b2c6bb3ac0046d478e501128ad7a78403ce71` | `qbkbi.pfb` |
+| `outlines/tex-gyre/qbkr.metrics` | `cdaec53bac5daeaaf5cc8f43af6a827b3cf9832e58b91edd97b1848674fc6799` | `qbkr.pfb` |
+| `outlines/tex-gyre/qbkri.metrics` | `0ff6c0e1faa1db0d9940a25367b80f2f1f0d01cdb4556b28189fb611ef5bc41c` | `qbkri.pfb` |
+| `outlines/tex-gyre/qcsb.metrics` | `dfa375fac58b2a01b186bce466129a3cf613f113c436dd4b73d3ad30f6aae767` | `qcsb.pfb` |
+| `outlines/tex-gyre/qcsbi.metrics` | `11dba4a75d043fef3731c6e53a2d771d7b73a9bbf383e278d07dce490589ddd6` | `qcsbi.pfb` |
+| `outlines/tex-gyre/qcsr.metrics` | `92b3ce4acc3a0e79d17a54fcb7d47cfb58e14c7f8ded5db490a23ac47bc62eea` | `qcsr.pfb` |
+| `outlines/tex-gyre/qcsri.metrics` | `fc0890038c5660b266ca14897a527355d440766a30ac4c84ace74afb215aab42` | `qcsri.pfb` |
+| `outlines/tex-gyre/qhvcb.metrics` | `b0a4d9405b77af98ad7bc9c1158f5c4a56089ad7abca221ab9fd8e0fd1608c26` | `qhvcb.pfb` |
+| `outlines/tex-gyre/qhvcbi.metrics` | `aa2244ffeb0969d9ffefe032086bfe69f238fafefde522770db53180716bacfb` | `qhvcbi.pfb` |
+| `outlines/tex-gyre/qhvcr.metrics` | `2ea3503a1efa590a4da7630d3e14f1ecd84cedcfe1e5c24199e9581cb95cede5` | `qhvcr.pfb` |
+| `outlines/tex-gyre/qhvcri.metrics` | `29e6c01b6dd7631cb25e76dfb97ae7c9fa3c6b6db99b2133e2dffd479dc41c13` | `qhvcri.pfb` |
+| `outlines/tex-gyre/qplb.metrics` | `0d0c8c918b6b9748f5dbc2f3c03e8b8ab501b4fa4ed7160c708f48a15c47fba9` | `qplb.pfb` |
+| `outlines/tex-gyre/qplbi.metrics` | `48a52a91ee873c523eabc3adbdc12dc2639c43c90a567c5ac9ef046bacd4ea2a` | `qplbi.pfb` |
+| `outlines/tex-gyre/qplr.metrics` | `313ce72e3d76088e953f9b2a4f5f238c2495456062d715943e6ef3c1659ab772` | `qplr.pfb` |
+| `outlines/tex-gyre/qplri.metrics` | `0c1f52f7496bf2db0643478a980a3a46f9140162ec135bf3342668a49cc6a9f2` | `qplri.pfb` |
+| `outlines/tex-gyre/qzcmi.metrics` | `212eb2b6c266e7498fb0d4878a15599d31ef2fab519d4dbcbcc1e704fdcb9694` | `qzcmi.pfb` |
 
 ## `LICENSES/` — the licence texts for REUSE
 

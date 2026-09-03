@@ -296,13 +296,12 @@ fn flags(base: ResidentFace) -> i64 {
     const SYMBOLIC: i64 = 1 << 2;
     const NONSYMBOLIC: i64 = 1 << 5;
     const ITALIC: i64 = 1 << 6;
-    let metrics = base.metrics();
     let mut flags = if base.is_symbolic() {
         SYMBOLIC
     } else {
         NONSYMBOLIC
     };
-    if metrics.is_fixed_pitch {
+    if base.metrics().afm().is_some_and(|afm| afm.is_fixed_pitch) {
         flags |= FIXED_PITCH;
     }
     if base.family().is_serif() {
@@ -319,22 +318,30 @@ fn write_descriptor<W: Write>(
     base: ResidentFace,
 ) -> Result<Ref, pdf_out::Error> {
     let metrics = base.metrics();
-    let [_, lly, _, ury] = metrics.font_bbox;
+    let bbox = metrics.bbox();
+    let [_, lly, _, ury] = bbox;
+    // The fourteen carry the AFM's descriptor values. An extra face is
+    // written unembedded only by a build without its outline asset, and
+    // its derived table has widths, box, and encoding alone.
+    let afm = metrics.afm();
     let r = doc.alloc();
     doc.write_obj(r, |v| {
         v.dict(|d| {
             d.key("Type").name("FontDescriptor");
             d.key("FontName").name(base.postscript_name());
             d.key("Flags").int(flags(base));
-            d.key("FontBBox")
-                .array(|a| put_bounds(a, metrics.font_bbox));
-            d.key("ItalicAngle").real(metrics.italic_angle);
-            d.key("Ascent").real(metrics.ascender.unwrap_or(ury));
-            d.key("Descent").real(metrics.descender.unwrap_or(lly));
-            if let Some(cap_height) = metrics.cap_height {
+            d.key("FontBBox").array(|a| put_bounds(a, bbox));
+            d.key("ItalicAngle")
+                .real(afm.map_or(0.0, |afm| afm.italic_angle));
+            d.key("Ascent")
+                .real(afm.and_then(|afm| afm.ascender).unwrap_or(ury));
+            d.key("Descent")
+                .real(afm.and_then(|afm| afm.descender).unwrap_or(lly));
+            if let Some(cap_height) = afm.and_then(|afm| afm.cap_height) {
                 d.key("CapHeight").real(cap_height);
             }
-            d.key("StemV").real(metrics.std_vw.unwrap_or(0.0));
+            d.key("StemV")
+                .real(afm.and_then(|afm| afm.std_vw).unwrap_or(0.0));
         });
     })?;
     Ok(r)

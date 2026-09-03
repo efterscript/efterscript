@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! The data files are what `PROVENANCE.md` says they are: every file's
-//! SHA-256 matches its entry there, every entry names an existing file,
+//! SHA-256 matches its entry there — the fetched assets and the metric
+//! tables derived from them alike — every entry names an existing file,
 //! and each outline set's licence file sits beside its fonts with the
 //! plain licence text under `LICENSES/`. The files promoted from the
 //! vault are also compared with the vault's `SHA256SUMS` when
@@ -181,7 +182,6 @@ fn fetched() -> Vec<String> {
     files.push("outlines/liberation/LICENSE".to_string());
     for stem in TEX_GYRE {
         files.push(format!("outlines/tex-gyre/{stem}.pfb"));
-        files.push(format!("outlines/tex-gyre/{stem}.afm"));
     }
     files.push("outlines/tex-gyre/GUST-FONT-LICENSE.txt".to_string());
     for family in TEX_GYRE_MANIFESTS {
@@ -189,6 +189,23 @@ fn fetched() -> Vec<String> {
     }
     files.push("LICENSES/OFL-1.1.txt".to_string());
     files.push("LICENSES/LPPL-1.3c.txt".to_string());
+    files
+}
+
+/// The metric tables derived from the TeX Gyre programs at intake, by
+/// provenance path.
+fn derived() -> Vec<String> {
+    TEX_GYRE
+        .iter()
+        .map(|stem| format!("outlines/tex-gyre/{stem}.metrics"))
+        .collect()
+}
+
+/// Every file the provenance must list.
+fn listed_files() -> Vec<String> {
+    let mut files: Vec<String> = VAULTED.iter().map(|(local, _)| local.to_string()).collect();
+    files.extend(fetched());
+    files.extend(derived());
     files
 }
 
@@ -251,9 +268,7 @@ fn promoted_files_match_the_vault_checksums() {
 #[test]
 fn provenance_note_lists_every_file_with_its_checksum() {
     let note = note();
-    let mut listed: Vec<String> = VAULTED.iter().map(|(local, _)| local.to_string()).collect();
-    listed.extend(fetched());
-    for local in &listed {
+    for local in &listed_files() {
         let bytes = std::fs::read(located(local)).unwrap_or_else(|e| panic!("{local}: {e}"));
         let sum = hex(&sha256(&bytes));
         assert!(
@@ -291,8 +306,7 @@ fn every_provenance_entry_names_an_existing_file_and_nothing_is_unlisted() {
         assert_eq!(hex(&sha256(&bytes)), sum, "{path}");
         entries.push(path.to_string());
     }
-    let mut expected: Vec<String> = VAULTED.iter().map(|(local, _)| local.to_string()).collect();
-    expected.extend(fetched());
+    let mut expected = listed_files();
     expected.sort();
     entries.sort();
     assert_eq!(entries, expected);
@@ -368,17 +382,28 @@ fn licence_files_sit_beside_the_fonts_and_the_texts_are_in_licenses() {
         )
         .unwrap();
         assert!(manifest.contains(family), "{family}");
-        let afm = std::fs::read_to_string(data_dir().join(format!("outlines/tex-gyre/{stem}.afm")))
-            .unwrap();
-        let version = |text: &str, key: &str| -> String {
-            text.lines()
-                .find_map(|l| l.strip_prefix(key))
-                .map(|v| v.trim().to_string())
-                .unwrap_or_else(|| panic!("{family}: no {key}"))
-        };
+        let manifest_version = manifest
+            .lines()
+            .find_map(|l| l.strip_prefix("Version:"))
+            .map(|v| v.trim().to_string())
+            .unwrap_or_else(|| panic!("{family}: no Version:"));
+        let bytes =
+            std::fs::read(data_dir().join(format!("outlines/tex-gyre/{stem}.pfb"))).unwrap();
+        let font = ps_fonts::type1::parse_file(&bytes).unwrap();
+        let font_version = font
+            .program
+            .dict()
+            .font_info
+            .iter()
+            .find(|(key, _)| key == b"version")
+            .map(|(_, value)| {
+                String::from_utf8_lossy(value)
+                    .trim_matches(|c| c == '(' || c == ')')
+                    .to_string()
+            })
+            .unwrap_or_else(|| panic!("{family}: no FontInfo version"));
         assert_eq!(
-            version(&manifest, "Version:"),
-            version(&afm, "Version "),
+            manifest_version, font_version,
             "{family} manifest names another release"
         );
     }
