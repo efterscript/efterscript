@@ -56,7 +56,7 @@ for the text fonts, the font's own for Symbol and ZapfDingbats).
 characters through the current encoding, transformed by the font matrix
 into user space, and the `show` family SHALL advance the current point
 by the same amount; the fourteen measure with the Core 14 metrics and
-the twenty-one with the TeX Gyre metrics.
+the twenty-one with metric tables derived from their outline programs.
 
 #### Scenario: Helvetica widths
 
@@ -78,8 +78,8 @@ the twenty-one with the TeX Gyre metrics.
 #### Scenario: An extra face measures with its own metrics
 
 - **GIVEN** `/Palatino-Roman findfont 10 scalefont setfont (a) stringwidth`
-- **THEN** the results printed are the TeX Gyre Pagella `a` width at
-  size 10 (`5 0`), not Times-Roman's `4.44 0`
+- **THEN** the results printed are the Pagella `a` width at size 10
+  (`5 0`), not Times-Roman's `4.44 0`
 
 ### Requirement: Font name substitution
 
