@@ -36,9 +36,10 @@ pub(crate) enum FontKind {
     Resident(ResidentFace),
     /// `BuildGlyph` (glyph names) or `BuildChar` (codes) is run per glyph.
     Type3 { build: Object, by_name: bool },
-    /// A Type 1 or Type 42 program the job defined; `scale` takes the
-    /// program's glyph units to the space the font matrix maps (one for
-    /// charstring units, the reciprocal of the units per em for TrueType).
+    /// A Type 1, Type 2 (CFF), or Type 42 program the job defined;
+    /// `scale` takes the program's glyph units to the space the font
+    /// matrix maps (one for charstring units, the reciprocal of the units
+    /// per em for TrueType).
     Embedded { program: Rc<Program>, scale: f32 },
 }
 
@@ -160,7 +161,7 @@ pub(crate) fn font_kind(i: &mut Interp, dict: Object) -> Result<FontKind, VmErro
                 Err(VmError::InvalidFont)
             }
         }
-        Some(1 | 42) => {
+        Some(1 | 2 | 42) => {
             let resident = entry(i, dict, "ResidentFont")?
                 .and_then(Object::as_i32)
                 .and_then(|n| usize::try_from(n).ok())

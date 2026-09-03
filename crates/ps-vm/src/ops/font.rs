@@ -95,7 +95,7 @@ pub(crate) fn encoding_array(mem: &mut Memory, table: &Encoding) -> Result<Objec
 /// a matrix, a full encoding, and for Type 3 a glyph procedure.
 fn validate(i: &mut Interp, font: Object) -> Result<(), VmError> {
     let font_type = entry(i, font, "FontType")?.and_then(Object::as_i32);
-    if !matches!(font_type, Some(1 | 3 | 42)) {
+    if !matches!(font_type, Some(1 | 2 | 3 | 42)) {
         return Err(VmError::InvalidFont);
     }
     let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
@@ -215,7 +215,8 @@ pub(crate) fn resident(i: &mut Interp, font: ResidentFace) -> Result<Object, VmE
     Ok(dict)
 }
 
-fn number(value: f32) -> Object {
+/// A number object: an integer when the value is integral.
+pub(crate) fn number(value: f32) -> Object {
     if value == value.trunc() && value.abs() < 1e9 {
         Object::integer(value as i32)
     } else {

@@ -29,6 +29,8 @@ pub(crate) fn snapshot(i: &mut Interp, dict: Object) -> Result<Program, VmError>
     match entry(i, dict, "FontType")?.and_then(Object::as_i32) {
         Some(1) => type1(i, dict),
         Some(42) => type42(i, dict),
+        // A FontType 2 dictionary carries no program of its own: the one
+        // `StartData` built has its program cached before this is asked.
         _ => Err(VmError::InvalidFont),
     }
 }

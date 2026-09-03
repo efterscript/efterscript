@@ -98,6 +98,33 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The table directory of an sfnt file: each table's offset and length,
+/// checked to lie within `bytes`. A collection is refused.
+pub fn table_directory(bytes: &[u8]) -> Result<BTreeMap<[u8; 4], (usize, usize)>, FontError> {
+    let mut r = Reader::new(bytes, "table directory");
+    let tag = r.take(4)?;
+    if tag == b"ttcf" {
+        return Err(FontError::Malformed("font collection"));
+    }
+    let num_tables = r.u16()?;
+    r.skip(6)?;
+    let mut tables = BTreeMap::new();
+    for _ in 0..num_tables {
+        let tag: [u8; 4] = r.take(4)?.try_into().expect("four bytes");
+        r.u32()?;
+        let offset = r.u32()? as usize;
+        let length = r.u32()? as usize;
+        if offset
+            .checked_add(length)
+            .is_none_or(|end| end > bytes.len())
+        {
+            return Err(FontError::Truncated("sfnt"));
+        }
+        tables.insert(tag, (offset, length));
+    }
+    Ok(tables)
+}
+
 /// A parsed TrueType program with its glyph cache.
 pub struct TrueTypeProgram {
     bytes: Vec<u8>,
@@ -134,27 +161,7 @@ impl TrueTypeProgram {
     /// when present. Glyph names come from `post` alone until
     /// [`TrueTypeProgram::with_names`] supplies the font's `CharStrings`.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, FontError> {
-        let mut r = Reader::new(&bytes, "table directory");
-        let tag = r.take(4)?;
-        if tag == b"ttcf" {
-            return Err(FontError::Malformed("font collection"));
-        }
-        let num_tables = r.u16()?;
-        r.skip(6)?;
-        let mut tables = BTreeMap::new();
-        for _ in 0..num_tables {
-            let tag: [u8; 4] = r.take(4)?.try_into().expect("four bytes");
-            r.u32()?;
-            let offset = r.u32()? as usize;
-            let length = r.u32()? as usize;
-            if offset
-                .checked_add(length)
-                .is_none_or(|end| end > bytes.len())
-            {
-                return Err(FontError::Truncated("sfnt"));
-            }
-            tables.insert(tag, (offset, length));
-        }
+        let tables = table_directory(&bytes)?;
         let table = |tag: &[u8; 4]| -> Result<&[u8], FontError> {
             let &(offset, length) = tables.get(tag).ok_or(FontError::MissingTable(*tag))?;
             Ok(&bytes[offset..offset + length])

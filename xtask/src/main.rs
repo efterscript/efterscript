@@ -16,6 +16,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "  fetch-fonts       download and audit the resident set's outline assets [--check] [--force]"
     );
+    eprintln!("                    or extract the OpenType test font into target/ [--test-assets]");
     ExitCode::from(2)
 }
 

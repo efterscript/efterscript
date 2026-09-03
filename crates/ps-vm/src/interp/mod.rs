@@ -179,6 +179,10 @@ pub struct Interp {
     /// `FontDirectory` and `GlobalFontDirectory`.
     pub(crate) font_category: Category,
     pub(crate) encoding_category: Category,
+    pub(crate) procset_category: Category,
+    pub(crate) fontset_category: Category,
+    /// The built-in `FontSetInit` procedure set.
+    pub(crate) font_set_init: Object,
     pub(crate) standard_encoding: Object,
     pub(crate) iso_latin1_encoding: Object,
     pub(crate) resident_fonts: [Option<Object>; ps_fonts::ResidentFace::COUNT],
@@ -201,6 +205,10 @@ pub struct Interp {
     // and never invalidated: a job that alters its font dictionary
     // afterwards is not followed.
     font_programs: HashMap<u32, Rc<Program>>,
+    // CID-keyed programs loaded through `StartData`, by the name the CFF
+    // gives them; nothing in the PostScript-visible font machinery
+    // refers to them until a composite font does.
+    cid_programs: HashMap<Vec<u8>, Rc<Program>>,
     next_fid: u32,
     substitutions: Vec<FontSubstitution>,
     #[allow(dead_code)]
@@ -259,6 +267,9 @@ impl Interp {
         let page_device = mem.new_dict(32);
         let global_font_directory = mem.new_dict(32);
         let global_encodings = mem.new_dict(8);
+        let global_procsets = mem.new_dict(8);
+        let global_fontsets = mem.new_dict(8);
+        let font_set_init = ops::fontset::init_dict(&mut mem).expect("fresh dictionary");
         let standard_encoding = ops::font::encoding_array(&mut mem, &ps_fonts::STANDARD_ENCODING)
             .expect("names are simple objects");
         let iso_latin1_encoding =
@@ -270,6 +281,8 @@ impl Interp {
         let error = mem.new_dict(16);
         let font_directory = mem.new_dict(32);
         let local_encodings = mem.new_dict(8);
+        let local_procsets = mem.new_dict(8);
+        let local_fontsets = mem.new_dict(8);
 
         let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
         let atoms = Atoms {
@@ -307,6 +320,15 @@ impl Interp {
                 local: local_encodings,
                 global: global_encodings,
             },
+            procset_category: Category {
+                local: local_procsets,
+                global: global_procsets,
+            },
+            fontset_category: Category {
+                local: local_fontsets,
+                global: global_fontsets,
+            },
+            font_set_init,
             standard_encoding,
             iso_latin1_encoding,
             resident_fonts: [None; ps_fonts::ResidentFace::COUNT],
@@ -316,6 +338,7 @@ impl Interp {
             defined_matrices: HashMap::new(),
             font_without_backend: None,
             font_programs: HashMap::new(),
+            cid_programs: HashMap::new(),
             next_fid: 0,
             substitutions: Vec::new(),
             quirks,
@@ -349,7 +372,7 @@ impl Interp {
             let dict = match entry.visibility {
                 Visibility::Public => dicts.systemdict,
                 Visibility::Internal => dicts.errordict,
-                Visibility::Graphics => continue,
+                Visibility::Graphics | Visibility::ProcSet => continue,
             };
             let key = self.intern(entry.name);
             let op = Object::operator(u32::try_from(index).expect("table fits in u32"));
@@ -543,7 +566,8 @@ impl Interp {
 
     /// The glyph program of a Type 1 or Type 42 font dictionary, built
     /// from its `CharStrings` (and `Private` or `sfnts`) on first use and
-    /// cached by `FID`; `invalidfont` when the dictionary has none.
+    /// cached by `FID`, or of a FontType 2 dictionary, cached when its
+    /// FontSet was loaded; `invalidfont` when the dictionary has none.
     pub fn font_program(&mut self, dict: Object) -> Result<Rc<Program>, VmError> {
         let fid = ops::font::entry(self, dict, "FID")?
             .and_then(Object::as_font_id)
@@ -554,6 +578,21 @@ impl Interp {
         let program = Rc::new(ops::embedded::snapshot(self, dict)?);
         self.font_programs.insert(fid, program.clone());
         Ok(program)
+    }
+
+    /// Caches `program` as the glyph program of the font family `fid`.
+    pub(crate) fn cache_font_program(&mut self, fid: u32, program: Rc<Program>) {
+        self.font_programs.insert(fid, program);
+    }
+
+    pub(crate) fn cache_cid_program(&mut self, name: Vec<u8>, program: Rc<Program>) {
+        self.cid_programs.insert(name, program);
+    }
+
+    /// A CID-keyed program a FontSet loaded, by the name its CFF gives
+    /// it.
+    pub fn cid_program(&self, name: &[u8]) -> Option<Rc<Program>> {
+        self.cid_programs.get(name).cloned()
     }
 
     pub(crate) fn allocate_fid(&mut self) -> Object {

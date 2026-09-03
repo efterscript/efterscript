@@ -18,6 +18,9 @@
 //!   file that differs is refused unless `--force`, which overwrites it.
 //!   Whenever something was written or a provenance entry is missing or
 //!   stale, the table rows to paste are printed.
+//! - `--test-assets` instead extracts the OpenType test font from the
+//!   TeX Gyre release into `target/test-fonts/`, where the optional CFF
+//!   test finds it; nothing is written into the repository.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -155,6 +158,11 @@ const UPSTREAMS: [Upstream; 4] = [
         files: &[src!("LPPL-1.3c.txt", "LICENSES/LPPL-1.3c.txt")],
     },
 ];
+
+/// The OpenType file the optional CFF test reads, as an archive member
+/// and as its name under `target/test-fonts`.
+pub const TEST_OPENTYPE_MEMBER: &str = "tex-gyre/opentype/texgyrepagella-regular.otf";
+pub const TEST_OPENTYPE_FILE: &str = "texgyrepagella-regular.otf";
 
 /// The archive member holding a TeX Gyre face's Type 1 program.
 fn tex_gyre_program(face: &str) -> String {
@@ -367,15 +375,21 @@ fn audit(root: &Path, listed: &BTreeMap<String, String>, dest: &str, bytes: Vec<
 pub fn run(args: &[String]) -> ExitCode {
     let check = args.iter().any(|a| a == "--check");
     let force = args.iter().any(|a| a == "--force");
+    let test_assets = args.iter().any(|a| a == "--test-assets");
     if let Some(unknown) = args
         .iter()
-        .find(|a| !matches!(a.as_str(), "--check" | "--force"))
+        .find(|a| !matches!(a.as_str(), "--check" | "--force" | "--test-assets"))
     {
         eprintln!("fetch-fonts: unknown argument `{unknown}`");
-        eprintln!("usage: cargo xtask fetch-fonts [--check] [--force]");
+        eprintln!("usage: cargo xtask fetch-fonts [--check] [--force] [--test-assets]");
         return ExitCode::from(2);
     }
-    match fetch(check, force) {
+    let result = if test_assets {
+        fetch_test_assets().map(|()| true)
+    } else {
+        fetch(check, force)
+    };
+    match result {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {
@@ -383,6 +397,32 @@ pub fn run(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Extracts the OpenType test font into `target/test-fonts/`.
+fn fetch_test_assets() -> Result<(), String> {
+    let root = workspace_root();
+    let work = root.join("target").join("fetch-fonts");
+    std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    let upstream = UPSTREAMS
+        .iter()
+        .find(|u| u.file == "tex-gyre.zip")
+        .expect("the TeX Gyre release is listed");
+    let archive = download(upstream, &work)?;
+    let extracted = work.join("extract");
+    extract(
+        upstream,
+        &archive,
+        &extracted,
+        &[TEST_OPENTYPE_MEMBER.to_string()],
+    )?;
+    let dir = root.join("target").join("test-fonts");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let dest = dir.join(TEST_OPENTYPE_FILE);
+    std::fs::copy(extracted.join(TEST_OPENTYPE_MEMBER), &dest)
+        .map_err(|e| format!("{TEST_OPENTYPE_MEMBER}: {e}"))?;
+    println!("wrote     {}", dest.display());
+    Ok(())
 }
 
 fn fetch(check: bool, force: bool) -> Result<bool, String> {

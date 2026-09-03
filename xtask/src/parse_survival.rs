@@ -6,12 +6,51 @@
 //! its `corpora/` directory. Prints one line per file and a histogram of
 //! error kinds. A failure in the public corpus is a failure of the run; the
 //! private tier is reported only.
+//!
+//! One operator is understood: an integer followed by the executable name
+//! `StartData` (a FontSet resource) is followed by that many bytes of
+//! binary font data, which the scan steps over, as the interpreter's
+//! operator reads them from the file.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use ps_vm::{Memory, ScanError, line_of, scan_all};
+use ps_vm::{Memory, Object, Scan, ScanError, Scanner, Source, Type, VmError, line_of};
+
+/// A source over a byte slice whose position can jump past binary data.
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl Source for Cursor<'_> {
+    fn peek(&mut self, _: &mut Memory) -> Result<Option<u8>, VmError> {
+        Ok(self.bytes.get(self.position).copied())
+    }
+
+    fn advance(&mut self, _: &mut Memory) {
+        if self.position < self.bytes.len() {
+            self.position += 1;
+        }
+    }
+
+    fn position(&self, _: &Memory) -> usize {
+        self.position
+    }
+
+    fn more_may_come(&self) -> bool {
+        false
+    }
+}
+
+fn is_start_data(memory: &Memory, object: Object) -> bool {
+    object.ty() == Type::Name
+        && object.is_executable()
+        && object
+            .as_name()
+            .is_some_and(|atom| memory.name_text(atom) == b"StartData")
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -25,18 +64,34 @@ pub enum Outcome {
     },
 }
 
-/// Scans `bytes` from a fresh VM with no immediate-name definitions.
+/// Scans `bytes` from a fresh VM with no immediate-name definitions,
+/// stepping over the binary data a `StartData` count announces.
 pub fn scan(bytes: &[u8]) -> Outcome {
     let mut memory = Memory::new();
-    match scan_all(bytes, &mut memory, &mut ()) {
-        Ok(tokens) => Outcome::Ok {
-            tokens: tokens.len(),
-        },
-        Err(error) => Outcome::Error {
-            kind: format!("{:?}", error.kind),
-            line: line_of(bytes, error.span.start),
-            error,
-        },
+    let mut source = Cursor { bytes, position: 0 };
+    let mut scanner = Scanner::new();
+    let mut tokens = 0;
+    let mut count: Option<usize> = None;
+    loop {
+        match scanner.next(&mut source, &mut memory, &mut ()) {
+            Ok(Scan::Token { object, .. }) => {
+                tokens += 1;
+                if is_start_data(&memory, object)
+                    && let Some(n) = count
+                {
+                    source.position = source.position.saturating_add(n).min(bytes.len());
+                }
+                count = object.as_i32().and_then(|n| usize::try_from(n).ok());
+            }
+            Ok(Scan::End | Scan::NeedMore) => return Outcome::Ok { tokens },
+            Err(error) => {
+                return Outcome::Error {
+                    kind: format!("{:?}", error.kind),
+                    line: line_of(bytes, error.span.start),
+                    error,
+                };
+            }
+        }
     }
 }
 
@@ -167,6 +222,29 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match scan(b"\x80") {
+            Outcome::Error { kind, .. } => assert_eq!(kind, "BinaryEncoding"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_data_steps_over_its_bytes() {
+        assert_eq!(
+            scan(b"/S 3 StartData\x80\x81\x82\nend 1"),
+            Outcome::Ok { tokens: 5 }
+        );
+        assert_eq!(
+            scan(b"/S 3 StartData\x80\x81\x82"),
+            Outcome::Ok { tokens: 3 }
+        );
+        assert_eq!(scan(b"/S 99 StartData\x80"), Outcome::Ok { tokens: 3 });
+        // Without a count the name is only a name.
+        match scan(b"/S StartData \x80") {
+            Outcome::Error { kind, .. } => assert_eq!(kind, "BinaryEncoding"),
+            other => panic!("{other:?}"),
+        }
+        // A literal name does not announce data.
+        match scan(b"/StartData 3 1 \x80") {
             Outcome::Error { kind, .. } => assert_eq!(kind, "BinaryEncoding"),
             other => panic!("{other:?}"),
         }

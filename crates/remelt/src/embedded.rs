@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Embedded fonts (ISO 32000-1 §9.6.2, §9.6.3, §9.8, §9.9). A Type 1 or
-//! Type 42 font the job defined becomes a `Type1` or `TrueType` font
-//! dictionary whose descriptor embeds the program restricted to the
-//! glyphs the document showed: a Type 1 program regenerated from the
-//! snapshot as `FontFile` with its three lengths, a TrueType program
-//! rewritten with a symbolic `(3,0)` cmap as `FontFile2`. The glyph set
+//! Embedded fonts (ISO 32000-1 §9.6.2, §9.6.3, §9.8, §9.9). A Type 1,
+//! FontType 2, or Type 42 font the job defined becomes a `Type1` or
+//! `TrueType` font dictionary whose descriptor embeds the program
+//! restricted to the glyphs the document showed: a Type 1 program
+//! regenerated from the snapshot as `FontFile` with its three lengths,
+//! a CFF program subset as `FontFile3` of subtype `Type1C`, a TrueType
+//! program rewritten with a symbolic `(3,0)` cmap as `FontFile2`. The glyph set
 //! is only known when the document ends, so the codes each font shows
 //! are collected page by page and the objects are written at `finish`;
 //! the font's object id is allocated at first use so pages can refer to
@@ -24,7 +25,9 @@ use std::io::Write;
 
 use pdf_out::{Document, Filter, Ref};
 use ps_fonts::type1::write::{Header, subset_names};
-use ps_fonts::{Program, ProgramKind, STANDARD_ENCODING, TrueTypeProgram, Type1Program, type1};
+use ps_fonts::{
+    Program, ProgramKind, STANDARD_ENCODING, TrueTypeProgram, Type1Program, cff, type1,
+};
 use ps_graphics::{FontSpec, GlyphNames, IrOp, Op, Page};
 use ps_vm::Matrix;
 
@@ -307,6 +310,39 @@ fn write_font<W: Write>(
                 write_descriptor(doc, &name, &descriptor, Some(("FontFile2", stream)))?;
             (name, descriptor)
         }
+        Program::Cff(cff) => {
+            let keep = cff::write::subset_names(cff, used_names(&font.spec, &font.codes));
+            let name = tagged(&subset_tag(font_name, &keep), font_name);
+            // Only a CID-keyed program cannot be subset, and the VM
+            // defines no font over one; it would be described unembedded.
+            let stream = match cff::write::subset(cff, &name, &keep) {
+                Ok(bytes) => {
+                    let stream = doc.alloc();
+                    doc.write_stream(stream, filter, &bytes, |d| {
+                        d.key("Subtype").name("Type1C");
+                    })?;
+                    Some(("FontFile3", stream))
+                }
+                Err(_) => None,
+            };
+            let flags = if is_standard(encoding) {
+                NONSYMBOLIC
+            } else {
+                SYMBOLIC
+            } | if cff.is_fixed_pitch() { FIXED_PITCH } else { 0 };
+            let descriptor = Descriptor {
+                flags,
+                bbox: pdf_bbox(cff.font_bbox(), *font_matrix),
+                italic_angle: cff.italic_angle(),
+                cap_height: None,
+                stem_v: cff
+                    .private()
+                    .and_then(|p| p.number(cff::op::STD_VW))
+                    .unwrap_or(DEFAULT_STEM_V),
+            };
+            let descriptor = write_descriptor(doc, &name, &descriptor, stream)?;
+            (name, descriptor)
+        }
     };
     let named: Vec<(u8, &[u8])> = font
         .codes
@@ -328,7 +364,7 @@ fn write_font<W: Write>(
         )?,
     };
     let differing: Vec<(u8, &[u8])> = match kind {
-        ProgramKind::Type1 => font
+        ProgramKind::Type1 | ProgramKind::Cff => font
             .codes
             .iter()
             .filter(|&&code| {
@@ -348,7 +384,7 @@ fn write_font<W: Write>(
         v.dict(|d| {
             d.key("Type").name("Font");
             d.key("Subtype").name(match kind {
-                ProgramKind::Type1 => "Type1",
+                ProgramKind::Type1 | ProgramKind::Cff => "Type1",
                 ProgramKind::TrueType => "TrueType",
             });
             d.key("BaseFont").name_bytes(&base_font);

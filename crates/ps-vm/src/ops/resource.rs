@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! The resource operators (PLRM3 §3.9) over the `Font` and `Encoding`
-//! categories. Each category has a local and a global instance
-//! dictionary selected by the allocation mode, plus its built-in
-//! instances: the resident fonts, and the two encoding arrays in
-//! `systemdict`. Other categories are `undefined`.
+//! The resource operators (PLRM3 §3.9) over the `Font`, `Encoding`,
+//! `ProcSet`, and `FontSet` categories. Each category has a local and a
+//! global instance dictionary selected by the allocation mode, plus its
+//! built-in instances: the resident fonts, the two encoding arrays in
+//! `systemdict`, and the `FontSetInit` procedure set. Other categories
+//! are `undefined`.
 
 use ps_fonts::ResidentFace;
 
@@ -27,9 +28,12 @@ op_table! { OPS {
 enum Kind {
     Font,
     Encoding,
+    ProcSet,
+    FontSet,
 }
 
 const BUILTIN_ENCODINGS: [&str; 2] = ["ISOLatin1Encoding", "StandardEncoding"];
+const BUILTIN_PROCSETS: [&str; 1] = ["FontSetInit"];
 
 /// Status of an instance defined by the program, in VM.
 const STATUS_DEFINED: i32 = 0;
@@ -41,6 +45,8 @@ fn kind(i: &Interp, category: Object) -> Result<Kind, VmError> {
     match i.mem.name_text(atom) {
         b"Font" => Ok(Kind::Font),
         b"Encoding" => Ok(Kind::Encoding),
+        b"ProcSet" => Ok(Kind::ProcSet),
+        b"FontSet" => Ok(Kind::FontSet),
         _ => Err(VmError::Undefined),
     }
 }
@@ -49,6 +55,8 @@ fn dicts(i: &Interp, kind: Kind) -> Category {
     match kind {
         Kind::Font => i.font_category,
         Kind::Encoding => i.encoding_category,
+        Kind::ProcSet => i.procset_category,
+        Kind::FontSet => i.fontset_category,
     }
 }
 
@@ -73,6 +81,8 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
             b"ISOLatin1Encoding" => Some(i.iso_latin1_encoding),
             _ => None,
         }),
+        Kind::ProcSet => Ok((name == b"FontSetInit").then_some(i.font_set_init)),
+        Kind::FontSet => Ok(None),
     }
 }
 
@@ -80,6 +90,8 @@ fn has_builtin(kind: Kind, name: &[u8]) -> bool {
     match kind {
         Kind::Font => ResidentFace::from_postscript_name(name).is_some(),
         Kind::Encoding => BUILTIN_ENCODINGS.iter().any(|e| e.as_bytes() == name),
+        Kind::ProcSet => BUILTIN_PROCSETS.iter().any(|p| p.as_bytes() == name),
+        Kind::FontSet => false,
     }
 }
 
@@ -113,7 +125,7 @@ fn resourcestatus(i: &mut Interp) -> Result<(), VmError> {
             .as_name()
             .filter(|&a| has_builtin(kind, i.mem.name_text(a)))
         {
-            Some(_) if kind == Kind::Font => Some(STATUS_RESIDENT),
+            Some(_) if matches!(kind, Kind::Font | Kind::ProcSet) => Some(STATUS_RESIDENT),
             Some(_) => Some(STATUS_DEFINED),
             None => None,
         }
@@ -141,15 +153,21 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
             }
             font::define(i, key, instance)?;
         }
-        Kind::Encoding => {
-            if !matches!(instance.ty(), Type::Array | Type::PackedArray) {
+        Kind::Encoding | Kind::ProcSet | Kind::FontSet => {
+            let wanted = match kind {
+                Kind::ProcSet => Type::Dict,
+                _ => Type::Array,
+            };
+            if instance.ty() != wanted
+                && !(wanted == Type::Array && instance.ty() == Type::PackedArray)
+            {
                 return Err(VmError::TypeCheck);
             }
-            if instance.length() != Some(256) {
+            if kind == Kind::Encoding && instance.length() != Some(256) {
                 return Err(VmError::RangeCheck);
             }
             let key = i.mem.dict_key(key)?;
-            let category = i.encoding_category;
+            let category = dicts(i, kind);
             let dict = if i.mem.current_global() {
                 category.global
             } else {
@@ -169,9 +187,9 @@ fn undefineresource(i: &mut Interp) -> Result<(), VmError> {
     let key = i.peek(1)?;
     match kind {
         Kind::Font => font::undefine(i, key)?,
-        Kind::Encoding => {
+        Kind::Encoding | Kind::ProcSet | Kind::FontSet => {
             let key = i.mem.dict_key(key)?;
-            let category = i.encoding_category;
+            let category = dicts(i, kind);
             i.mem.dict_undef(category.local, key)?;
             i.mem.dict_undef(category.global, key)?;
         }
@@ -203,6 +221,8 @@ fn names(i: &mut Interp, kind: Kind, template: &[u8]) -> Result<Vec<Vec<u8>>, Vm
             .map(|f| f.postscript_name())
             .collect(),
         Kind::Encoding => BUILTIN_ENCODINGS.to_vec(),
+        Kind::ProcSet => BUILTIN_PROCSETS.to_vec(),
+        Kind::FontSet => Vec::new(),
     };
     for name in builtins {
         if !names.iter().any(|n| n == name.as_bytes()) {

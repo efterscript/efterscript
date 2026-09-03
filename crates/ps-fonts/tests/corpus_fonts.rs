@@ -11,7 +11,8 @@
 use std::path::PathBuf;
 
 use ps_fonts::testing::{
-    TRAILER, TrueTypeFont, Type1Font, corpus_truetype, corpus_type1, eexec_binary, eexec_hex,
+    CffFont, TRAILER, TrueTypeFont, Type1Font, corpus_cff, corpus_truetype, corpus_type1,
+    eexec_binary, eexec_hex,
 };
 
 fn corpus_dir() -> PathBuf {
@@ -31,9 +32,23 @@ fn syn_tt() -> TrueTypeFont {
     corpus_truetype()
 }
 
+fn syn_cff() -> CffFont {
+    corpus_cff()
+}
+
 fn header(expect: &[&str], scenario: &str) -> String {
-    let mut out = String::from(
-        "%!PS\n\
+    header_with("%!PS", expect, scenario)
+}
+
+/// A FontSet resource file's header: the DSC resource header line, the
+/// declarations, and the scenario.
+fn font_set_header(expect: &[&str], scenario: &str) -> String {
+    header_with("%!PS-Adobe-3.0 Resource-FontSet", expect, scenario)
+}
+
+fn header_with(first: &str, expect: &[&str], scenario: &str) -> String {
+    let mut out = format!(
+        "{first}\n\
          % SPDX-FileCopyrightText: 2026 EfterScript contributors\n\
          % SPDX-License-Identifier: MIT\n",
     );
@@ -247,6 +262,96 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         )
     );
 
+    // --- FontSet files: a binary CFF program after StartData ----------------
+
+    let set = syn_cff().font_set("SynSet");
+    let mut cff_width = font_set_header(
+        &["6.0", "0.0"],
+        "% Scenario: width from a Type 2 charstring. The FontSet SynSet holds\n\
+         % the synthesised CFF font SynCFF, whose private dictionary has\n\
+         % nominal width 500 and whose glyph a encodes a width delta of 100;\n\
+         % StartData reads the binary program that follows it from this file\n\
+         % and defines SynCFF as a FontType 2 font. At size 10, (a) measures 6.\n\
+         % Expect: 6.0 and 0.0.\n",
+    )
+    .into_bytes();
+    cff_width.extend_from_slice(&set);
+    cff_width.extend_from_slice(
+        format!("{ROUND}/SynCFF findfont 10 scalefont setfont\n(a) stringwidth r exch r = =\n")
+            .as_bytes(),
+    );
+
+    let mut cff_bbox = font_set_header(
+        &["0.0", "-0.5", "6.0", "2.0"],
+        "% Scenario: flex and hint mask. Glyph f declares a horizontal stem,\n\
+         % a vertical stem through the implicit vstem before its hintmask,\n\
+         % and draws an hflex whose two curves rise to 200 units, then two\n\
+         % lines down to -50; its control box is 0..600 by -50..200, which at\n\
+         % size 10 is 0..6 by -0.5..2. The run's start and the trailing point\n\
+         % charpath leaves at the advance both lie inside that box.\n\
+         % Expect: 0.0, -0.5, 6.0, 2.0.\n",
+    )
+    .into_bytes();
+    cff_bbox.extend_from_slice(&set);
+    cff_bbox.extend_from_slice(
+        format!(
+            "{ROUND}/SynCFF findfont 10 scalefont setfont\n\
+             0 0 moveto (f) true charpath\n\
+             pathbbox 4 {{ 4 -1 roll r }} repeat\n\
+             4 -1 roll = 3 -1 roll = exch = =\n\
+             fill showpage\n"
+        )
+        .as_bytes(),
+    );
+
+    let mut fontset_defines = font_set_header(
+        &["true", "2"],
+        "% Scenario: a FontSet defines its fonts. After StartData the FontSet\n\
+         % resource SynSet exists and its one font, SynCFF, is a FontType 2\n\
+         % font in FontDirectory.\n\
+         % Expect: true and 2.\n",
+    )
+    .into_bytes();
+    fontset_defines.extend_from_slice(&set);
+    fontset_defines.extend_from_slice(
+        b"/SynSet /FontSet resourcestatus { pop pop true } { false } ifelse =\n\
+          /SynCFF findfont /FontType get =\n",
+    );
+
+    let mut cff_type1c = font_set_header(
+        &[],
+        "% Scenario: Type1C embedded. SynCFF is shown once with only a, so\n\
+         % the document holds one /Type1 font dictionary whose descriptor's\n\
+         % FontFile3 stream has /Subtype /Type1C and carries a CFF subset\n\
+         % defining exactly .notdef and a with no subroutines, since a\n\
+         % reaches none; the remelt test suite parses it back with the\n\
+         % engine and compares the outline and advance with the original's.\n",
+    )
+    .into_bytes();
+    cff_type1c.extend_from_slice(&set);
+    cff_type1c.extend_from_slice(
+        b"/SynCFF findfont 10 scalefont setfont\n100 100 moveto (a) show\nshowpage\n",
+    );
+
+    let data = syn_cff().build();
+    let mut short_data = font_set_header(
+        &[],
+        "% expect-error: invalidfont\n\
+         % Scenario: short data. StartData declares more bytes than the file\n\
+         % holds after it, so the read ends early and the error is\n\
+         % invalidfont, with nothing defined.\n\
+         % Expect: invalidfont.\n",
+    )
+    .into_bytes();
+    short_data.extend_from_slice(
+        format!(
+            "/FontSetInit /ProcSet findresource begin\n/Short {} StartData\n",
+            data.len() + 100
+        )
+        .as_bytes(),
+    );
+    short_data.extend_from_slice(&data);
+
     vec![
         ("eexec-hex.ps", eexec_hex_file),
         ("eexec-string.ps", eexec_string_file),
@@ -263,6 +368,11 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         ("type1-embedded-two-pages.ps", two_pages.into_bytes()),
         ("truetype-subset-cmap.ps", truetype_cmap.into_bytes()),
         ("truetype-embedded.ps", truetype_embedded.into_bytes()),
+        ("cff-width.ps", cff_width),
+        ("cff-charpath-bbox.ps", cff_bbox),
+        ("fontset-defines-fonts.ps", fontset_defines),
+        ("fontset-short-data.ps", short_data),
+        ("cff-embedded-type1c.ps", cff_type1c),
     ]
 }
 

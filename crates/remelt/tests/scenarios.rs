@@ -22,13 +22,13 @@ struct Run {
     output: String,
 }
 
-fn distil_with(program: &str, options: &Options) -> Run {
+fn distil_with(program: impl AsRef<[u8]>, options: &Options) -> Run {
     let (io, out, _) = Io::capture();
     let config = Config {
         io,
         ..Default::default()
     };
-    let (report, pdf) = remelt::distill(program.as_bytes(), config, options, Vec::new()).unwrap();
+    let (report, pdf) = remelt::distill(program.as_ref(), config, options, Vec::new()).unwrap();
     Run {
         report,
         pdf,
@@ -249,10 +249,11 @@ fn two_runs_agree_on_every_corpus_graphics_and_text_file() {
     files.sort();
     assert!(!files.is_empty());
     for path in files {
-        let program = std::fs::read_to_string(&path).unwrap();
+        // FontSet files carry a binary program after `StartData`.
+        let program = std::fs::read(&path).unwrap();
         for options in [Options { compress: false }, Options { compress: true }] {
-            let first = distil_with(&program, &options);
-            let second = distil_with(&program, &options);
+            let first = distil_with(&program[..], &options);
+            let second = distil_with(&program[..], &options);
             assert_eq!(first.report, second.report, "{}", path.display());
             assert!(
                 first.pdf == second.pdf,
@@ -474,6 +475,76 @@ fn a_type1_subset_round_trips_through_the_interpreter() {
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].ops, original[0].ops);
     assert!(matches!(&pages[0].ops[0].op, IrOp::Fill { path, .. } if path.len() == 7));
+}
+
+// cff-embedded-type1c.ps
+#[test]
+fn a_type1c_subset_round_trips_through_the_engine() {
+    use ps_fonts::CffProgram;
+    use ps_fonts::testing::corpus_cff;
+    let syn_cff = corpus_cff();
+    let mut program = syn_cff.font_set("SynSet");
+    program.extend_from_slice(
+        b"/SynCFF findfont 10 scalefont setfont 100 100 moveto (a) show showpage",
+    );
+    let run = distil_with(&program[..], &Options { compress: false });
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n(a) Tj\nET\n"
+    );
+    let dict = font(&pdf, 0, "F0");
+    assert_eq!(dict.get("Subtype").unwrap().as_name(), b"Type1");
+    let base = dict.get("BaseFont").unwrap().as_name();
+    assert!(
+        base.ends_with(b"+SynCFF") && base.len() == 7 + 6,
+        "{base:?}"
+    );
+    assert!(dict.get("Encoding").is_none(), "a is at its standard code");
+    assert_eq!(dict.get("FirstChar").unwrap().as_int(), 97);
+    let widths: Vec<f64> = array(dict.get("Widths").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(widths, [600.0]);
+    let cmap = decoded(pdf.resolve(dict.get("ToUnicode").unwrap().as_reference()));
+    assert!(String::from_utf8(cmap).unwrap().contains("<61> <0061>\n"));
+    let descriptor = pdf.resolve(dict.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("FontName").unwrap().as_name(), base);
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 32);
+    assert_eq!(number(descriptor.get("StemV").unwrap()), 80.0);
+    let bbox: Vec<f64> = array(descriptor.get("FontBBox").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(bbox, [0.0, -50.0, 600.0, 500.0]);
+    let font_file = pdf.resolve(descriptor.get("FontFile3").unwrap().as_reference());
+    assert_eq!(font_file.get("Subtype").unwrap().as_name(), b"Type1C");
+    assert!(font_file.get("Length1").is_none());
+
+    // The stream is a CFF program holding exactly .notdef and a, with a
+    // measuring and outlining as the original and no subroutine left.
+    let subset = CffProgram::parse(&decoded(font_file)).expect("a CFF program");
+    assert_eq!(subset.name(), base);
+    assert_eq!(subset.charset_names(), vec![&b".notdef"[..], b"a"]);
+    assert!(subset.private().unwrap().subrs.is_empty());
+    assert!(subset.global_subrs().is_empty());
+    let original = syn_cff.program().unwrap();
+    let a = original.glyph(b"a").unwrap().unwrap();
+    let again = subset.glyph(b"a").unwrap().unwrap();
+    assert_eq!(again.advance, a.advance);
+    assert_eq!(again.outline, a.outline);
+    assert_eq!(
+        subset.glyph(b".notdef").unwrap().unwrap().advance,
+        original.glyph(b".notdef").unwrap().unwrap().advance
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.pdf)
+            .matches("/Subtype /Type1C")
+            .count(),
+        1
+    );
 }
 
 // truetype-embedded.ps

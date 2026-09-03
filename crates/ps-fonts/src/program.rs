@@ -7,6 +7,7 @@
 use std::fmt;
 use std::rc::Rc;
 
+use crate::cff::CffProgram;
 use crate::outline::Glyph;
 use crate::truetype::TrueTypeProgram;
 use crate::type1::Type1Program;
@@ -33,6 +34,8 @@ pub enum FontError {
     GlyphIndex(u16),
     /// Any other structural fault.
     Malformed(&'static str),
+    /// A structure the format allows that this reader does not handle.
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for FontError {
@@ -58,6 +61,7 @@ impl fmt::Display for FontError {
             }
             FontError::GlyphIndex(index) => write!(f, "glyph index {index} out of range"),
             FontError::Malformed(what) => write!(f, "malformed {what}"),
+            FontError::Unsupported(what) => write!(f, "unsupported {what}"),
         }
     }
 }
@@ -69,20 +73,22 @@ impl std::error::Error for FontError {}
 pub enum ProgramKind {
     Type1,
     TrueType,
+    Cff,
 }
 
 /// A font program snapshot: immutable, shared by `Rc`, answering glyph
 /// names with outlines and advances.
 ///
-/// Glyph space is the program's own: a Type 1 program's charstring units
-/// (under the font's `FontMatrix`, conventionally thousandths of the em);
-/// a TrueType program's font units, with [`Program::units_per_em`] giving
-/// the scale a Type 42 font's identity matrix expects the caller to
-/// divide by.
+/// Glyph space is the program's own: a Type 1 or CFF program's charstring
+/// units (under the font's `FontMatrix`, conventionally thousandths of
+/// the em); a TrueType program's font units, with
+/// [`Program::units_per_em`] giving the scale a Type 42 font's identity
+/// matrix expects the caller to divide by.
 #[derive(Debug)]
 pub enum Program {
     Type1(Type1Program),
     TrueType(TrueTypeProgram),
+    Cff(CffProgram),
 }
 
 impl Program {
@@ -90,6 +96,7 @@ impl Program {
         match self {
             Program::Type1(_) => ProgramKind::Type1,
             Program::TrueType(_) => ProgramKind::TrueType,
+            Program::Cff(_) => ProgramKind::Cff,
         }
     }
 
@@ -99,6 +106,7 @@ impl Program {
         match self {
             Program::Type1(program) => program.glyph(name),
             Program::TrueType(program) => program.glyph(name),
+            Program::Cff(program) => program.glyph(name),
         }
     }
 
@@ -106,14 +114,17 @@ impl Program {
         match self {
             Program::Type1(program) => program.charstring(name).is_some(),
             Program::TrueType(program) => program.gid(name).is_some(),
+            Program::Cff(program) => program.gid(name).is_some(),
         }
     }
 
-    /// The number of named glyphs the program defines.
+    /// The number of named glyphs the program defines; for a CID-keyed
+    /// CFF program, the number of glyphs.
     pub fn glyph_count(&self) -> usize {
         match self {
             Program::Type1(program) => program.charstrings().len(),
             Program::TrueType(program) => program.names().len(),
+            Program::Cff(program) => usize::from(program.glyph_count()),
         }
     }
 
@@ -122,14 +133,15 @@ impl Program {
         match self {
             Program::Type1(program) => program.charstrings().keys().map(Vec::as_slice).collect(),
             Program::TrueType(program) => program.names().keys().map(Vec::as_slice).collect(),
+            Program::Cff(program) => program.glyph_names(),
         }
     }
 
-    /// Font units per em for a TrueType program; `None` for Type 1, whose
-    /// glyph space is what the font matrix maps.
+    /// Font units per em for a TrueType program; `None` for Type 1 and
+    /// CFF, whose glyph space is what the font matrix maps.
     pub fn units_per_em(&self) -> Option<u16> {
         match self {
-            Program::Type1(_) => None,
+            Program::Type1(_) | Program::Cff(_) => None,
             Program::TrueType(program) => Some(program.units_per_em()),
         }
     }

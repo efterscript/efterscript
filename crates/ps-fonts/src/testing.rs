@@ -3,9 +3,11 @@
 
 //! Synthesised fonts for tests in several crates: a charstring encoder, a
 //! Type 1 program builder that yields both an in-memory [`Program`] and a
-//! complete `eexec` font program, and a TrueType builder that yields the
-//! program bytes and its Type 42 wrapper. Not compiled out of release
-//! builds, since the corpus generator and other crates' tests use it.
+//! complete `eexec` font program, a TrueType builder that yields the
+//! program bytes and its Type 42 wrapper, and a CFF builder with a Type 2
+//! encoder that yields the program bytes and a FontSet resource file.
+//! Not compiled out of release builds, since the corpus generator and
+//! other crates' tests use it.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +18,7 @@ use crate::truetype::write::{self, Table};
 use crate::type1::write::encrypt_section_binary;
 use crate::type1::{CHARSTRING_KEY, EEXEC_KEY, Type1Dict, Type1Program, encrypt};
 
+pub use crate::cff::charstring::encode_number as encode_type2_number;
 pub use crate::type1::charstring::encode_number;
 pub use crate::type1::write::TRAILER;
 
@@ -918,4 +921,646 @@ mod tests {
         let parts = font.parts();
         assert_eq!(parts.concat(), font.build());
     }
+}
+
+// --- CFF -----------------------------------------------------------------------
+
+/// A Type 2 charstring assembled operator by operator.
+#[derive(Clone, Debug, Default)]
+pub struct Type2Builder {
+    bytes: Vec<u8>,
+}
+
+impl Type2Builder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn num(mut self, v: i32) -> Self {
+        encode_type2_number(v, &mut self.bytes);
+        self
+    }
+
+    /// A number in the 16.16 fixed-point form.
+    pub fn fixed(mut self, v: f32) -> Self {
+        crate::cff::charstring::encode_fixed(v, &mut self.bytes);
+        self
+    }
+
+    pub fn op(mut self, op: u8) -> Self {
+        self.bytes.push(op);
+        self
+    }
+
+    pub fn esc(mut self, op: u8) -> Self {
+        self.bytes.push(12);
+        self.bytes.push(op);
+        self
+    }
+
+    fn nums(mut self, values: &[i32]) -> Self {
+        for &v in values {
+            self = self.num(v);
+        }
+        self
+    }
+
+    pub fn hstem(self, y: i32, dy: i32) -> Self {
+        self.nums(&[y, dy]).op(1)
+    }
+
+    pub fn vstem(self, x: i32, dx: i32) -> Self {
+        self.nums(&[x, dx]).op(3)
+    }
+
+    pub fn hstemhm(self, y: i32, dy: i32) -> Self {
+        self.nums(&[y, dy]).op(18)
+    }
+
+    pub fn vstemhm(self, x: i32, dx: i32) -> Self {
+        self.nums(&[x, dx]).op(23)
+    }
+
+    /// `hintmask` with its mask bytes, which the caller sizes to the
+    /// stems declared so far.
+    pub fn hintmask(mut self, mask: &[u8]) -> Self {
+        self.bytes.push(19);
+        self.bytes.extend_from_slice(mask);
+        self
+    }
+
+    pub fn cntrmask(mut self, mask: &[u8]) -> Self {
+        self.bytes.push(20);
+        self.bytes.extend_from_slice(mask);
+        self
+    }
+
+    pub fn rmoveto(self, dx: i32, dy: i32) -> Self {
+        self.nums(&[dx, dy]).op(21)
+    }
+
+    pub fn hmoveto(self, dx: i32) -> Self {
+        self.num(dx).op(22)
+    }
+
+    pub fn vmoveto(self, dy: i32) -> Self {
+        self.num(dy).op(4)
+    }
+
+    pub fn rlineto(self, dx: i32, dy: i32) -> Self {
+        self.nums(&[dx, dy]).op(5)
+    }
+
+    pub fn hlineto(self, dx: i32) -> Self {
+        self.num(dx).op(6)
+    }
+
+    pub fn vlineto(self, dy: i32) -> Self {
+        self.num(dy).op(7)
+    }
+
+    pub fn rrcurveto(self, a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> Self {
+        self.nums(&[a, b, c, d, e, f]).op(8)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn hflex(
+        self,
+        dx1: i32,
+        dx2: i32,
+        dy2: i32,
+        dx3: i32,
+        dx4: i32,
+        dx5: i32,
+        dx6: i32,
+    ) -> Self {
+        self.nums(&[dx1, dx2, dy2, dx3, dx4, dx5, dx6]).esc(34)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn flex(
+        self,
+        dx1: i32,
+        dy1: i32,
+        dx2: i32,
+        dy2: i32,
+        dx3: i32,
+        dy3: i32,
+        dx4: i32,
+        dy4: i32,
+        dx5: i32,
+        dy5: i32,
+        dx6: i32,
+        dy6: i32,
+        fd: i32,
+    ) -> Self {
+        self.nums(&[
+            dx1, dy1, dx2, dy2, dx3, dy3, dx4, dy4, dx5, dy5, dx6, dy6, fd,
+        ])
+        .esc(35)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn hflex1(
+        self,
+        dx1: i32,
+        dy1: i32,
+        dx2: i32,
+        dy2: i32,
+        dx3: i32,
+        dx4: i32,
+        dx5: i32,
+        dy5: i32,
+        dx6: i32,
+    ) -> Self {
+        self.nums(&[dx1, dy1, dx2, dy2, dx3, dx4, dx5, dy5, dx6])
+            .esc(36)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn flex1(
+        self,
+        dx1: i32,
+        dy1: i32,
+        dx2: i32,
+        dy2: i32,
+        dx3: i32,
+        dy3: i32,
+        dx4: i32,
+        dy4: i32,
+        dx5: i32,
+        dy5: i32,
+        d6: i32,
+    ) -> Self {
+        self.nums(&[dx1, dy1, dx2, dy2, dx3, dy3, dx4, dy4, dx5, dy5, d6])
+            .esc(37)
+    }
+
+    /// `callsubr` with the biased operand as written.
+    pub fn callsubr(self, biased: i32) -> Self {
+        self.num(biased).op(10)
+    }
+
+    pub fn callgsubr(self, biased: i32) -> Self {
+        self.num(biased).op(29)
+    }
+
+    pub fn r#return(self) -> Self {
+        self.op(11)
+    }
+
+    pub fn endchar(self) -> Self {
+        self.op(14)
+    }
+
+    pub fn bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+/// A Type 2 charstring drawing `outline` (integral coordinates) with
+/// advance `wx`: the width relative to `nominal` when it is not `default`,
+/// then relative moves, lines, and curves; subpaths close implicitly.
+pub fn charstring_type2(wx: i32, default: i32, nominal: i32, outline: &Outline) -> Vec<u8> {
+    let mut b = Type2Builder::new();
+    if wx != default {
+        b = b.num(wx - nominal);
+    }
+    let (mut x, mut y) = (0, 0);
+    let r = |v: f32| v.round() as i32;
+    for op in &outline.ops {
+        match *op {
+            OutlineOp::MoveTo(px, py) => {
+                b = b.rmoveto(r(px) - x, r(py) - y);
+                (x, y) = (r(px), r(py));
+            }
+            OutlineOp::LineTo(px, py) => {
+                b = b.rlineto(r(px) - x, r(py) - y);
+                (x, y) = (r(px), r(py));
+            }
+            OutlineOp::CurveTo(x1, y1, x2, y2, px, py) => {
+                b = b.rrcurveto(
+                    r(x1) - x,
+                    r(y1) - y,
+                    r(x2) - r(x1),
+                    r(y2) - r(y1),
+                    r(px) - r(x2),
+                    r(py) - r(y2),
+                );
+                (x, y) = (r(px), r(py));
+            }
+            OutlineOp::Close => {}
+        }
+    }
+    b.endchar().bytes()
+}
+
+/// One font dictionary of a CID-keyed font: its private data.
+#[derive(Clone, Debug, Default)]
+pub struct CffFd {
+    pub subrs: Vec<Vec<u8>>,
+    pub default_width: i32,
+    pub nominal_width: i32,
+}
+
+/// The CID-keyed layout of a [`CffFont`].
+#[derive(Clone, Debug)]
+pub struct CidLayout {
+    pub registry: String,
+    pub ordering: String,
+    pub supplement: i32,
+    pub fds: Vec<CffFd>,
+    /// `(cid, font dictionary index)` per glyph, glyph 0 first.
+    pub glyphs: Vec<(u16, u8)>,
+}
+
+/// A CFF font built from plain Type 2 charstrings, name-keyed unless
+/// [`CffFont::cid_keyed`] made it CID-keyed.
+#[derive(Clone, Debug)]
+pub struct CffFont {
+    pub name: String,
+    pub bbox: [i32; 4],
+    /// Written to the top dictionary when set; the default otherwise.
+    pub font_matrix: Option<[f64; 6]>,
+    /// Plain charstrings by name, glyph 0 (`.notdef`) first.
+    pub glyphs: Vec<(String, Vec<u8>)>,
+    pub subrs: Vec<Vec<u8>>,
+    pub gsubrs: Vec<Vec<u8>>,
+    pub default_width: i32,
+    pub nominal_width: i32,
+    pub std_vw: Option<i32>,
+    pub notice: Option<String>,
+    /// A custom encoding; empty means the standard encoding.
+    pub encoding: Vec<(u8, String)>,
+    pub cid: Option<CidLayout>,
+}
+
+impl CffFont {
+    /// A name-keyed font with a `.notdef` of the default width.
+    pub fn new(name: &str) -> Self {
+        CffFont {
+            name: name.to_string(),
+            bbox: [0, 0, 1000, 1000],
+            font_matrix: None,
+            glyphs: vec![(".notdef".to_string(), Type2Builder::new().endchar().bytes())],
+            subrs: Vec::new(),
+            gsubrs: Vec::new(),
+            default_width: 0,
+            nominal_width: 0,
+            std_vw: None,
+            notice: None,
+            encoding: Vec::new(),
+            cid: None,
+        }
+    }
+
+    /// A CID-keyed font with the given registry, ordering, and
+    /// supplement, no font dictionaries yet, and a `.notdef` at CID 0 in
+    /// font dictionary 0.
+    pub fn cid_keyed(name: &str, registry: &str, ordering: &str, supplement: i32) -> Self {
+        let mut font = CffFont::new(name);
+        font.cid = Some(CidLayout {
+            registry: registry.to_string(),
+            ordering: ordering.to_string(),
+            supplement,
+            fds: Vec::new(),
+            glyphs: vec![(0, 0)],
+        });
+        font
+    }
+
+    pub fn bbox(mut self, bbox: [i32; 4]) -> Self {
+        self.bbox = bbox;
+        self
+    }
+
+    pub fn font_matrix(mut self, matrix: [f64; 6]) -> Self {
+        self.font_matrix = Some(matrix);
+        self
+    }
+
+    /// The default and nominal widths of the private dictionary.
+    pub fn widths(mut self, default: i32, nominal: i32) -> Self {
+        self.default_width = default;
+        self.nominal_width = nominal;
+        self
+    }
+
+    pub fn std_vw(mut self, width: i32) -> Self {
+        self.std_vw = Some(width);
+        self
+    }
+
+    pub fn notice(mut self, notice: &str) -> Self {
+        self.notice = Some(notice.to_string());
+        self
+    }
+
+    /// A glyph drawn from an outline, advance `wx`.
+    pub fn glyph(self, name: &str, wx: i32, outline: &Outline) -> Self {
+        let code = charstring_type2(wx, self.default_width, self.nominal_width, outline);
+        self.charstring(name, code)
+    }
+
+    /// A glyph from a plain charstring.
+    pub fn charstring(mut self, name: &str, code: Vec<u8>) -> Self {
+        self.glyphs.push((name.to_string(), code));
+        self
+    }
+
+    pub fn subr(mut self, code: Vec<u8>) -> Self {
+        self.subrs.push(code);
+        self
+    }
+
+    pub fn gsubr(mut self, code: Vec<u8>) -> Self {
+        self.gsubrs.push(code);
+        self
+    }
+
+    pub fn encode(mut self, code: u8, name: &str) -> Self {
+        self.encoding.push((code, name.to_string()));
+        self
+    }
+
+    /// Adds a font dictionary to a CID-keyed font.
+    pub fn fd(mut self, fd: CffFd) -> Self {
+        self.cid.as_mut().expect("a CID-keyed font").fds.push(fd);
+        self
+    }
+
+    /// A glyph of a CID-keyed font at `cid`, run under font dictionary
+    /// `fd`.
+    pub fn cid_glyph(mut self, cid: u16, fd: u8, code: Vec<u8>) -> Self {
+        self.cid
+            .as_mut()
+            .expect("a CID-keyed font")
+            .glyphs
+            .push((cid, fd));
+        self.glyphs.push((format!("cid{cid}"), code));
+        self
+    }
+
+    /// The glyph index of `name`.
+    pub fn gid(&self, name: &str) -> Option<u16> {
+        self.glyphs
+            .iter()
+            .position(|(n, _)| n == name)
+            .map(|k| k as u16)
+    }
+
+    /// The program bytes.
+    pub fn build(&self) -> Vec<u8> {
+        use crate::cff::{STANDARD_STRINGS, op, write};
+
+        // String ids: standard strings by position, the font's own after
+        // them in order of first use.
+        let mut strings: Vec<Vec<u8>> = Vec::new();
+        let mut sid = |text: &str| -> u16 {
+            if let Some(k) = STANDARD_STRINGS.iter().position(|s| *s == text) {
+                return k as u16;
+            }
+            let bytes = text.as_bytes().to_vec();
+            let k = match strings.iter().position(|s| *s == bytes) {
+                Some(k) => k,
+                None => {
+                    strings.push(bytes);
+                    strings.len() - 1
+                }
+            };
+            (STANDARD_STRINGS.len() + k) as u16
+        };
+        let notice_sid = self.notice.as_deref().map(&mut sid);
+        let ros = self
+            .cid
+            .as_ref()
+            .map(|cid| (sid(&cid.registry), sid(&cid.ordering), cid.supplement));
+        let charset_ids: Vec<u16> = match &self.cid {
+            Some(cid) => cid.glyphs.iter().map(|&(c, _)| c).collect(),
+            None => self.glyphs.iter().map(|(name, _)| sid(name)).collect(),
+        };
+        let encoding_codes: Vec<(u8, u16)> = self
+            .encoding
+            .iter()
+            .map(|(code, name)| (*code, sid(name)))
+            .collect();
+
+        let private = |subrs: &[Vec<u8>], default: i32, nominal: i32| -> (Vec<u8>, Vec<u8>) {
+            let mut w = write::DictWriter::new();
+            if let Some(std_vw) = self.std_vw {
+                w.entry(op::STD_VW, &[f64::from(std_vw)]);
+            }
+            w.entry(op::DEFAULT_WIDTH_X, &[f64::from(default)]);
+            w.entry(op::NOMINAL_WIDTH_X, &[f64::from(nominal)]);
+            if subrs.is_empty() {
+                return (w.bytes, Vec::new());
+            }
+            let len = w.len() + 6;
+            w.fixed(op::SUBRS, &[len as i32]);
+            (w.bytes, write::index(subrs))
+        };
+
+        let top = |charset: i32,
+                   encoding: i32,
+                   charstrings: i32,
+                   private: (i32, i32),
+                   fd_array: i32,
+                   fd_select: i32|
+         -> Vec<u8> {
+            let mut w = write::DictWriter::new();
+            if let Some((r, o, s)) = ros {
+                w.entry(op::ROS, &[f64::from(r), f64::from(o), f64::from(s)]);
+            }
+            if let Some(n) = notice_sid {
+                w.entry(op::NOTICE, &[f64::from(n)]);
+            }
+            w.entry(op::FONT_BBOX, &self.bbox.map(f64::from));
+            if let Some(m) = self.font_matrix {
+                w.entry(op::FONT_MATRIX, &m);
+            }
+            w.fixed(op::CHARSET, &[charset]);
+            if !encoding_codes.is_empty() && ros.is_none() {
+                w.fixed(op::ENCODING, &[encoding]);
+            }
+            w.fixed(op::CHARSTRINGS, &[charstrings]);
+            match &self.cid {
+                Some(cid) => {
+                    w.entry(
+                        op::CID_COUNT,
+                        &[f64::from(cid.glyphs.iter().map(|g| g.0).max().unwrap_or(0)) + 1.0],
+                    );
+                    w.fixed(op::FD_ARRAY, &[fd_array]);
+                    w.fixed(op::FD_SELECT, &[fd_select]);
+                }
+                None => {
+                    w.fixed(op::PRIVATE, &[private.0, private.1]);
+                }
+            }
+            w.bytes
+        };
+
+        let charstrings: Vec<Vec<u8>> = self.glyphs.iter().map(|(_, c)| c.clone()).collect();
+        let charset = write::charset_format0(&charset_ids);
+        let encoding = write::encoding_supplements(&encoding_codes);
+        let fd_select = self.cid.as_ref().map(|cid| {
+            write::fd_select_format3(&cid.glyphs.iter().map(|g| g.1).collect::<Vec<_>>())
+        });
+
+        // First pass: sizes with placeholder offsets.
+        let mut header = write::header(4).to_vec();
+        header.extend(write::index(&[self.name.as_bytes().to_vec()]));
+        let top_size = write::index(&[top(0, 0, 0, (0, 0), 0, 0)]).len();
+        let strings_index = write::index(&strings);
+        let gsubrs_index = write::index(&self.gsubrs);
+        let charstrings_index = write::index(&charstrings);
+
+        let mut at = header.len() + top_size + strings_index.len() + gsubrs_index.len();
+        let charset_at = at;
+        at += charset.len();
+        let encoding_at = at;
+        if !encoding_codes.is_empty() && self.cid.is_none() {
+            at += encoding.len();
+        }
+        let fd_select_at = at;
+        if let Some(select) = &fd_select {
+            at += select.len();
+        }
+        let charstrings_at = at;
+        at += charstrings_index.len();
+
+        let mut tail = Vec::new();
+        let mut private_entry = (0, 0);
+        let mut fd_array_at = 0;
+        match &self.cid {
+            None => {
+                let (dict, subrs) = private(&self.subrs, self.default_width, self.nominal_width);
+                private_entry = (dict.len() as i32, at as i32);
+                tail.extend(dict);
+                tail.extend(subrs);
+            }
+            Some(cid) => {
+                // Font dictionaries carry a fixed-size private entry, so
+                // the array's size is known before its privates are laid
+                // out after it.
+                let fd_dict = |size: i32, offset: i32| {
+                    let mut w = write::DictWriter::new();
+                    w.fixed(op::PRIVATE, &[size, offset]);
+                    w.bytes
+                };
+                let fds: Vec<Vec<u8>> = cid.fds.iter().map(|_| fd_dict(0, 0)).collect();
+                fd_array_at = at;
+                let array_size = write::index(&fds).len();
+                let mut privates = Vec::new();
+                let mut dicts = Vec::new();
+                let mut offset = at + array_size;
+                for fd in &cid.fds {
+                    let (dict, subrs) = private(&fd.subrs, fd.default_width, fd.nominal_width);
+                    dicts.push(fd_dict(dict.len() as i32, offset as i32));
+                    offset += dict.len() + subrs.len();
+                    privates.extend(dict);
+                    privates.extend(subrs);
+                }
+                tail.extend(write::index(&dicts));
+                tail.extend(privates);
+            }
+        }
+
+        let top = top(
+            charset_at as i32,
+            encoding_at as i32,
+            charstrings_at as i32,
+            private_entry,
+            fd_array_at as i32,
+            fd_select_at as i32,
+        );
+        let mut out = header;
+        out.extend(write::index(&[top]));
+        out.extend(strings_index);
+        out.extend(gsubrs_index);
+        out.extend(charset);
+        if !encoding_codes.is_empty() && self.cid.is_none() {
+            out.extend(encoding);
+        }
+        if let Some(select) = fd_select {
+            out.extend(select);
+        }
+        out.extend(charstrings_index);
+        out.extend(tail);
+        out
+    }
+
+    /// The parsed program.
+    pub fn program(&self) -> Result<Program, FontError> {
+        Ok(Program::Cff(crate::cff::CffProgram::parse(&self.build())?))
+    }
+
+    /// The font as a FontSet resource file: the `FontSetInit` procedure
+    /// set, `StartData` with the byte count, the binary program, and
+    /// `end`.
+    pub fn font_set(&self, set_name: &str) -> Vec<u8> {
+        let data = self.build();
+        let mut out = format!(
+            "/FontSetInit /ProcSet findresource begin\n/{set_name} {} StartData\n",
+            data.len()
+        )
+        .into_bytes();
+        out.extend(data);
+        out.extend_from_slice(b"\nend\n");
+        out
+    }
+}
+
+/// The CFF font of the corpus and of the tests across crates: nominal
+/// width 500, `a` a 500-unit square of advance 600 (a width delta of
+/// 100), `b` and `c` reaching subroutines, `f` a glyph with two stem
+/// hints, a hint mask, and an `hflex` whose control box is 0..600 by
+/// -50..200; the standard encoding.
+pub fn corpus_cff() -> CffFont {
+    let a = charstring_type2(600, 0, 500, &rectangle(50.0, 0.0, 550.0, 500.0));
+    // Local subroutine 0 draws a bar, global 0 a diagonal; local 1 is
+    // unreached by any glyph, so a subset can drop it.
+    let bar = Type2Builder::new()
+        .rlineto(300, 0)
+        .rlineto(0, 100)
+        .r#return()
+        .bytes();
+    let unused = Type2Builder::new().rlineto(1, 1).r#return().bytes();
+    let diagonal = Type2Builder::new().rlineto(200, 200).r#return().bytes();
+    let b = Type2Builder::new()
+        .num(-100)
+        .rmoveto(0, 0)
+        .callsubr(-107)
+        .callgsubr(-107)
+        .endchar()
+        .bytes();
+    let c = Type2Builder::new()
+        .num(0)
+        .rmoveto(50, 50)
+        .callgsubr(-107)
+        .rlineto(-200, 0)
+        .endchar()
+        .bytes();
+    let f = Type2Builder::new()
+        .num(100)
+        .hstemhm(0, 100)
+        .num(0)
+        .num(100)
+        .hintmask(&[0b1100_0000])
+        .rmoveto(0, 0)
+        .hflex(100, 100, 200, 100, 100, 100, 100)
+        .rlineto(0, -50)
+        .rlineto(-600, 0)
+        .endchar()
+        .bytes();
+    CffFont::new("SynCFF")
+        .bbox([0, -50, 600, 500])
+        .widths(0, 500)
+        .std_vw(80)
+        .subr(bar)
+        .subr(unused)
+        .gsubr(diagonal)
+        .charstring("a", a)
+        .charstring("b", b)
+        .charstring("c", c)
+        .charstring("f", f)
 }

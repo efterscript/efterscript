@@ -192,6 +192,7 @@ fn font(index: usize, spec: &FontSpec) -> String {
             let kind = match kind {
                 ProgramKind::Type1 => "type1",
                 ProgramKind::TrueType => "truetype",
+                ProgramKind::Cff => "cff",
             };
             let enc = code_names(encoding, |_, name| name.is_some());
             format!(

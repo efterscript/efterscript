@@ -59,6 +59,8 @@ pub enum Visibility {
     Internal,
     /// Defined in `systemdict` by `Interp::set_graphics_backend`.
     Graphics,
+    /// Reachable only through a built-in `ProcSet` resource dictionary.
+    ProcSet,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -78,8 +80,9 @@ pub struct OpEntry {
 /// }}
 /// ```
 ///
-/// `internal OPS { … }` marks every entry internal and `graphics OPS { … }`
-/// marks every entry as belonging to the graphics group.
+/// `internal OPS { … }` marks every entry internal, `graphics OPS { … }`
+/// marks every entry as belonging to the graphics group, and `procset OPS
+/// { … }` as belonging to a built-in procedure set.
 macro_rules! op_table {
     ($table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
         op_table!(@build $table, Public, { $($name => $func $(, [$($sig),*])?;)* });
@@ -89,6 +92,9 @@ macro_rules! op_table {
     };
     (graphics $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
         op_table!(@build $table, Graphics, { $($name => $func $(, [$($sig),*])?;)* });
+    };
+    (procset $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
+        op_table!(@build $table, ProcSet, { $($name => $func $(, [$($sig),*])?;)* });
     };
     (@build $table:ident, $visibility:ident, { $($name:expr => $func:expr $(, [$($sig:ident),*])?;)* }) => {
         pub(crate) static $table: &[$crate::ops::OpEntry] = &[
@@ -110,6 +116,7 @@ pub mod embedded;
 pub mod errors;
 pub mod file;
 pub mod font;
+pub mod fontset;
 pub mod graphics;
 pub mod image;
 pub mod output;
@@ -138,6 +145,7 @@ const MODULES: &[&[OpEntry]] = &[
     font::OPS,
     font::PAINT_OPS,
     resource::OPS,
+    fontset::OPS,
 ];
 
 /// The complete operator table, built on first use.
