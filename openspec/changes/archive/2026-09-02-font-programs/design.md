@@ -573,10 +573,9 @@ the page-producing corpus files with their goldens (6.x).
   it would. The round-trip scenario is a `remelt` test that extracts
   the `FontFile` from the distilled document, runs it through the
   interpreter, and compares glyph count, membership, advance, and the
-  filled outline with the original program's. With `pdffonts`, every
-  embedded golden lists its font as `emb yes sub yes uni yes`, `pdftotext`
-  extracts the shown text (`a`, `e`, `ao`, `é`), `pdfinfo` as
-  `EFTERSCRIPT_PDF_CHECK` accepts all 106 corpus files, and `pdftoppm`
+  filled outline with the original program's. With the external checker's font listing, every
+  embedded golden lists its font as `emb yes sub yes uni yes`, its text extraction
+  extracts the shown text (`a`, `e`, `ao`, `é`), the external checker as `EFTERSCRIPT_PDF_CHECK` accepts all 106 corpus files, and its rasteriser
   renders the glyphs, so the regenerated Type 1 and subset TrueType
   programs are accepted by an independent rasteriser.
 - **Known limits.** A `glyphshow` of a name outside the encoding is

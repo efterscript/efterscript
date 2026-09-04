@@ -211,7 +211,7 @@ Recorded where the code departs from, or pins down, the decisions above.
   paths are made absolute so goldens are found for a relative
   `corpus/unit/...`. The checker's output is captured into the failure
   report; the files it is run on stay under `target/difftest/` for
-  inspection. Poppler's `pdfinfo` and `pdftotext` (25.03) accept every
+  inspection. The external PDF checker's validation and text extraction accept every
   golden with no warning; nothing in CI runs a checker yet.
 - **D11.** Host failures — unreadable input, uncreatable output, a write
   error — exit 2, as `run` and `ir` already do for an unreadable file; 0

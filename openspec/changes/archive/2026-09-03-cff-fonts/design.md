@@ -411,9 +411,9 @@ the verification (4.1).
   /FontBBox [ 0 -50 600 500 ] /ItalicAngle 0 /Ascent 500 /Descent -50
   /StemV 80 /FontFile3 5 0 R` and the stream `<< /Length 95 /Subtype
   /Type1C >>`. Every pre-existing `.ir` and `.pdf` golden is
-  byte-identical. `pdffonts` lists `ZUDKKT+SynCFF Type 1C Builtin emb
-  yes sub yes uni yes`, `pdfinfo` accepts it, `pdftotext` extracts `a`,
-  and `pdftoppm` renders the glyph. The round-trip scenario is
+  byte-identical. The external checker's font listing lists `ZUDKKT+SynCFF Type 1C Builtin emb
+  yes sub yes uni yes`, the external checker accepts it, its text extraction extracts `a`,
+  and its rasteriser renders the glyph. The round-trip scenario is
   `a_type1c_subset_round_trips_through_the_engine` in
   `crates/remelt/tests/scenarios.rs`: it extracts the `FontFile3`,
   parses it with `CffProgram::parse`, and checks exactly `.notdef` and
@@ -423,7 +423,7 @@ the verification (4.1).
   (588 before; eight new tests); `cargo test -p ps-fonts
   --no-default-features`: 105 passed, 1 ignored; clippy clean on all
   targets with and without the feature; `cargo fmt --check` clean;
-  `difftest run` 121 of 121 with `EFTERSCRIPT_PDF_CHECK=pdfinfo`;
+  `difftest run` 121 of 121 with `EFTERSCRIPT_PDF_CHECK` set to the external checker;
   `parse-survival` 121 files, no failures; `openspec validate cff-fonts`
   valid.
 - **Known limits.** A Type 2 charstring whose call operand is computed

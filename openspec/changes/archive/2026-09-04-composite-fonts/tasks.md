@@ -19,7 +19,7 @@
 ## 4. PDF (ps-fonts, remelt)
 
 - [x] 4.1 CID-keyed CFF subset writer; verified by the round-trip test over every kept CID and a two-dictionary font
-- [x] 4.2 Type 0 output: descendants, `W`, `CIDToGIDMap`, `FontFile3`/`FontFile2`, ToUnicode sources, two-byte content strings; verified by the three embedding scenarios with goldens and poppler checks
+- [x] 4.2 Type 0 output: descendants, `W`, `CIDToGIDMap`, `FontFile3`/`FontFile2`, ToUnicode sources, two-byte content strings; verified by the three embedding scenarios with goldens and the external checker
 - [x] 4.3 Type 3 fallback for the Type 1 charstring form; verified by its scenario with goldens and a checker
 
 ## 5. Corpus and verification

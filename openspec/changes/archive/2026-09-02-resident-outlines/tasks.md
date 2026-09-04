@@ -18,7 +18,7 @@
 
 ## 4. PDF (ps-graphics, remelt)
 
-- [x] 4.1 Extra faces described as `FontSource::Embedded` from the parsed asset; fourteen unchanged; verified by the Palatino embedding scenario and the Helvetica-unembedded scenario with goldens, and `pdffonts` showing the embedded subset
+- [x] 4.1 Extra faces described as `FontSource::Embedded` from the parsed asset; fourteen unchanged; verified by the Palatino embedding scenario and the Helvetica-unembedded scenario with goldens, and the external checker's font listing showing the embedded subset
 
 ## 5. Verification
 

@@ -315,9 +315,9 @@ Recorded where the code departs from, or pins down, the text above.
   Type1, program: the face's parsed asset (shared `Rc`), font_matrix:
   [0.001 0 0 0.001 0 0], font_name: the file's own name }`, so the
   graphics layer interns it by snapshot and encoding and remelt embeds
-  it at finish exactly like a job font: `pdffonts` lists
+  it at finish exactly like a job font: the external checker's font listing lists
   `ZKEYPZ+TeXGyrePagella-Regular Type 1 … emb yes sub yes uni yes` beside
-  `Helvetica … emb no`, `pdftotext` extracts `Pa`, and `pdfinfo` accepts
+  `Helvetica … emb no`, its text extraction extracts `Pa`, and the external checker accepts
   every fonts golden. The PDF `Widths` come from the program's advances
   through the existing embedded width path (D8 said "from the AFM"): the
   two agree to the unit except for the `div` glyphs above, where the

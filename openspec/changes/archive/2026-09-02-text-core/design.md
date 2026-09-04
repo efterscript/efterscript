@@ -550,8 +550,8 @@ report), the corpus goldens, and the command-line substitution line.
   `type3-stringwidth-paints-nothing`, `type3-glyph-shown-twice`,
   `type3-glyph-space`, `text-under-clip-and-colour`, `xshow-text-op`,
   `fonts-shared-across-pages`, and `substitution-arial`, each with `.ir`
-  and `.pdf` goldens. With `pdfinfo` as `EFTERSCRIPT_PDF_CHECK` every
-  corpus document is accepted, and `pdftotext` extracts `Hi` from the
+  and `.pdf` goldens. With the external checker as `EFTERSCRIPT_PDF_CHECK` every
+  corpus document is accepted, and its text extraction extracts `Hi` from the
   text-operation-shape golden.
 - **Known limits.** `glyphshow` of a name outside the encoding is
   recorded under code 0 with the resource's code-0 name, so it draws a

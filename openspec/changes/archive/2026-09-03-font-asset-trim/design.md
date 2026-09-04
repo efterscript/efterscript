@@ -189,9 +189,9 @@ Recorded where the code departs from, or pins down, the text above.
 - **Goldens.** Only `fonts/palatino-embeds-pagella.pdf` (105,328 →
   9,639 bytes) and `fonts/extra-face-with-helvetica.pdf` (108,701 →
   13,013 bytes) changed; every other `.ir` and `.pdf` golden is
-  byte-identical. `pdffonts` lists the Pagella subset as `emb yes sub yes
-  uni yes` beside the unembedded Helvetica, `pdfinfo` accepts both,
-  `pdftotext` extracts `Pa` and `Hi`, and `pdftoppm` renders the glyphs.
+  byte-identical. The external checker's font listing lists the Pagella subset as `emb yes sub yes
+  uni yes` beside the unembedded Helvetica, the external checker accepts both,
+  its text extraction extracts `Pa` and `Hi`, and its rasteriser renders the glyphs.
 - **Verification.** `cargo test --workspace`: 554 passed, 2 ignored
   (543 before; eleven new tests); `cargo test -p ps-fonts
   --no-default-features`: 74 passed, 1 ignored; `cargo clippy --workspace
