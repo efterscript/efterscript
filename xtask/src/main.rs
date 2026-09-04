@@ -4,6 +4,7 @@
 //! Workspace automation, invoked as `cargo xtask <task>`.
 
 mod fetch_fonts;
+mod lint_strings;
 mod parse_survival;
 mod sha256;
 
@@ -17,6 +18,7 @@ fn usage() -> ExitCode {
         "  fetch-fonts       download and audit the outline and CMap assets [--check] [--force]"
     );
     eprintln!("                    or extract the OpenType test font into target/ [--test-assets]");
+    eprintln!("  lint-strings      scan tracked text files for the vault's denylisted strings");
     ExitCode::from(2)
 }
 
@@ -25,6 +27,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("parse-survival") => parse_survival::run(&args[1..]),
         Some("fetch-fonts") => fetch_fonts::run(&args[1..]),
+        Some("lint-strings") => lint_strings::run(&args[1..]),
         Some(t) => {
             eprintln!("xtask: unknown task `{t}`");
             usage()

@@ -17,6 +17,8 @@
 //!   check the scripting-only configuration.
 //! - `% requires: <feature>` — the file is skipped, with a message, in a
 //!   build without that feature; `resident-outlines` is the one known.
+//! - `% divergence: <slug>` — the file's behaviour is a recorded expected
+//!   divergence; `run` ignores it, `oracle` (see [`oracle`]) resolves it.
 //!
 //! Declarations are read from the leading comment block only.
 //!
@@ -31,9 +33,14 @@
 //! that produced pages; goldens are generated, never hand-edited. When
 //! `EFTERSCRIPT_PDF_CHECK` names a program, every distilled document is
 //! written under `target/difftest` and the program run on it; a non-zero
-//! exit fails the file. Semantic comparison against another
-//! interpreter's output and the private tier under `EFTERSCRIPT_HELLBOX`
-//! are later additions to this tool.
+//! exit fails the file.
+//!
+//! `difftest oracle` compares against a reference converter described by
+//! a profile from outside the repository; see [`oracle`] and [`profile`].
+
+mod oracle;
+mod pnm;
+mod profile;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -53,6 +60,8 @@ pub struct Expectation {
     pub graphics: bool,
     /// Build features the file needs, as declared.
     pub requires: Vec<String>,
+    /// The expected-divergence slug the file declares.
+    pub divergence: Option<String>,
 }
 
 impl Default for Expectation {
@@ -62,6 +71,7 @@ impl Default for Expectation {
             error: None,
             graphics: true,
             requires: Vec::new(),
+            divergence: None,
         }
     }
 }
@@ -113,6 +123,7 @@ pub fn expectation(program: &str) -> Expectation {
     let mut error = None;
     let mut graphics = true;
     let mut requires = Vec::new();
+    let mut divergence = None;
     for line in program.lines() {
         let line = line.trim_end_matches('\r');
         if line.trim().is_empty() {
@@ -129,6 +140,8 @@ pub fn expectation(program: &str) -> Expectation {
             graphics = rest.trim() != "none";
         } else if let Some(rest) = line.strip_prefix("% requires:") {
             requires.extend(rest.split_whitespace().map(str::to_string));
+        } else if let Some(rest) = line.strip_prefix("% divergence:") {
+            divergence = Some(rest.trim().to_string());
         }
     }
     let mut output = lines.join("\n");
@@ -140,6 +153,7 @@ pub fn expectation(program: &str) -> Expectation {
         error,
         graphics,
         requires,
+        divergence,
     }
 }
 
@@ -571,6 +585,7 @@ fn run(args: &[String]) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!("usage: difftest run [--update-ir] [--update-pdf] [path…]    (default: corpus/unit)");
+    eprintln!("       difftest oracle [--profile <name>] [--dpi <n>] [--json <path>] [path…]");
     ExitCode::from(2)
 }
 
@@ -578,6 +593,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
+        Some("oracle") => oracle::run(&args[1..], &oracle::Env::from_process()),
         _ => usage(),
     }
 }
@@ -607,6 +623,13 @@ mod tests {
             expectation("% requires: no-such-feature\n").unmet_requirement(),
             Some("no-such-feature")
         );
+        assert_eq!(
+            expectation("%!PS\n% divergence:  font-substitution \n1 =")
+                .divergence
+                .as_deref(),
+            Some("font-substitution")
+        );
+        assert_eq!(expectation("1 =\n% divergence: late\n").divergence, None);
     }
 
     #[test]
