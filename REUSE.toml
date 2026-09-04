@@ -27,3 +27,9 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2007-2018 B. Jackowski, J.M. Nowacki, et al. (GUST e-foundry), for the TeX Gyre extensions"
 SPDX-License-Identifier = "LPPL-1.3c"
+
+[[annotations]]
+path = "crates/ps-fonts/data/cmap/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "1990-2023 Adobe"
+SPDX-License-Identifier = "BSD-3-Clause"

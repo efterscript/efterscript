@@ -8,6 +8,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::cff::CffProgram;
+use crate::cidfont::Type1CidProgram;
 use crate::outline::Glyph;
 use crate::truetype::TrueTypeProgram;
 use crate::type1::Type1Program;
@@ -74,6 +75,8 @@ pub enum ProgramKind {
     Type1,
     TrueType,
     Cff,
+    /// A CID-keyed font with Type 1 charstrings, addressed by CID only.
+    Type1Cid,
 }
 
 /// A font program snapshot: immutable, shared by `Rc`, answering glyph
@@ -89,6 +92,7 @@ pub enum Program {
     Type1(Type1Program),
     TrueType(TrueTypeProgram),
     Cff(CffProgram),
+    Type1Cid(Type1CidProgram),
 }
 
 impl Program {
@@ -97,6 +101,42 @@ impl Program {
             Program::Type1(_) => ProgramKind::Type1,
             Program::TrueType(_) => ProgramKind::TrueType,
             Program::Cff(_) => ProgramKind::Cff,
+            Program::Type1Cid(_) => ProgramKind::Type1Cid,
+        }
+    }
+
+    /// The glyph of a CID: through a CID-keyed CFF program's charset, a
+    /// TrueType program's CID map, or a Type 1 CID program's glyph data
+    /// map; `Ok(None)` when the program has no glyph for the CID or is
+    /// not addressed by CID at all.
+    pub fn glyph_by_cid(&self, cid: u16) -> Result<Option<Rc<Glyph>>, FontError> {
+        match self {
+            Program::Type1(_) => Ok(None),
+            Program::TrueType(program) => program.glyph_by_cid(cid),
+            Program::Cff(program) => program.glyph_by_cid(cid),
+            Program::Type1Cid(program) => program.glyph_by_cid(cid),
+        }
+    }
+
+    /// Whether glyphs are found by CID: a CID-keyed CFF program, a
+    /// TrueType program with a CID map, or a Type 1 CID program.
+    pub fn is_cid_keyed(&self) -> bool {
+        match self {
+            Program::Type1(_) => false,
+            Program::TrueType(program) => program.cid_map().is_some(),
+            Program::Cff(program) => program.is_cid_keyed(),
+            Program::Type1Cid(_) => true,
+        }
+    }
+
+    /// The number of CIDs a CID-keyed program is declared over, `None`
+    /// for a program addressed by name.
+    pub fn cid_count(&self) -> Option<u32> {
+        match self {
+            Program::Type1(_) => None,
+            Program::TrueType(program) => program.cid_map().map(|m| m.count()),
+            Program::Cff(program) => program.is_cid_keyed().then(|| program.cid_count()),
+            Program::Type1Cid(program) => Some(program.cid_count()),
         }
     }
 
@@ -107,6 +147,7 @@ impl Program {
             Program::Type1(program) => program.glyph(name),
             Program::TrueType(program) => program.glyph(name),
             Program::Cff(program) => program.glyph(name),
+            Program::Type1Cid(_) => Ok(None),
         }
     }
 
@@ -115,16 +156,21 @@ impl Program {
             Program::Type1(program) => program.charstring(name).is_some(),
             Program::TrueType(program) => program.gid(name).is_some(),
             Program::Cff(program) => program.gid(name).is_some(),
+            Program::Type1Cid(_) => false,
         }
     }
 
     /// The number of named glyphs the program defines; for a CID-keyed
-    /// CFF program, the number of glyphs.
+    /// program, the number of glyphs.
     pub fn glyph_count(&self) -> usize {
         match self {
             Program::Type1(program) => program.charstrings().len(),
+            Program::TrueType(program) if program.cid_map().is_some() => {
+                usize::from(program.num_glyphs())
+            }
             Program::TrueType(program) => program.names().len(),
             Program::Cff(program) => usize::from(program.glyph_count()),
+            Program::Type1Cid(program) => program.cids().len(),
         }
     }
 
@@ -134,6 +180,7 @@ impl Program {
             Program::Type1(program) => program.charstrings().keys().map(Vec::as_slice).collect(),
             Program::TrueType(program) => program.names().keys().map(Vec::as_slice).collect(),
             Program::Cff(program) => program.glyph_names(),
+            Program::Type1Cid(_) => Vec::new(),
         }
     }
 
@@ -141,7 +188,7 @@ impl Program {
     /// CFF, whose glyph space is what the font matrix maps.
     pub fn units_per_em(&self) -> Option<u16> {
         match self {
-            Program::Type1(_) | Program::Cff(_) => None,
+            Program::Type1(_) | Program::Cff(_) | Program::Type1Cid(_) => None,
             Program::TrueType(program) => Some(program.units_per_em()),
         }
     }

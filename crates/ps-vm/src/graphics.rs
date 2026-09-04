@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use ps_fonts::{Program, ProgramKind, ResidentFace};
+use ps_fonts::{CMap, Program, ProgramKind, ResidentFace};
 
 use crate::error::VmError;
 
@@ -281,18 +281,40 @@ pub struct FontRef {
     pub matrix: Matrix,
 }
 
-/// One glyph of a shown run: its character code and the displacement, in
-/// glyph space, applied to the current point after it. The displacement is
-/// the glyph's width plus whatever the show variant added, taken back
-/// through the font matrix.
+/// One glyph of a shown run: the code bytes that selected it (`len`
+/// bytes, one to four, as the big-endian value `code`), the CID the
+/// font's CMap gave them (the code itself for a simple font, whose codes
+/// are one byte), and the displacement, in glyph space, applied to the
+/// current point after it. The displacement is the glyph's width plus
+/// whatever the show variant added, taken back through the font matrix;
+/// in writing mode 1 it is the vertical advance.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Glyph {
-    pub code: u8,
+    pub code: u32,
+    pub len: u8,
+    pub cid: u16,
     pub dx: f32,
     pub dy: f32,
 }
 
 impl Glyph {
+    /// A simple font's glyph: a one-byte code that is its own CID.
+    pub const fn simple(code: u8, dx: f32, dy: f32) -> Self {
+        Glyph {
+            code: code as u32,
+            len: 1,
+            cid: code as u16,
+            dx,
+            dy,
+        }
+    }
+
+    /// The code as its bytes, big-endian, `len` of them.
+    pub fn code_bytes(&self) -> Vec<u8> {
+        let len = usize::from(self.len.clamp(1, 4));
+        self.code.to_be_bytes()[4 - len..].to_vec()
+    }
+
     /// The sum of the displacements of a run, in glyph space.
     pub fn total(glyphs: &[Glyph]) -> Point {
         glyphs.iter().fold(Point::default(), |acc, g| {
@@ -329,6 +351,24 @@ pub enum FontSource {
         program: Rc<Program>,
         font_matrix: Matrix,
         font_name: Vec<u8>,
+    },
+    /// A Type 0 font: its CMap decodes the run's bytes into codes and
+    /// CIDs, and `descendant` is the CID-keyed font the CMap's font
+    /// number 0 selects (an `Embedded` source whose program is addressed
+    /// by CID, or, for a simple descendant, that font's own source).
+    /// `family` is the Type 0 font's `FID`; `wmode` is the CMap's
+    /// writing mode, in which every run's glyphs are positioned at their
+    /// vertical origin; `unicode_based` marks a CMap whose codes are
+    /// Unicode, so `Glyph::code` bytes are UTF-16BE. Displacements are in
+    /// the descendant's glyph space, and the font matrix the run carries
+    /// is the descendant's composed with the Type 0 font's.
+    Composite {
+        family: u32,
+        cmap_name: Vec<u8>,
+        wmode: u8,
+        unicode_based: bool,
+        cmap: Rc<CMap>,
+        descendant: Box<FontSource>,
     },
 }
 
@@ -369,6 +409,31 @@ impl PartialEq for FontSource {
                     && Rc::ptr_eq(program, program2)
                     && font_matrix == matrix2
                     && font_name == name2
+            }
+            (
+                FontSource::Composite {
+                    family,
+                    cmap_name,
+                    wmode,
+                    unicode_based,
+                    cmap,
+                    descendant,
+                },
+                FontSource::Composite {
+                    family: family2,
+                    cmap_name: name2,
+                    wmode: wmode2,
+                    unicode_based: unicode2,
+                    cmap: cmap2,
+                    descendant: descendant2,
+                },
+            ) => {
+                family == family2
+                    && cmap_name == name2
+                    && wmode == wmode2
+                    && unicode_based == unicode2
+                    && Rc::ptr_eq(cmap, cmap2)
+                    && descendant == descendant2
             }
             _ => false,
         }
@@ -577,19 +642,22 @@ mod tests {
     #[test]
     fn glyph_runs_sum_their_displacements() {
         let run = [
-            Glyph {
-                code: 72,
-                dx: 722.0,
-                dy: 0.0,
-            },
-            Glyph {
-                code: 105,
-                dx: 222.0,
-                dy: 5.0,
-            },
+            Glyph::simple(72, 722.0, 0.0),
+            Glyph::simple(105, 222.0, 5.0),
         ];
         assert_eq!(Glyph::total(&run), Point::new(944.0, 5.0));
         assert_eq!(Glyph::total(&[]), Point::default());
+        assert_eq!(run[0].cid, 72);
+        assert_eq!(run[0].len, 1);
+        assert_eq!(run[0].code_bytes(), vec![72]);
+        let wide = Glyph {
+            code: 0x8140,
+            len: 2,
+            cid: 200,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        assert_eq!(wide.code_bytes(), vec![0x81, 0x40]);
     }
 
     #[test]

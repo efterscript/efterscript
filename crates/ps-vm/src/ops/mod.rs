@@ -110,6 +110,7 @@ macro_rules! op_table {
 
 pub mod arith;
 pub mod array;
+pub mod cidinit;
 pub mod control;
 pub mod dict;
 pub mod embedded;
@@ -146,6 +147,7 @@ const MODULES: &[&[OpEntry]] = &[
     font::PAINT_OPS,
     resource::OPS,
     fontset::OPS,
+    cidinit::OPS,
 ];
 
 /// The complete operator table, built on first use.

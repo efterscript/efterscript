@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 //! Program snapshots of the fonts a job defines: a Type 1 dictionary's
-//! `Private/lenIV`, `Private/Subrs`, and `CharStrings`, or a Type 42
-//! dictionary's `sfnts` and `CharStrings`, read once into an immutable
+//! `Private/lenIV`, `Private/Subrs`, and `CharStrings`, a Type 42
+//! dictionary's `sfnts` and `CharStrings`, or a `CIDFontType 2`
+//! dictionary's `sfnts` and `CIDMap`, read once into an immutable
 //! `ps_fonts::Program`. The dictionary entries are read as the VM sees
 //! them, without the access checks operators apply: a font's `Private`
 //! is `noaccess` and its charstrings are `noaccess` strings by design.
@@ -14,6 +15,7 @@
 
 use std::collections::BTreeMap;
 
+use ps_fonts::truetype::CidMap;
 use ps_fonts::type1::Type1Dict;
 use ps_fonts::{Program, TrueTypeProgram, Type1Program};
 
@@ -26,6 +28,9 @@ use crate::ops::output::source;
 /// The program behind `dict`; `invalidfont` when the dictionary has no
 /// usable program.
 pub(crate) fn snapshot(i: &mut Interp, dict: Object) -> Result<Program, VmError> {
+    if entry(i, dict, "CIDFontType")?.and_then(Object::as_i32) == Some(2) {
+        return cidfont_type2(i, dict);
+    }
     match entry(i, dict, "FontType")?.and_then(Object::as_i32) {
         Some(1) => type1(i, dict),
         Some(42) => type42(i, dict),
@@ -188,4 +193,78 @@ fn type42(i: &mut Interp, dict: Object) -> Result<Program, VmError> {
         .map_err(|_| VmError::InvalidFont)?
         .with_names(names);
     Ok(Program::TrueType(program))
+}
+
+/// A `CIDFontType 2` dictionary: the TrueType program of `sfnts` with
+/// the `CIDMap` as its CID map — a string (or array of strings) of
+/// `GDBytes` per CID, a dictionary of CID to glyph index, or an integer
+/// offset added to every CID — over `CIDCount` CIDs.
+fn cidfont_type2(i: &mut Interp, dict: Object) -> Result<Program, VmError> {
+    let sfnts = get(i, dict, "sfnts")
+        .filter(|o| matches!(o.ty(), Type::Array | Type::PackedArray))
+        .ok_or(VmError::InvalidFont)?;
+    let bytes = sfnts_bytes(i, sfnts)?;
+    let program = TrueTypeProgram::parse(bytes).map_err(|_| VmError::InvalidFont)?;
+    let count = get(i, dict, "CIDCount")
+        .and_then(Object::as_i32)
+        .and_then(|n| u32::try_from(n).ok());
+    let cid_map = get(i, dict, "CIDMap").ok_or(VmError::InvalidFont)?;
+    let map = match cid_map.ty() {
+        Type::String | Type::Array | Type::PackedArray => {
+            let data = match cid_map.ty() {
+                Type::String => string(i, cid_map)?,
+                _ => {
+                    let strings = i.mem.array(cid_map).ok_or(VmError::InvalidFont)?.to_vec();
+                    let mut data = Vec::new();
+                    for item in strings {
+                        data.extend(string(i, item)?);
+                    }
+                    data
+                }
+            };
+            let width = get(i, dict, "GDBytes")
+                .and_then(Object::as_i32)
+                .map_or(2, |n| n.clamp(1, 4) as usize);
+            let available = data.len() / width;
+            let count = count.map_or(available, |c| (c as usize).min(available));
+            let table = data
+                .chunks(width)
+                .take(count)
+                .map(|chunk| {
+                    chunk
+                        .iter()
+                        .fold(0u32, |acc, &b| acc << 8 | u32::from(b))
+                        .min(u32::from(u16::MAX)) as u16
+                })
+                .collect();
+            CidMap::Table(table)
+        }
+        Type::Dict => {
+            let entries = i.mem.dict(cid_map).ok_or(VmError::InvalidFont)?;
+            let pairs: Vec<(u16, u16)> = entries
+                .iter()
+                .filter_map(|(key, value)| {
+                    let cid = u16::try_from(key.as_i32()?).ok()?;
+                    let gid = u16::try_from(value.as_i32()?).ok()?;
+                    Some((cid, gid))
+                })
+                .collect();
+            let highest = pairs.iter().map(|&(cid, _)| u32::from(cid) + 1).max();
+            let count = count.or(highest).unwrap_or(0) as usize;
+            let mut table = vec![0u16; count];
+            for (cid, gid) in pairs {
+                if let Some(slot) = table.get_mut(usize::from(cid)) {
+                    *slot = gid;
+                }
+            }
+            CidMap::Table(table)
+        }
+        Type::Integer => CidMap::Offset {
+            offset: u16::try_from(cid_map.as_i32().expect("integer"))
+                .map_err(|_| VmError::InvalidFont)?,
+            count: count.unwrap_or_else(|| u32::from(program.num_glyphs())),
+        },
+        _ => return Err(VmError::InvalidFont),
+    };
+    Ok(Program::TrueType(program.with_cid_map(map)))
 }

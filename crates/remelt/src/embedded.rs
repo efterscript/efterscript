@@ -18,7 +18,8 @@
 //! taken through the font matrix, so a Type 1 program with an unusual
 //! matrix and a Type 42 program with its unit-em glyph space both come
 //! out right. Subset names carry a six-letter tag derived from the font
-//! name and the glyph set, so the output stays deterministic.
+//! name and the glyph set, so the output stays deterministic. Composite
+//! fonts share the table and its timing and are written by `composite`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -31,15 +32,17 @@ use ps_fonts::{
 use ps_graphics::{FontSpec, GlyphNames, IrOp, Op, Page};
 use ps_vm::Matrix;
 
+use crate::composite::CompositeFont;
+use crate::content::Recode;
 use crate::fonts::{differences, put_bounds, widths, write_to_unicode};
 
 /// `StemV` when the program does not say (TrueType always; Type 1
 /// without `StdVW`).
-const DEFAULT_STEM_V: f32 = 80.0;
+pub(crate) const DEFAULT_STEM_V: f32 = 80.0;
 
 /// Font descriptor flags (ISO 32000-1 Table 123).
-const FIXED_PITCH: i64 = 1;
-const SYMBOLIC: i64 = 1 << 2;
+pub(crate) const FIXED_PITCH: i64 = 1;
+pub(crate) const SYMBOLIC: i64 = 1 << 2;
 const NONSYMBOLIC: i64 = 1 << 5;
 const ITALIC: i64 = 1 << 6;
 
@@ -49,47 +52,79 @@ struct EmbeddedFont {
     codes: BTreeSet<u8>,
 }
 
-/// The embedded fonts used so far, one per snapshot and encoding.
+/// The embedded fonts used so far, one per snapshot and encoding, and
+/// the composite fonts, one per CMap, writing mode, and descendant.
 #[derive(Default)]
 pub(crate) struct EmbeddedTable {
     fonts: Vec<EmbeddedFont>,
+    composites: Vec<CompositeFont>,
 }
 
-/// The codes the page shows in font `index`, in its own operations and
-/// in the glyph procedures of its Type 3 fonts.
-fn codes_used(page: &Page, index: usize) -> BTreeSet<u8> {
-    fn collect(ops: &[Op], index: usize, into: &mut BTreeSet<u8>) {
+/// The CIDs the page shows in font `index`, in its own operations and
+/// in the glyph procedures of its Type 3 fonts; for a simple font the
+/// CID is the code.
+pub(crate) fn cids_used(page: &Page, index: usize) -> BTreeSet<u16> {
+    fn collect(ops: &[Op], index: usize, into: &mut BTreeSet<u16>) {
         for op in ops {
             if let IrOp::Text { font, glyphs, .. } = &op.op
                 && font.0 == index
             {
-                into.extend(glyphs.iter().map(|g| g.code));
+                into.extend(glyphs.iter().map(|g| g.cid));
             }
         }
     }
-    let mut codes = BTreeSet::new();
-    collect(&page.ops, index, &mut codes);
+    let mut cids = BTreeSet::new();
+    collect(&page.ops, index, &mut cids);
     for spec in &page.resources.fonts {
         if let FontSpec::Type3 { glyphs, .. } = spec {
             for glyph in glyphs.values() {
-                collect(&glyph.ops, index, &mut codes);
+                collect(&glyph.ops, index, &mut cids);
             }
         }
     }
-    codes
+    cids
+}
+
+/// The one-byte codes the page shows in a simple font: a CID a byte
+/// cannot hold selects code 0, as the VM's show has it.
+fn codes_used(page: &Page, index: usize) -> BTreeSet<u8> {
+    cids_used(page, index)
+        .into_iter()
+        .map(|cid| u8::try_from(cid).unwrap_or(0))
+        .collect()
 }
 
 impl EmbeddedTable {
-    /// The font object for the embedded font at `index` of `page`'s
-    /// resources, allocated on first use; the codes the page shows in
-    /// it join the font's set.
+    /// The font object for the embedded or composite font at `index` of
+    /// `page`'s resources, allocated on first use; the codes (or CIDs)
+    /// the page shows in it join the font's set. A composite font
+    /// written as a Type 3 fallback enters its one-byte codes for this
+    /// page in `recode`.
     pub(crate) fn use_font<W: Write>(
         &mut self,
         doc: &mut Document<W>,
         page: &Page,
         index: usize,
+        recode: &mut Recode,
+        notes: &mut Vec<String>,
     ) -> Ref {
         let spec = &page.resources.fonts[index];
+        if let FontSpec::Composite { .. } = spec {
+            let cids = cids_used(page, index);
+            let font = match self.composites.iter_mut().find(|f| f.spec.same_font(spec)) {
+                Some(font) => font,
+                None => {
+                    let font = doc.alloc();
+                    self.composites.push(CompositeFont::new(spec, font));
+                    self.composites.last_mut().expect("just pushed")
+                }
+            };
+            font.record(spec, cids, notes);
+            if let Some(codes) = font.recode() {
+                recode.insert(index, codes);
+            }
+            return font.font;
+        }
         let codes = codes_used(page, index);
         if let Some(font) = self.fonts.iter_mut().find(|f| f.spec == *spec) {
             font.codes.extend(codes);
@@ -113,6 +148,9 @@ impl EmbeddedTable {
     ) -> Result<(), pdf_out::Error> {
         for font in self.fonts {
             write_font(doc, &font, filter)?;
+        }
+        for font in self.composites {
+            crate::composite::write_font(doc, &font, filter)?;
         }
         Ok(())
     }
@@ -143,7 +181,7 @@ pub(crate) fn subset_tag(font_name: &[u8], glyphs: &BTreeSet<Vec<u8>>) -> String
         .collect()
 }
 
-fn tagged(tag: &str, font_name: &[u8]) -> Vec<u8> {
+pub(crate) fn tagged(tag: &str, font_name: &[u8]) -> Vec<u8> {
     let mut name = format!("{tag}+").into_bytes();
     name.extend_from_slice(font_name);
     name
@@ -166,7 +204,7 @@ fn pdf_width(spec: &FontSpec, code: u8) -> f32 {
 }
 
 /// A glyph-space box through the font matrix, in thousandths.
-fn pdf_bbox(bbox: [f32; 4], matrix: Matrix) -> [f32; 4] {
+pub(crate) fn pdf_bbox(bbox: [f32; 4], matrix: Matrix) -> [f32; 4] {
     let [llx, lly, urx, ury] = bbox;
     let corners = [(llx, lly), (urx, lly), (llx, ury), (urx, ury)];
     let mut out = [
@@ -185,15 +223,15 @@ fn pdf_bbox(bbox: [f32; 4], matrix: Matrix) -> [f32; 4] {
     out.map(|v| (f64::from(v) * 1000.0).round() as f32 / 1000.0)
 }
 
-struct Descriptor {
-    flags: i64,
-    bbox: [f32; 4],
-    italic_angle: f32,
-    cap_height: Option<f32>,
-    stem_v: f32,
+pub(crate) struct Descriptor {
+    pub flags: i64,
+    pub bbox: [f32; 4],
+    pub italic_angle: f32,
+    pub cap_height: Option<f32>,
+    pub stem_v: f32,
 }
 
-fn write_descriptor<W: Write>(
+pub(crate) fn write_descriptor<W: Write>(
     doc: &mut Document<W>,
     name: &[u8],
     d: &Descriptor,
@@ -343,6 +381,21 @@ fn write_font<W: Write>(
             let descriptor = write_descriptor(doc, &name, &descriptor, stream)?;
             (name, descriptor)
         }
+        // A CID-keyed Type 1 program has no simple-font embedding form,
+        // and the VM defines no simple font over one; the composite
+        // change writes it through its own path.
+        Program::Type1Cid(_) => {
+            let name = tagged(&subset_tag(font_name, &BTreeSet::new()), font_name);
+            let descriptor = Descriptor {
+                flags: SYMBOLIC,
+                bbox: [0.0; 4],
+                italic_angle: 0.0,
+                cap_height: None,
+                stem_v: DEFAULT_STEM_V,
+            };
+            let descriptor = write_descriptor(doc, &name, &descriptor, None)?;
+            (name, descriptor)
+        }
     };
     let named: Vec<(u8, &[u8])> = font
         .codes
@@ -364,7 +417,7 @@ fn write_font<W: Write>(
         )?,
     };
     let differing: Vec<(u8, &[u8])> = match kind {
-        ProgramKind::Type1 | ProgramKind::Cff => font
+        ProgramKind::Type1 | ProgramKind::Cff | ProgramKind::Type1Cid => font
             .codes
             .iter()
             .filter(|&&code| {
@@ -384,7 +437,7 @@ fn write_font<W: Write>(
         v.dict(|d| {
             d.key("Type").name("Font");
             d.key("Subtype").name(match kind {
-                ProgramKind::Type1 | ProgramKind::Cff => "Type1",
+                ProgramKind::Type1 | ProgramKind::Cff | ProgramKind::Type1Cid => "Type1",
                 ProgramKind::TrueType => "TrueType",
             });
             d.key("BaseFont").name_bytes(&base_font);
@@ -465,7 +518,12 @@ fn truetype_glyphs(
 /// does not know the name: the program's own Unicode cmap, read
 /// backwards from the glyph the name selects.
 fn truetype_unicode(program: &TrueTypeProgram, name: &[u8]) -> Option<Vec<char>> {
-    let gid = program.gid(name)?;
+    truetype_gid_unicode(program, program.gid(name)?)
+}
+
+/// The character a TrueType glyph index stands for in the program's own
+/// Unicode cmap, read backwards.
+pub(crate) fn truetype_gid_unicode(program: &TrueTypeProgram, gid: u16) -> Option<Vec<char>> {
     let cmap = program.cmap(3, 1).ok().flatten()?;
     cmap.iter()
         .find(|(_, g)| **g == gid)

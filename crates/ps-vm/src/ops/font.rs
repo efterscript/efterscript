@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Font operators (PLRM3 §5, §8.2): font dictionaries and the font
-//! directories, the resident standard fonts materialised on first
-//! `findfont`, name substitution, the derived-font operators, the show
-//! family, and the width operators a Type 3 glyph procedure calls.
+//! Font operators (PLRM3 §5, §8.2, §5.11): font dictionaries and the
+//! font directories, the resident standard fonts materialised on first
+//! `findfont`, name substitution, the derived-font operators, Type 0
+//! fonts and `composefont`, CIDFont dictionaries (which `definefont`
+//! registers in the `CIDFont` category), the show family, and the width
+//! operators a Type 3 glyph procedure calls.
 //!
 //! `OPS` is always defined: a scripting embedder can define, find, scale,
 //! and measure fonts without a graphics backend, the VM keeping the
@@ -19,6 +21,7 @@ use crate::interp::Interp;
 use crate::memory::Memory;
 use crate::object::{Access, Object, Type};
 use crate::ops::array::{bytes, items};
+use crate::ops::cidinit::{self, Resolved};
 use crate::ops::graphics::read_matrix;
 use crate::ops::pagedevice::in_global;
 use crate::ops::show::{self, Variant};
@@ -32,6 +35,7 @@ op_table! { OPS {
     "setfont" => setfont, [Dict];
     "currentfont" => currentfont;
     "selectfont" => selectfont, [Any, Any];
+    "composefont" => composefont, [Any, Any, Array];
     "stringwidth" => stringwidth, [String];
     "setcachedevice" => setcachedevice, [Num, Num, Num, Num, Num, Num];
     "setcachedevice2" => setcachedevice2, [Num, Num, Num, Num, Num, Num, Num, Num, Num, Num];
@@ -91,15 +95,37 @@ pub(crate) fn encoding_array(mem: &mut Memory, table: &Encoding) -> Result<Objec
 
 // --- definition and lookup ------------------------------------------------------
 
+/// What kind of font dictionary `definefont` is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Simple,
+    Type0,
+    CidFont,
+}
+
+/// Whether `dict` is a CIDFont dictionary: it carries `CIDFontType`.
+pub(crate) fn is_cidfont(i: &mut Interp, dict: Object) -> Result<bool, VmError> {
+    Ok(entry(i, dict, "CIDFontType")?.is_some())
+}
+
 /// The structure `definefont` requires: a `FontType` this VM can handle,
-/// a matrix, a full encoding, and for Type 3 a glyph procedure.
-fn validate(i: &mut Interp, font: Object) -> Result<(), VmError> {
+/// a matrix, a full encoding, and for Type 3 a glyph procedure; for a
+/// Type 0 font its map type, CMap, descendants, and font-number
+/// encoding; for a CIDFont its type and matrix. `None` when a Type 0
+/// font's CMap is a predefined one whose load has just started.
+fn validate(i: &mut Interp, font: Object) -> Result<Option<Kind>, VmError> {
     let font_type = entry(i, font, "FontType")?.and_then(Object::as_i32);
+    let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
+    read_matrix(i, matrix).map_err(|_| VmError::InvalidFont)?;
+    if is_cidfont(i, font)? {
+        return validate_cidfont(i, font).map(|()| Some(Kind::CidFont));
+    }
+    if font_type == Some(0) {
+        return validate_type0(i, font);
+    }
     if !matches!(font_type, Some(1 | 2 | 3 | 42)) {
         return Err(VmError::InvalidFont);
     }
-    let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
-    read_matrix(i, matrix).map_err(|_| VmError::InvalidFont)?;
     let encoding = entry(i, font, "Encoding")?.ok_or(VmError::InvalidFont)?;
     if !is_array(encoding) || encoding.length() != Some(256) {
         return Err(VmError::InvalidFont);
@@ -110,15 +136,128 @@ fn validate(i: &mut Interp, font: Object) -> Result<(), VmError> {
             return Err(VmError::InvalidFont);
         }
     }
-    Ok(())
+    Ok(Some(Kind::Simple))
+}
+
+fn validate_cidfont(i: &mut Interp, font: Object) -> Result<(), VmError> {
+    let cid_type = entry(i, font, "CIDFontType")?.and_then(Object::as_i32);
+    match cid_type {
+        Some(0) => Ok(()),
+        Some(2) => {
+            let sfnts = entry(i, font, "sfnts")?;
+            if !sfnts.is_some_and(is_array) {
+                return Err(VmError::InvalidFont);
+            }
+            Ok(())
+        }
+        _ => Err(VmError::InvalidFont),
+    }
+}
+
+/// A Type 0 font: `FMapType` 9 (the CMap-driven kind; the older map
+/// types are refused), a `CMap` (a CMap dictionary, or the name of one),
+/// an `FDepVector` of defined fonts none of which is itself Type 0, and
+/// an `Encoding` of font numbers into it, `[0]` when absent.
+fn validate_type0(i: &mut Interp, font: Object) -> Result<Option<Kind>, VmError> {
+    if entry(i, font, "FMapType")?.and_then(Object::as_i32) != Some(9) {
+        return Err(VmError::InvalidFont);
+    }
+    let cmap = entry(i, font, "CMap")?.ok_or(VmError::InvalidFont)?;
+    let cmap = match cmap.ty() {
+        Type::Dict | Type::Name => match cidinit::resolve(i, cmap, "definefont") {
+            Ok(Resolved::Found(dict)) => dict,
+            Ok(Resolved::Pending) => return Ok(None),
+            Err(_) => return Err(VmError::InvalidFont),
+        },
+        _ => return Err(VmError::InvalidFont),
+    };
+    cidinit::cmap_of(i, cmap)?;
+    let descendants = descendants(i, font)?;
+    for descendant in &descendants {
+        if entry(i, *descendant, "FID")?.is_none()
+            || entry(i, *descendant, "FontType")?.and_then(Object::as_i32) == Some(0)
+        {
+            return Err(VmError::InvalidFont);
+        }
+    }
+    if let Some(encoding) = entry(i, font, "Encoding")? {
+        if !is_array(encoding) {
+            return Err(VmError::InvalidFont);
+        }
+        for number in items(i, encoding)? {
+            let index = number.as_i32().ok_or(VmError::InvalidFont)?;
+            if usize::try_from(index).is_err() || index as usize >= descendants.len() {
+                return Err(VmError::InvalidFont);
+            }
+        }
+    }
+    Ok(Some(Kind::Type0))
+}
+
+/// The `FDepVector` of a Type 0 font: a non-empty array of dictionaries.
+pub(crate) fn descendants(i: &mut Interp, font: Object) -> Result<Vec<Object>, VmError> {
+    let vector = entry(i, font, "FDepVector")?
+        .filter(|v| is_array(*v))
+        .ok_or(VmError::InvalidFont)?;
+    let dicts = items(i, vector)?;
+    if dicts.is_empty() || dicts.iter().any(|d| d.ty() != Type::Dict) {
+        return Err(VmError::InvalidFont);
+    }
+    Ok(dicts)
+}
+
+/// The font-number encoding of a Type 0 font: indices into its
+/// `FDepVector`, `[0]` when absent.
+pub(crate) fn font_numbers(i: &mut Interp, font: Object) -> Result<Vec<usize>, VmError> {
+    match entry(i, font, "Encoding")? {
+        Some(encoding) if is_array(encoding) => items(i, encoding)?
+            .iter()
+            .map(|n| {
+                n.as_i32()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or(VmError::InvalidFont)
+            })
+            .collect(),
+        Some(_) => Err(VmError::InvalidFont),
+        None => Ok(vec![0]),
+    }
+}
+
+/// The descendant a Type 0 font's font number 0 selects.
+pub(crate) fn first_descendant(i: &mut Interp, font: Object) -> Result<Object, VmError> {
+    let descendants = descendants(i, font)?;
+    let numbers = font_numbers(i, font)?;
+    numbers
+        .first()
+        .and_then(|&n| descendants.get(n))
+        .copied()
+        .ok_or(VmError::InvalidFont)
+}
+
+/// The matrix glyph space is measured through: a Type 0 font's matrix
+/// composed after its first descendant's, else the font's own.
+pub(crate) fn effective_matrix(i: &mut Interp, font: Object) -> Result<Matrix, VmError> {
+    let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
+    let matrix = read_matrix(i, matrix).map_err(|_| VmError::InvalidFont)?;
+    if entry(i, font, "FontType")?.and_then(Object::as_i32) != Some(0) {
+        return Ok(matrix);
+    }
+    let descendant = first_descendant(i, font)?;
+    let inner = entry(i, descendant, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
+    let inner = read_matrix(i, inner).map_err(|_| VmError::InvalidFont)?;
+    Ok(inner.then(matrix))
 }
 
 /// `definefont` proper, shared with `defineresource`: validates, gives
 /// the dictionary its `FID`, makes it read-only, and registers it in
 /// `FontDirectory` (and `GlobalFontDirectory` in global allocation
-/// mode) under `key`.
-pub(crate) fn define(i: &mut Interp, key: Object, font: Object) -> Result<Object, VmError> {
-    validate(i, font)?;
+/// mode) under `key` — a CIDFont in the `CIDFont` category instead.
+/// `None` when a predefined CMap the font names has to load first: the
+/// operator returns with its operands in place and runs again after.
+pub(crate) fn define(i: &mut Interp, key: Object, font: Object) -> Result<Option<Object>, VmError> {
+    let Some(kind) = validate(i, font)? else {
+        return Ok(None);
+    };
     let key = i.mem.dict_key(key)?;
     let fid = i.intern("FID");
     if !i.mem.dict_known(font, fid)? {
@@ -131,19 +270,78 @@ pub(crate) fn define(i: &mut Interp, key: Object, font: Object) -> Result<Object
         i.record_defined_matrix(id, matrix);
     }
     i.mem.dict_set_access(font, Access::ReadOnly)?;
-    let category = i.font_category;
+    let category = match kind {
+        Kind::Simple | Kind::Type0 => i.font_category,
+        Kind::CidFont => i.cidfont_category,
+    };
     if i.mem.current_global() {
         i.mem.dict_put(category.global, key, font)?;
     }
     i.mem.dict_put(category.local, key, font)?;
-    Ok(font)
+    Ok(Some(font))
 }
 
 fn definefont(i: &mut Interp) -> Result<(), VmError> {
     let font = i.peek(0)?;
     let key = i.peek(1)?;
-    define(i, key, font)?;
+    if define(i, key, font)?.is_none() {
+        return Ok(());
+    }
     drop(i, 2)?;
+    i.push(font)
+}
+
+/// `composefont`: a Type 0 font of map type 9 over the CMap (given as a
+/// dictionary or a name) and the descendant array, with the identity
+/// matrix, font numbers in descendant order, and the CMap's writing
+/// mode, defined under the key and returned.
+fn composefont(i: &mut Interp) -> Result<(), VmError> {
+    let vector = i.peek(0)?;
+    let cmap = i.peek(1)?;
+    let key = i.peek(2)?;
+    let cmap = match cmap.ty() {
+        Type::Dict | Type::Name => match cidinit::resolve(i, cmap, "composefont") {
+            Ok(Resolved::Found(dict)) => dict,
+            Ok(Resolved::Pending) => return Ok(()),
+            Err(VmError::Undefined) => return Err(VmError::InvalidFont),
+            Err(e) => return Err(e),
+        },
+        _ => return Err(VmError::TypeCheck),
+    };
+    let wmode = cidinit::cmap_of(i, cmap)?.wmode;
+    let descendants = items(i, vector)?;
+    if descendants.is_empty() {
+        return Err(VmError::RangeCheck);
+    }
+    let vector = i.mem.alloc_array(descendants.clone())?;
+    let numbers = (0..descendants.len())
+        .map(|n| Object::integer(n as i32))
+        .collect();
+    let encoding = i.mem.alloc_array(numbers)?;
+    let matrix = i.mem.alloc_array(
+        [1, 0, 0, 1, 0, 0]
+            .into_iter()
+            .map(Object::integer)
+            .collect(),
+    )?;
+    let font_name = i.mem.dict_key(key)?;
+    let font = i.mem.new_dict(8);
+    let entries = [
+        ("FontType", Object::integer(0)),
+        ("FMapType", Object::integer(9)),
+        ("FontMatrix", matrix),
+        ("FontName", font_name),
+        ("CMap", cmap),
+        ("FDepVector", vector),
+        ("Encoding", encoding),
+        ("WMode", Object::integer(i32::from(wmode))),
+    ];
+    for (name, value) in entries {
+        let name = i.intern(name);
+        i.mem.dict_put(font, name, value)?;
+    }
+    define(i, key, font)?.ok_or(VmError::InvalidFont)?;
+    drop(i, 3)?;
     i.push(font)
 }
 
@@ -309,8 +507,7 @@ fn makefont(i: &mut Interp) -> Result<(), VmError> {
 /// `setfont`: a font dictionary that has been through `definefont` (it
 /// carries an `FID`) becomes the current font.
 pub(crate) fn select(i: &mut Interp, font: Object) -> Result<(), VmError> {
-    let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
-    let matrix = read_matrix(i, matrix).map_err(|_| VmError::InvalidFont)?;
+    let matrix = effective_matrix(i, font)?;
     if entry(i, font, "FID")?.is_none() {
         return Err(VmError::InvalidFont);
     }

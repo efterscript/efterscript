@@ -5,7 +5,8 @@
 //! SHA-256 matches its entry there — the fetched assets and the metric
 //! tables derived from them alike — every entry names an existing file,
 //! and each outline set's licence file sits beside its fonts with the
-//! plain licence text under `LICENSES/`. The files promoted from the
+//! plain licence text under `LICENSES/`, as does the CMap directory's.
+//! The files promoted from the
 //! vault are also compared with the vault's `SHA256SUMS` when
 //! `EFTERSCRIPT_HELLBOX` names an existing checkout; that part skips
 //! with a message otherwise.
@@ -187,8 +188,12 @@ fn fetched() -> Vec<String> {
     for family in TEX_GYRE_MANIFESTS {
         files.push(format!("outlines/tex-gyre/MANIFEST-TeX-Gyre-{family}.txt"));
     }
+    for name in ["Identity-H", "Identity-V", "LICENSE.md"] {
+        files.push(format!("cmap/{name}"));
+    }
     files.push("LICENSES/OFL-1.1.txt".to_string());
     files.push("LICENSES/LPPL-1.3c.txt".to_string());
+    files.push("LICENSES/BSD-3-Clause.txt".to_string());
     files
 }
 
@@ -367,6 +372,36 @@ fn licence_files_sit_beside_the_fonts_and_the_texts_are_in_licenses() {
     let lppl = std::fs::read_to_string(located("LICENSES/LPPL-1.3c.txt")).unwrap();
     assert!(lppl.starts_with("The LaTeX Project Public License"));
     assert!(lppl.contains("LPPL Version 1.3c"));
+
+    // The CMap resources carry Adobe's BSD-style notice, both in the
+    // licence file beside them and in each file's own header.
+    let cmap_licence = std::fs::read_to_string(data_dir().join("cmap/LICENSE.md")).unwrap();
+    assert!(cmap_licence.starts_with("Copyright 1990-2023 Adobe."));
+    let bsd = std::fs::read_to_string(located("LICENSES/BSD-3-Clause.txt")).unwrap();
+    assert!(bsd.starts_with("Copyright (c) <year> <owner>"));
+    for clause in [
+        "Redistributions of source code must retain",
+        "Redistributions in binary form must reproduce",
+        "endorse or promote products",
+    ] {
+        assert!(
+            cmap_licence.contains(clause) && bsd.contains(clause),
+            "{clause}"
+        );
+    }
+    for name in ["Identity-H", "Identity-V"] {
+        let text = std::fs::read_to_string(data_dir().join(format!("cmap/{name}"))).unwrap();
+        assert!(text.starts_with("%!PS-Adobe-3.0 Resource-CMap"), "{name}");
+        assert!(
+            text.contains("%%Copyright: Copyright 1990-2019 Adobe."),
+            "{name}"
+        );
+        assert!(text.contains(&format!("/CMapName /{name} def")), "{name}");
+        assert_eq!(
+            ps_fonts::cmap::predefined(name.as_bytes()),
+            Some(text.as_str())
+        );
+    }
     // Each family states its own version; the manifest beside the fonts
     // must be the one for the release the fonts are.
     for (family, stem) in [

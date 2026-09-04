@@ -191,6 +191,7 @@ impl ResidentOutlines {
         let outline = match &*self.program {
             Program::Type1(program) => program.glyph(name)?.map(|g| g.outline.clone()),
             Program::Cff(program) => program.glyph(name)?.map(|g| g.outline.clone()),
+            Program::Type1Cid(_) => None,
             Program::TrueType(program) => match self.truetype_gid(program, name) {
                 Some(gid) => Some(program.outline(gid)?),
                 None => None,

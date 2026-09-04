@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: invalidfont
+% Scenario: older map types rejected. A FontType 0 dictionary whose
+% FMapType is 2 (the older byte-driven mapping) is refused by definefont
+% with invalidfont; only FMapType 9, the CMap-driven kind, is accepted.
+% Expect: invalidfont.
+/Old << /FontType 0 /FMapType 2 /FontMatrix [1 0 0 1 0 0]
+        /Encoding [0] /FDepVector [ /Helvetica findfont ] >> definefont

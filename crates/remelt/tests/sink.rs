@@ -566,7 +566,7 @@ fn helvetica() -> FontSpec {
 }
 
 fn glyph(code: u8, dx: f32, dy: f32) -> Glyph {
-    Glyph { code, dx, dy }
+    Glyph::simple(code, dx, dy)
 }
 
 fn square_glyph(ops: Vec<IrOp>, bbox: Option<Bounds>) -> GlyphProc {
@@ -605,6 +605,7 @@ fn text_page(spec: FontSpec, matrix: Matrix, glyphs: Vec<Glyph>) -> Page {
         font,
         matrix,
         glyphs,
+        wmode: 0,
     })];
     page
 }
@@ -696,6 +697,7 @@ fn encoding_differences_and_symbolic_fonts() {
             font: symbol,
             matrix: Matrix::scaling(0.01, 0.01),
             glyphs: vec![glyph(97, 631.0, 0.0)],
+            wmode: 0,
         }
         .into(),
     );
@@ -801,6 +803,7 @@ fn a_charwidth_glyph_opens_with_d0_and_carries_its_resources() {
                 font: nested,
                 matrix: Matrix::scaling(0.4, 0.4),
                 glyphs: vec![glyph(72, 722.0, 0.0)],
+                wmode: 0,
             }
             .into(),
         ],
@@ -812,6 +815,7 @@ fn a_charwidth_glyph_opens_with_d0_and_carries_its_resources() {
         font: font_index,
         matrix: Matrix::scaling(0.01, 0.01),
         glyphs: vec![glyph(97, 600.0, 0.0)],
+        wmode: 0,
     })];
     let pdf = check(&distil_pages(vec![page], uncompressed()));
     let font = font(&pdf, 0, "F1");
@@ -989,6 +993,7 @@ fn a_type3_font_is_shared_only_when_its_references_mean_the_same() {
             font,
             matrix: Matrix::scaling(0.01, 0.01),
             glyphs: vec![glyph(97, 1000.0, 0.0)],
+            wmode: 0,
         })];
         page
     };
@@ -1193,6 +1198,7 @@ fn glyphs_shown_inside_a_type3_procedure_count_for_the_embedded_font() {
                 font: FontIndex(1),
                 matrix: Matrix::scaling(0.001, 0.001),
                 glyphs: vec![glyph(101, 500.0, 0.0)],
+                wmode: 0,
             }
             .into(),
         ],
@@ -1205,6 +1211,7 @@ fn glyphs_shown_inside_a_type3_procedure_count_for_the_embedded_font() {
         font: type3,
         matrix: Matrix::scaling(0.01, 0.01),
         glyphs: vec![glyph(97, 1000.0, 0.0)],
+        wmode: 0,
     })];
     let pdf = check(&distil_pages(vec![page], uncompressed()));
     let font = font(&pdf, 0, "F1");
@@ -1236,4 +1243,161 @@ fn embedded_fonts_distil_deterministically() {
         uncompressed(),
     );
     assert_eq!(first, third, "the snapshot's identity leaves no trace");
+}
+
+// --- composite fonts ------------------------------------------------------------------
+
+fn cid_glyph(cid: u16, dx: f32, dy: f32) -> Glyph {
+    Glyph {
+        code: u32::from(cid),
+        len: 2,
+        cid,
+        dx,
+        dy,
+    }
+}
+
+fn composite(wmode: u8, program: &Rc<ps_fonts::Program>, name: &[u8]) -> FontSpec {
+    FontSpec::Composite {
+        cmap_name: if wmode == 1 {
+            b"Identity-V".to_vec()
+        } else {
+            b"Identity-H".to_vec()
+        },
+        wmode,
+        unicode_based: false,
+        descendant: Box::new(FontSpec::Embedded {
+            family: 5,
+            kind: program.kind(),
+            font_name: name.to_vec(),
+            font_matrix: Matrix::scaling(0.001, 0.001),
+            program: ps_graphics::ProgramRef(program.clone()),
+            encoding: glyph_names(&[]),
+        }),
+        cid_to_code: BTreeMap::new(),
+    }
+}
+
+fn composite_page(spec: FontSpec, wmode: u8, glyphs: Vec<Glyph>) -> Page {
+    let mut page = Page::new(LETTER);
+    let font = page.resources.add_font(spec);
+    page.ops = vec![Op::from(IrOp::Text {
+        font,
+        matrix: Matrix([0.01, 0.0, 0.0, 0.01, 100.0, 100.0]),
+        glyphs,
+        wmode,
+    })];
+    page
+}
+
+#[test]
+fn composite_adjustments_run_along_the_writing_direction() {
+    use ps_fonts::testing::corpus_cid_cff;
+    let program = Rc::new(corpus_cid_cff().program().unwrap());
+    // Horizontal: CID 1 pushed to 1000 units, then CID 2 at its width.
+    let page = composite_page(
+        composite(0, &program, b"SynCID"),
+        0,
+        vec![cid_glyph(1, 1000.0, 0.0), cid_glyph(2, 700.0, 0.0)],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n[<0001> -500 <0002>] TJ\nET\n"
+    );
+    // Vertical: a longer drop is an adjustment, a sideways step a move.
+    let page = composite_page(
+        composite(1, &program, b"SynCID"),
+        1,
+        vec![
+            cid_glyph(1, 0.0, -1500.0),
+            cid_glyph(2, 100.0, -1000.0),
+            cid_glyph(1, 0.0, -1000.0),
+        ],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n[<0001> 500 <0002>] TJ\n0.1 -2.5 Td\n<0001> Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Encoding").unwrap().as_name(), b"Identity-V");
+}
+
+#[test]
+fn a_type3_fallback_assigns_codes_in_order_of_first_use_across_pages() {
+    use ps_fonts::Program;
+    use ps_fonts::testing::CidType1Font;
+    let program = Rc::new(Program::Type1Cid(CidType1Font::corpus().program().unwrap()));
+    let first = composite_page(
+        composite(0, &program, b"SynCIDT1"),
+        0,
+        vec![cid_glyph(2, 700.0, 0.0)],
+    );
+    let second = composite_page(
+        composite(0, &program, b"SynCIDT1"),
+        0,
+        vec![cid_glyph(1, 500.0, 0.0), cid_glyph(2, 700.0, 0.0)],
+    );
+    let pdf = check(&distil_pages(vec![first, second], uncompressed()));
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<01> Tj\nET\n"
+    );
+    assert_eq!(
+        content(&pdf, 1),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<0201> Tj\nET\n",
+        "CID 2 took code 1 on the first page, CID 1 code 2 on the second"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type3");
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    assert_eq!(differences.len(), 3);
+    assert_eq!(differences[0].as_int(), 1);
+    assert_eq!(differences[1].as_name(), b"cid2");
+    assert_eq!(differences[2].as_name(), b"cid1");
+    assert_eq!(numbers(font.get("Widths").unwrap()), [700.0, 500.0]);
+    assert_eq!(
+        numbers(font.get("FontBBox").unwrap()),
+        [0.0, 0.0, 600.0, 600.0]
+    );
+    let procs = font.get("CharProcs").unwrap();
+    let cid1 = String::from_utf8(decoded(
+        pdf.resolve(procs.get("cid1").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(
+        cid1.starts_with("500 0 50 0 450 400 d1\n50 0 m\n"),
+        "{cid1}"
+    );
+}
+
+#[test]
+fn a_vertical_type3_fallback_draws_from_the_vertical_origin_with_zero_widths() {
+    use ps_fonts::Program;
+    use ps_fonts::testing::CidType1Font;
+    let program = Rc::new(Program::Type1Cid(CidType1Font::corpus().program().unwrap()));
+    let page = composite_page(
+        composite(1, &program, b"SynCIDT1"),
+        1,
+        vec![cid_glyph(2, 0.0, -1000.0), cid_glyph(1, 0.0, -1000.0)],
+    );
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<02> Tj\n0 -1 Td\n<01> Tj\nET\n",
+        "codes follow CID order within a page; every advance is a move"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(numbers(font.get("Widths").unwrap()), [0.0, 0.0]);
+    let procs = font.get("CharProcs").unwrap();
+    let cid2 = String::from_utf8(decoded(
+        pdf.resolve(procs.get("cid2").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert_eq!(
+        cid2,
+        "0 0 -350 -880 250 -280 d1\n-350 -880 m\n250 -880 l\n250 -280 l\n-350 -280 l\nh\nf\n"
+    );
 }

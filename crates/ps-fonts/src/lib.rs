@@ -26,13 +26,17 @@
 //! files ([`type1::parse_file`]), the subsetters that regenerate a
 //! Type 1 program ([`type1::write`]) and rewrite a TrueType one
 //! ([`truetype::write::subset`]) for embedding, and the synthesised
-//! fonts of [`testing`], and CFF programs with Type 2 charstrings
-//! ([`cff`], name- and CID-keyed).
+//! fonts of [`testing`], CFF programs with Type 2 charstrings
+//! ([`cff`], name- and CID-keyed), CID-keyed fonts with Type 1
+//! charstrings ([`cidfont`]), and CMaps with the shipped Identity
+//! resources ([`cmap`]).
 //!
 //! Independently useful for any document tooling.
 
 pub mod afm;
 pub mod cff;
+pub mod cidfont;
+pub mod cmap;
 pub mod encoding;
 mod glyph_list;
 mod mac_glyphs;
@@ -48,6 +52,8 @@ pub mod type1;
 
 pub use afm::{Afm, AfmError, CharMetric};
 pub use cff::CffProgram;
+pub use cidfont::Type1CidProgram;
+pub use cmap::CMap;
 pub use encoding::{Encoding, ISO_LATIN1_ENCODING, STANDARD_ENCODING};
 pub use glyph_list::unicode;
 pub use mac_glyphs::MAC_GLYPH_NAMES;

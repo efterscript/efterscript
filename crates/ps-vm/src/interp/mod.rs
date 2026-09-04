@@ -11,7 +11,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use ps_fonts::Program;
+use ps_fonts::cmap::CMapBuilder;
+use ps_fonts::{CMap, Program};
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
@@ -181,8 +182,12 @@ pub struct Interp {
     pub(crate) encoding_category: Category,
     pub(crate) procset_category: Category,
     pub(crate) fontset_category: Category,
+    pub(crate) cmap_category: Category,
+    pub(crate) cidfont_category: Category,
     /// The built-in `FontSetInit` procedure set.
     pub(crate) font_set_init: Object,
+    /// The built-in `CIDInit` procedure set.
+    pub(crate) cid_init: Object,
     pub(crate) standard_encoding: Object,
     pub(crate) iso_latin1_encoding: Object,
     pub(crate) resident_fonts: [Option<Object>; ps_fonts::ResidentFace::COUNT],
@@ -209,6 +214,16 @@ pub struct Interp {
     // gives them; nothing in the PostScript-visible font machinery
     // refers to them until a composite font does.
     cid_programs: HashMap<Vec<u8>, Rc<Program>>,
+    // CMaps built by `endcmap`, by the id their dictionary's `CodeMap`
+    // entry carries.
+    cmaps: HashMap<u32, Rc<CMap>>,
+    next_cmap_id: u32,
+    // The predefined CMaps loaded so far: global read-only dictionaries
+    // outside every category dictionary, so their status stays 2.
+    predefined_cmaps: HashMap<Vec<u8>, Object>,
+    // The CMap programs between `begincmap` and `endcmap`, innermost
+    // last: loading a predefined parent runs its program inside.
+    pub(crate) cmap_builders: Vec<CMapBuilder>,
     next_fid: u32,
     substitutions: Vec<FontSubstitution>,
     #[allow(dead_code)]
@@ -269,7 +284,10 @@ impl Interp {
         let global_encodings = mem.new_dict(8);
         let global_procsets = mem.new_dict(8);
         let global_fontsets = mem.new_dict(8);
+        let global_cmaps = mem.new_dict(8);
+        let global_cidfonts = mem.new_dict(8);
         let font_set_init = ops::fontset::init_dict(&mut mem).expect("fresh dictionary");
+        let cid_init = ops::cidinit::init_dict(&mut mem).expect("fresh dictionary");
         let standard_encoding = ops::font::encoding_array(&mut mem, &ps_fonts::STANDARD_ENCODING)
             .expect("names are simple objects");
         let iso_latin1_encoding =
@@ -283,6 +301,8 @@ impl Interp {
         let local_encodings = mem.new_dict(8);
         let local_procsets = mem.new_dict(8);
         let local_fontsets = mem.new_dict(8);
+        let local_cmaps = mem.new_dict(8);
+        let local_cidfonts = mem.new_dict(8);
 
         let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
         let atoms = Atoms {
@@ -328,7 +348,16 @@ impl Interp {
                 local: local_fontsets,
                 global: global_fontsets,
             },
+            cmap_category: Category {
+                local: local_cmaps,
+                global: global_cmaps,
+            },
+            cidfont_category: Category {
+                local: local_cidfonts,
+                global: global_cidfonts,
+            },
             font_set_init,
+            cid_init,
             standard_encoding,
             iso_latin1_encoding,
             resident_fonts: [None; ps_fonts::ResidentFace::COUNT],
@@ -339,6 +368,10 @@ impl Interp {
             font_without_backend: None,
             font_programs: HashMap::new(),
             cid_programs: HashMap::new(),
+            cmaps: HashMap::new(),
+            next_cmap_id: 0,
+            predefined_cmaps: HashMap::new(),
+            cmap_builders: Vec::new(),
             next_fid: 0,
             substitutions: Vec::new(),
             quirks,
@@ -593,6 +626,29 @@ impl Interp {
     /// it.
     pub fn cid_program(&self, name: &[u8]) -> Option<Rc<Program>> {
         self.cid_programs.get(name).cloned()
+    }
+
+    /// Keeps a CMap `endcmap` built and returns the id its dictionary's
+    /// `CodeMap` entry carries.
+    pub(crate) fn register_cmap(&mut self, cmap: Rc<CMap>) -> u32 {
+        let id = self.next_cmap_id;
+        self.next_cmap_id += 1;
+        self.cmaps.insert(id, cmap);
+        id
+    }
+
+    /// The CMap behind a `CodeMap` id.
+    pub fn cmap(&self, id: u32) -> Option<Rc<CMap>> {
+        self.cmaps.get(&id).cloned()
+    }
+
+    /// The dictionary of a predefined CMap already loaded.
+    pub(crate) fn predefined_cmap(&self, name: &[u8]) -> Option<Object> {
+        self.predefined_cmaps.get(name).copied()
+    }
+
+    pub(crate) fn cache_predefined_cmap(&mut self, name: Vec<u8>, dict: Object) {
+        self.predefined_cmaps.insert(name, dict);
     }
 
     pub(crate) fn allocate_fid(&mut self) -> Object {
@@ -886,6 +942,9 @@ impl Interp {
         }
         if let Frame::Marker(Marker::Eexec { layer, dicts }) = &frame {
             self.end_eexec(*layer, *dicts);
+        }
+        if let Frame::Marker(Marker::CMapLoad { global, .. }) = &frame {
+            self.mem.set_global(*global);
         }
         Some(frame)
     }

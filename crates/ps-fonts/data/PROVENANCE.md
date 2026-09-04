@@ -3,11 +3,12 @@
 The `core14/` metrics and `glyphlist.txt` were promoted from the project's
 private vault unmodified; their SHA-256 sums are checked against the
 vault's `SHA256SUMS` by `tests/provenance.rs` whenever `EFTERSCRIPT_HELLBOX`
-names a checkout. The `outlines/` assets never passed through the vault:
-they are freely redistributable releases fetched straight from upstream by
-`cargo xtask fetch-fonts`, which verifies each archive's checksum, extracts
-exactly the files listed here, derives the metric tables beside the TeX
-Gyre programs, and audits everything against this note (`--check`). Every
+names a checkout. The `outlines/` assets and the `cmap/` resources never
+passed through the vault: they are freely redistributable releases fetched
+straight from upstream by `cargo xtask fetch-fonts`, which verifies each
+archive's checksum, extracts exactly the files listed here, derives the
+metric tables beside the TeX Gyre programs, and audits everything against
+this note (`--check`). Every
 file below is hashed by `tests/provenance.rs` on every run. Nothing here
 is a build dependency on the vault or the network: the files are embedded
 with `include_str!`/`include_bytes!` and the crate builds without either.
@@ -234,17 +235,52 @@ Table paths are relative to this directory, except those under
 | `outlines/tex-gyre/qplri.metrics` | `0c1f52f7496bf2db0643478a980a3a46f9140162ec135bf3342668a49cc6a9f2` | `qplri.pfb` |
 | `outlines/tex-gyre/qzcmi.metrics` | `212eb2b6c266e7498fb0d4878a15599d31ef2fab519d4dbcbcc1e704fdcb9694` | `qzcmi.pfb` |
 
+## `cmap/` — the Identity CMap resources and their licence
+
+- Files: `Identity-H`, `Identity-V`, and `LICENSE.md`.
+- Source: `https://github.com/adobe-type-tools/cmap-resources` at commit
+  `f5cf3bca7fdfeaceb77aa82847e974f2306c20b4` (the `master` head when
+  retrieved), the files `Adobe-Identity-0/CMap/Identity-H`,
+  `Adobe-Identity-0/CMap/Identity-V`, and `LICENSE.md`. Retrieved
+  2026-09-03 by `cargo xtask fetch-fonts` from the raw files at that
+  commit; byte-identical to upstream. Nothing else is taken from that
+  repository: the Unicode CMaps of the CJK orderings are a separate
+  asset decision.
+- Grant: Adobe's BSD-style licence (SPDX `BSD-3-Clause`; the plain text
+  is `LICENSES/BSD-3-Clause.txt`), stated in `LICENSE.md` and repeated
+  in each CMap file's `%%Copyright:` header: redistribution in source
+  and binary forms, with or without modification, provided the
+  copyright notice, the conditions, and the disclaimer are retained (in
+  the file for source form, in accompanying documentation for binary
+  form) and Adobe's name is not used to endorse derived products. The
+  files ship unmodified with their headers and the licence file beside
+  them, which satisfies the source condition; a binary embedding this
+  crate should carry the notice in its documentation.
+- Use: the predefined `Identity-H` and `Identity-V` CMap resources,
+  embedded with `include_str!` and run through the interpreter's
+  `CIDInit` operators on first `findresource`.
+
+| File | SHA-256 |
+|---|---|
+| `cmap/Identity-H` | `a06aff40c5e4393829d572b3771e5cafcf450ec4fa6ef3df5ae4024f16fc6efa` |
+| `cmap/Identity-V` | `c03430489caf73dc71c723d9ae0413a31132f6ac9f16149d9a1d19e5d913af0f` |
+| `cmap/LICENSE.md` | `742665db9c8e1bc72603c6d319ca3e90b83bd6d95202f0cd4ef11068a07a9c29` |
+
 ## `LICENSES/` — the licence texts for REUSE
 
-- Files: `LICENSES/OFL-1.1.txt` from the SPDX licence list,
-  `https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/OFL-1.1.txt`;
-  `LICENSES/LPPL-1.3c.txt` from the LaTeX project,
-  `https://www.latex-project.org/lppl/lppl-1-3c.txt`. Both retrieved
-  2026-09-02 by `cargo xtask fetch-fonts`, unmodified.
-- The repository's `REUSE.toml` annotates the two asset directories with
-  these identifiers; the files sit at the repository root, not here.
+- Files: `LICENSES/OFL-1.1.txt` and `LICENSES/BSD-3-Clause.txt` from the
+  SPDX licence list,
+  `https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/OFL-1.1.txt`
+  and `…/text/BSD-3-Clause.txt`; `LICENSES/LPPL-1.3c.txt` from the LaTeX
+  project, `https://www.latex-project.org/lppl/lppl-1-3c.txt`. The first
+  two retrieved 2026-09-02, the BSD text 2026-09-03, all by `cargo xtask
+  fetch-fonts`, unmodified.
+- The repository's `REUSE.toml` annotates the three asset directories
+  with these identifiers; the files sit at the repository root, not
+  here.
 
 | File | SHA-256 |
 |---|---|
 | `LICENSES/OFL-1.1.txt` | `8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd` |
 | `LICENSES/LPPL-1.3c.txt` | `3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66` |
+| `LICENSES/BSD-3-Clause.txt` | `5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d` |

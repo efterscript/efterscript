@@ -1564,3 +1564,430 @@ pub fn corpus_cff() -> CffFont {
         .charstring("c", c)
         .charstring("f", f)
 }
+
+impl TrueTypeFont {
+    /// The font as a `CIDFontType 2` resource file: the program in
+    /// `sfnts`, a `CIDMap` string of two bytes per CID over `CIDCount`
+    /// entries (CIDs not in `map` select glyph 0), and `defineresource`
+    /// into the `CIDFont` category under `font_name`.
+    pub fn cidfont_type2(&self, font_name: &str, map: &[(u16, u16)]) -> String {
+        let bbox = self.bbox();
+        let em = f32::from(self.units_per_em);
+        let unit = |v: i16| {
+            let s = format!("{:.4}", f32::from(v) / em);
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        };
+        let count = map.iter().map(|&(cid, _)| cid).max().map_or(1, |c| c + 1);
+        let mut cid_map = vec![0u8; usize::from(count) * 2];
+        for &(cid, gid) in map {
+            cid_map[usize::from(cid) * 2..usize::from(cid) * 2 + 2]
+                .copy_from_slice(&gid.to_be_bytes());
+        }
+        let mut out = format!(
+            "%!PS-Adobe-3.0 Resource-CIDFont\n\
+             12 dict begin\n\
+             /CIDFontName /{font_name} def\n\
+             /CIDFontType 2 def\n\
+             /CIDSystemInfo 3 dict dup begin\n\
+             /Registry (Adobe) def\n\
+             /Ordering (Identity) def\n\
+             /Supplement 0 def\n\
+             end def\n\
+             /PaintType 0 def\n\
+             /FontMatrix [1 0 0 1 0 0] def\n\
+             /FontBBox [{} {} {} {}] def\n\
+             /CIDCount {count} def\n\
+             /GDBytes 2 def\n\
+             /CIDMap <{}> def\n\
+             /sfnts [\n",
+            unit(bbox[0]),
+            unit(bbox[1]),
+            unit(bbox[2]),
+            unit(bbox[3]),
+            hex_lines(&cid_map).trim_end(),
+        );
+        for part in self.parts() {
+            let mut part = part;
+            part.push(0);
+            out.push('<');
+            out.push_str(hex_lines(&part).trim_end());
+            out.push_str(">\n");
+        }
+        out.push_str(&format!(
+            "] def\ncurrentdict end\n/{font_name} exch /CIDFont defineresource pop\n"
+        ));
+        out
+    }
+}
+
+/// One font dictionary of a [`CidType1Font`].
+#[derive(Clone, Debug)]
+pub struct CidFd {
+    pub len_iv: usize,
+    /// Plain subroutines, written through a subroutine map in the glyph
+    /// data.
+    pub subrs: Vec<Vec<u8>>,
+    pub font_matrix: [f64; 6],
+}
+
+/// A CID-keyed font with Type 1 charstrings in the `CIDInit` `StartData`
+/// form: font dictionaries with their own `lenIV` and subroutines, and
+/// glyphs by CID.
+#[derive(Clone, Debug)]
+pub struct CidType1Font {
+    pub name: String,
+    pub registry: String,
+    pub ordering: String,
+    pub supplement: i32,
+    pub bbox: [i32; 4],
+    pub fds: Vec<CidFd>,
+    /// `(cid, font dictionary, plain charstring)`, CID 0 first.
+    pub glyphs: Vec<(u16, u8, Vec<u8>)>,
+}
+
+const CID_FD_BYTES: u8 = 1;
+const CID_GD_BYTES: u8 = 3;
+const CID_SD_BYTES: u8 = 3;
+
+impl CidType1Font {
+    /// A font with a zero-width `.notdef` at CID 0 in dictionary 0 and
+    /// no dictionaries yet.
+    pub fn new(name: &str) -> Self {
+        CidType1Font {
+            name: name.to_string(),
+            registry: "Adobe".to_string(),
+            ordering: "Identity".to_string(),
+            supplement: 0,
+            bbox: [0, 0, 1000, 1000],
+            fds: Vec::new(),
+            glyphs: vec![(0, 0, CharstringBuilder::new().hsbw(0, 0).endchar().bytes())],
+        }
+    }
+
+    /// Adds a font dictionary with `len_iv` and plain subroutines.
+    pub fn fd(mut self, len_iv: usize, subrs: Vec<Vec<u8>>) -> Self {
+        self.fds.push(CidFd {
+            len_iv,
+            subrs,
+            font_matrix: [0.001, 0.0, 0.0, 0.001, 0.0, 0.0],
+        });
+        self
+    }
+
+    /// Sets the `FontMatrix` of font dictionary `fd`.
+    pub fn fd_matrix(mut self, fd: usize, matrix: [f64; 6]) -> Self {
+        self.fds[fd].font_matrix = matrix;
+        self
+    }
+
+    /// A glyph at `cid` drawn from an outline with sidebearing 0 and
+    /// advance `wx`, run under font dictionary `fd`.
+    pub fn glyph(self, cid: u16, fd: u8, wx: i32, outline: &Outline) -> Self {
+        self.charstring(cid, fd, charstring(0, wx, outline))
+    }
+
+    pub fn charstring(mut self, cid: u16, fd: u8, code: Vec<u8>) -> Self {
+        self.glyphs.retain(|(c, _, _)| *c != cid);
+        self.glyphs.push((cid, fd, code));
+        self.glyphs.sort_by_key(|(c, _, _)| *c);
+        self
+    }
+
+    pub fn cid_count(&self) -> u32 {
+        self.glyphs
+            .iter()
+            .map(|(c, _, _)| u32::from(*c) + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The binary glyph data and the layout describing it: the CID map
+    /// at offset 0, then each dictionary's subroutine map and
+    /// subroutines, then the charstrings in CID order.
+    pub fn glyph_data(&self) -> (Vec<u8>, crate::cidfont::CidLayout) {
+        use crate::cidfont::{CidLayout, FdLayout, SubrSource};
+
+        let count = self.cid_count() as usize;
+        let entry = usize::from(CID_FD_BYTES) + usize::from(CID_GD_BYTES);
+        let map_len = (count + 1) * entry;
+        let mut data = vec![0u8; map_len];
+        let put = |data: &mut Vec<u8>, at: usize, bytes: u8, value: usize| {
+            for k in 0..usize::from(bytes) {
+                data[at + k] = (value >> (8 * (usize::from(bytes) - 1 - k))) as u8;
+            }
+        };
+        let mut fds = Vec::new();
+        for fd in &self.fds {
+            let offset = data.len();
+            let subr_count = fd.subrs.len();
+            let map_at = offset;
+            let mut map = vec![0u8; (subr_count + 1) * usize::from(CID_SD_BYTES)];
+            let mut bodies = Vec::new();
+            let mut at = map_at + map.len();
+            for (k, subr) in fd.subrs.iter().enumerate() {
+                put(&mut map, k * usize::from(CID_SD_BYTES), CID_SD_BYTES, at);
+                let cipher = encrypt(CHARSTRING_KEY, subr, fd.len_iv);
+                at += cipher.len();
+                bodies.extend(cipher);
+            }
+            put(
+                &mut map,
+                subr_count * usize::from(CID_SD_BYTES),
+                CID_SD_BYTES,
+                at,
+            );
+            data.extend(map);
+            data.extend(bodies);
+            fds.push(FdLayout {
+                len_iv: fd.len_iv as i32,
+                subrs: if subr_count == 0 {
+                    SubrSource::None
+                } else {
+                    SubrSource::Map {
+                        offset: map_at,
+                        bytes: CID_SD_BYTES,
+                        count: subr_count,
+                    }
+                },
+                font_matrix: Some(fd.font_matrix.map(|v| v as f32)),
+            });
+        }
+        // Every CID's entry names where its charstring starts; a CID
+        // without one starts where the next does, so its charstring is
+        // empty.
+        let mut next_fd = 0u8;
+        for cid in 0..=count {
+            let at = cid * entry;
+            let glyph = self.glyphs.iter().find(|(c, _, _)| usize::from(*c) == cid);
+            if let Some((_, fd, _)) = glyph {
+                next_fd = *fd;
+            }
+            put(&mut data, at, CID_FD_BYTES, usize::from(next_fd));
+            let offset = data.len();
+            put(
+                &mut data,
+                at + usize::from(CID_FD_BYTES),
+                CID_GD_BYTES,
+                offset,
+            );
+            if let Some((_, fd, code)) = glyph {
+                let cipher = encrypt(CHARSTRING_KEY, code, self.fds[usize::from(*fd)].len_iv);
+                data.extend(cipher);
+            }
+        }
+        let layout = CidLayout {
+            cid_map_offset: 0,
+            fd_bytes: CID_FD_BYTES,
+            gd_bytes: CID_GD_BYTES,
+            cid_count: count as u32,
+            font_matrix: [0.001, 0.0, 0.0, 0.001, 0.0, 0.0],
+            fds,
+        };
+        (data, layout)
+    }
+
+    /// The parsed program.
+    pub fn program(&self) -> Result<crate::cidfont::Type1CidProgram, FontError> {
+        let (data, layout) = self.glyph_data();
+        crate::cidfont::Type1CidProgram::parse(&data, &layout)
+    }
+
+    /// The complete CIDFont resource file: the dictionary with its
+    /// `FDArray`, `(Binary) <count> StartData`, the glyph data, and the
+    /// `end` matching the procedure set's `begin`.
+    pub fn file(&self) -> Vec<u8> {
+        let (data, layout) = self.glyph_data();
+        let mut out = format!(
+            "%!PS-Adobe-3.0 Resource-CIDFont\n\
+             /CIDInit /ProcSet findresource begin\n\
+             20 dict begin\n\
+             /CIDFontName /{} def\n\
+             /CIDFontType 0 def\n\
+             /CIDSystemInfo 3 dict dup begin\n\
+             /Registry ({}) def\n\
+             /Ordering ({}) def\n\
+             /Supplement {} def\n\
+             end def\n\
+             /FontBBox [{} {} {} {}] def\n\
+             /CIDMapOffset {} def\n\
+             /FDBytes {} def\n\
+             /GDBytes {} def\n\
+             /CIDCount {} def\n\
+             /FDArray {} array\n",
+            self.name,
+            self.registry,
+            self.ordering,
+            self.supplement,
+            self.bbox[0],
+            self.bbox[1],
+            self.bbox[2],
+            self.bbox[3],
+            layout.cid_map_offset,
+            layout.fd_bytes,
+            layout.gd_bytes,
+            layout.cid_count,
+            self.fds.len(),
+        );
+        for (k, (fd, fd_layout)) in self.fds.iter().zip(&layout.fds).enumerate() {
+            let matrix: Vec<String> = fd.font_matrix.iter().map(|v| format!("{v}")).collect();
+            out.push_str(&format!(
+                "dup {k} 10 dict begin\n\
+                 /FontName /{}-{k} def\n\
+                 /FontType 1 def\n\
+                 /FontMatrix [{}] def\n\
+                 /PaintType 0 def\n\
+                 /Private 8 dict dup begin\n\
+                 /lenIV {} def\n\
+                 /password 5839 def\n\
+                 /BlueValues [] def\n",
+                self.name,
+                matrix.join(" "),
+                fd.len_iv,
+            ));
+            if let crate::cidfont::SubrSource::Map {
+                offset,
+                bytes,
+                count,
+            } = fd_layout.subrs
+            {
+                out.push_str(&format!(
+                    "/SubrMapOffset {offset} def\n/SDBytes {bytes} def\n/SubrCount {count} def\n"
+                ));
+            }
+            out.push_str("end def\ncurrentdict end put\n");
+        }
+        out.push_str(&format!(
+            "def\ncurrentdict end\n(Binary) {} StartData\n",
+            data.len()
+        ));
+        let mut bytes = out.into_bytes();
+        bytes.extend(data);
+        bytes.extend_from_slice(b"\nend\n");
+        bytes
+    }
+
+    /// The CIDFont of the corpus and of the tests across crates: two
+    /// font dictionaries — dictionary 0 with `lenIV` 4 and no
+    /// subroutines, dictionary 1 with `lenIV` 1 and one subroutine —
+    /// and three glyphs: CID 1 (dictionary 0, advance 500, a 400-unit
+    /// square from (50, 0)), CID 2 (dictionary 1, advance 700, a
+    /// 600-unit square drawn through the subroutine), and CID 3
+    /// (dictionary 0, advance 300, a bar).
+    pub fn corpus() -> Self {
+        let square = CharstringBuilder::new()
+            .rlineto(600, 0)
+            .rlineto(0, 600)
+            .rlineto(-600, 0)
+            .closepath()
+            .r#return()
+            .bytes();
+        let two = CharstringBuilder::new()
+            .hsbw(0, 700)
+            .rmoveto(0, 0)
+            .callsubr(0)
+            .endchar()
+            .bytes();
+        CidType1Font::new("SynCIDT1")
+            .bbox([0, 0, 700, 600])
+            .fd(4, Vec::new())
+            .fd(1, vec![square])
+            .glyph(1, 0, 500, &rectangle(50.0, 0.0, 450.0, 400.0))
+            .charstring(2, 1, two)
+            .glyph(3, 0, 300, &rectangle(0.0, 0.0, 100.0, 500.0))
+    }
+
+    pub fn bbox(mut self, bbox: [i32; 4]) -> Self {
+        self.bbox = bbox;
+        self
+    }
+}
+
+/// The CID-keyed CFF font of the corpus and of the tests across crates:
+/// `SynCID` under `Adobe-Identity-0` with two font dictionaries —
+/// dictionary 0 with default width 500, dictionary 1 with default width
+/// 700 — and the glyphs CID 1 (dictionary 0, advance 500, a square), CID
+/// 2 (dictionary 1, advance 700, a taller box), CID 34 and CID 35 (the
+/// codes `A` and `B` of the corpus CMap, in dictionaries 0 and 1), CID
+/// 200 (dictionary 0, advance 300), and a `.notdef` of advance 250 in
+/// dictionary 0.
+pub fn corpus_cid_cff() -> CffFont {
+    let box_of = |wx: Option<i32>, outline: &Outline| {
+        let mut b = Type2Builder::new();
+        if let Some(wx) = wx {
+            b = b.num(wx);
+        }
+        let mut x = 0;
+        let mut y = 0;
+        for op in &outline.ops {
+            match *op {
+                OutlineOp::MoveTo(px, py) => {
+                    b = b.rmoveto(px as i32 - x, py as i32 - y);
+                    (x, y) = (px as i32, py as i32);
+                }
+                OutlineOp::LineTo(px, py) => {
+                    b = b.rlineto(px as i32 - x, py as i32 - y);
+                    (x, y) = (px as i32, py as i32);
+                }
+                OutlineOp::CurveTo(..) | OutlineOp::Close => {}
+            }
+        }
+        b.endchar().bytes()
+    };
+    let notdef = Type2Builder::new().num(250).endchar().bytes();
+    let mut font = CffFont::cid_keyed("SynCID", "Adobe", "Identity", 0)
+        .bbox([0, 0, 700, 700])
+        .fd(CffFd {
+            subrs: Vec::new(),
+            default_width: 500,
+            nominal_width: 0,
+        })
+        .fd(CffFd {
+            subrs: Vec::new(),
+            default_width: 700,
+            nominal_width: 0,
+        });
+    font.glyphs[0].1 = notdef;
+    font.cid_glyph(1, 0, box_of(None, &rectangle(50.0, 0.0, 450.0, 400.0)))
+        .cid_glyph(2, 1, box_of(None, &rectangle(0.0, 0.0, 600.0, 700.0)))
+        .cid_glyph(34, 0, box_of(None, &rectangle(0.0, 0.0, 400.0, 400.0)))
+        .cid_glyph(35, 1, box_of(None, &rectangle(0.0, 0.0, 600.0, 600.0)))
+        .cid_glyph(
+            200,
+            0,
+            box_of(Some(300), &rectangle(0.0, 0.0, 200.0, 200.0)),
+        )
+}
+
+/// The CMap of the corpus, `Syn-H`: one-byte codes `<20>`–`<7E>` from CID
+/// 1, two-byte codes `<8140>`–`<817E>` from CID 200 inside the codespace
+/// `<8140>`–`<81FE>`, and the rest of that codespace a notdef range to
+/// CID 0, as a CMap program that defines the resource.
+pub fn corpus_cmap() -> String {
+    "/CIDInit /ProcSet findresource begin\n\
+     12 dict begin\n\
+     begincmap\n\
+     /CIDSystemInfo 3 dict dup begin\n\
+     /Registry (Adobe) def\n\
+     /Ordering (Identity) def\n\
+     /Supplement 0 def\n\
+     end def\n\
+     /CMapName /Syn-H def\n\
+     /CMapType 1 def\n\
+     /WMode 0 def\n\
+     2 begincodespacerange\n\
+     <20> <7e>\n\
+     <8140> <81fe>\n\
+     endcodespacerange\n\
+     2 begincidrange\n\
+     <20> <7e> 1\n\
+     <8140> <817e> 200\n\
+     endcidrange\n\
+     1 beginnotdefrange\n\
+     <817f> <81fe> 0\n\
+     endnotdefrange\n\
+     endcmap\n\
+     CMapName currentdict /CMap defineresource pop\n\
+     end\n\
+     end\n"
+        .to_string()
+}

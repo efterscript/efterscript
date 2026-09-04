@@ -114,24 +114,121 @@ pub enum FontSpec {
         program: ProgramRef,
         encoding: GlyphNames,
     },
+    /// A Type 0 font over a CID-keyed descendant: the run's glyphs carry
+    /// the codes the CMap decoded and the CIDs it gave them, and the
+    /// descendant — an `Embedded` snapshot addressed by CID, with an
+    /// empty encoding — answers each CID with its glyph. `wmode` is the
+    /// CMap's writing mode; in mode 1 the run's matrix places the first
+    /// glyph's vertical origin and each glyph advances by the default
+    /// vertical advance. `cid_to_code` records, for every CID shown on
+    /// the page, the code (and its byte length) it came from, which a
+    /// Unicode-based CMap makes a ToUnicode source.
+    Composite {
+        cmap_name: Vec<u8>,
+        wmode: u8,
+        unicode_based: bool,
+        descendant: Box<FontSpec>,
+        cid_to_code: BTreeMap<u16, (u32, u8)>,
+    },
 }
 
 impl FontSpec {
+    /// The encoding; a composite font answers with its descendant's,
+    /// which is empty.
     pub fn encoding(&self) -> &GlyphNames {
         match self {
             FontSpec::Resident { encoding, .. }
             | FontSpec::Type3 { encoding, .. }
             | FontSpec::Embedded { encoding, .. } => encoding,
+            FontSpec::Composite { descendant, .. } => descendant.encoding(),
         }
     }
 
-    /// The matrix mapping glyph space to text space.
+    /// The matrix mapping glyph space to text space; for a composite
+    /// font the descendant's, whose glyph space the run's displacements
+    /// are in.
     pub fn font_matrix(&self) -> Matrix {
         match self {
             FontSpec::Resident { .. } => Matrix::scaling(0.001, 0.001),
             FontSpec::Type3 { font_matrix, .. } | FontSpec::Embedded { font_matrix, .. } => {
                 *font_matrix
             }
+            FontSpec::Composite { descendant, .. } => descendant.font_matrix(),
+        }
+    }
+
+    /// Whether `self` and `other` are the same font apart from the CIDs
+    /// recorded so far: a composite resource grows its `cid_to_code` as
+    /// the page shows more, and equality of the rest is what interning
+    /// and document-wide sharing go by. Other kinds compare as a whole.
+    pub fn same_font(&self, other: &FontSpec) -> bool {
+        match (self, other) {
+            (
+                FontSpec::Composite {
+                    cmap_name,
+                    wmode,
+                    unicode_based,
+                    descendant,
+                    ..
+                },
+                FontSpec::Composite {
+                    cmap_name: name2,
+                    wmode: wmode2,
+                    unicode_based: unicode2,
+                    descendant: descendant2,
+                    ..
+                },
+            ) => {
+                cmap_name == name2
+                    && wmode == wmode2
+                    && unicode_based == unicode2
+                    && descendant == descendant2
+            }
+            _ => self == other,
+        }
+    }
+
+    /// The glyph a composite font's descendant draws for `cid`; `None`
+    /// for a CID without a glyph and for other kinds of font.
+    pub fn cid_glyph(&self, cid: u16) -> Option<Rc<ps_fonts::Glyph>> {
+        let FontSpec::Composite { descendant, .. } = self else {
+            return None;
+        };
+        let FontSpec::Embedded { program, .. } = &**descendant else {
+            return None;
+        };
+        program.glyph_by_cid(cid).ok().flatten()
+    }
+
+    /// The displacement of `cid` in a composite font's glyph space, zero
+    /// for a CID without a glyph.
+    pub fn cid_width(&self, cid: u16) -> (f32, f32) {
+        let FontSpec::Composite { descendant, .. } = self else {
+            return (0.0, 0.0);
+        };
+        let scale = descendant.glyph_scale();
+        self.cid_glyph(cid)
+            .map_or((0.0, 0.0), |g| (g.advance.0 * scale, g.advance.1 * scale))
+    }
+
+    /// The displacement of a shown glyph as the font itself has it: by
+    /// CID for a composite font, by the glyph's code otherwise.
+    pub fn glyph_width(&self, glyph: &Glyph) -> (f32, f32) {
+        match self {
+            FontSpec::Composite { .. } => self.cid_width(glyph.cid),
+            _ => self.width(u8::try_from(glyph.cid).unwrap_or(0)),
+        }
+    }
+
+    /// The factor taking an embedded program's glyph units to the space
+    /// the font matrix maps: one for charstring programs, the reciprocal
+    /// of the units per em for TrueType.
+    fn glyph_scale(&self) -> f32 {
+        match self {
+            FontSpec::Embedded { program, .. } => program
+                .units_per_em()
+                .map_or(1.0, |units| 1.0 / f32::from(units)),
+            _ => 1.0,
         }
     }
 
@@ -156,13 +253,14 @@ impl FontSpec {
     /// The displacement of `code` in glyph space as the font itself has
     /// it, zero for a code without a glyph.
     pub fn width(&self, code: u8) -> (f32, f32) {
-        if let FontSpec::Embedded { program, .. } = self {
-            let scale = program
-                .units_per_em()
-                .map_or(1.0, |units| 1.0 / f32::from(units));
+        if let FontSpec::Embedded { .. } = self {
+            let scale = self.glyph_scale();
             return self
                 .program_glyph(code)
                 .map_or((0.0, 0.0), |g| (g.advance.0 * scale, g.advance.1 * scale));
+        }
+        if let FontSpec::Composite { .. } = self {
+            return self.cid_width(u16::from(code));
         }
         let Some(name) = self.glyph_name(code) else {
             return (0.0, 0.0);
@@ -173,7 +271,9 @@ impl FontSpec {
                 .and_then(|name| base.width(name))
                 .map_or((0.0, 0.0), |w| (f32::from(w), 0.0)),
             FontSpec::Type3 { glyphs, .. } => glyphs.get(name).map_or((0.0, 0.0), |g| g.width),
-            FontSpec::Embedded { .. } => unreachable!("handled above"),
+            FontSpec::Embedded { .. } | FontSpec::Composite { .. } => {
+                unreachable!("handled above")
+            }
         }
     }
 }
@@ -268,11 +368,16 @@ pub enum IrOp {
     },
     /// Shows a run of glyphs. `matrix` maps glyph space to default user
     /// space at the first glyph; each glyph's displacement, in glyph
-    /// space, is applied after it, so the run positions itself.
+    /// space, is applied after it, so the run positions itself. In
+    /// writing mode 1 (`wmode`, a composite font's) the matrix places
+    /// the first glyph's vertical origin — half its width to the right
+    /// of and 0.88 em above its own origin — and each displacement is
+    /// the vertical advance; every other run has mode 0.
     Text {
         font: FontIndex,
         matrix: Matrix,
         glyphs: Vec<Glyph>,
+        wmode: u8,
     },
 }
 

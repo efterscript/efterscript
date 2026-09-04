@@ -200,6 +200,13 @@ impl Interp {
                         None => Outcome::Ok,
                     };
                 }
+                Some(Frame::Marker(Marker::CMapLoad { name, retry, .. })) => {
+                    let (name, retry) = (*name, *retry);
+                    self.pop_frame();
+                    if let Err(e) = ops::cidinit::loaded(self, name, retry) {
+                        self.raise(e, Object::operator(retry));
+                    }
+                }
                 Some(Frame::Marker(_)) => {
                     self.pop_frame();
                 }

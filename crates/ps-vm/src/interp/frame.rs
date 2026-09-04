@@ -3,6 +3,7 @@
 
 //! Execution-stack frames.
 
+use crate::names::Atom;
 use crate::object::{Handle, Object};
 use crate::ops::Num;
 use crate::ops::image::ImageAcquisition;
@@ -172,6 +173,17 @@ pub enum Marker {
     Eexec {
         layer: Option<Handle>,
         dicts: usize,
+    },
+    /// Below the program text of a predefined CMap being loaded on
+    /// behalf of the operator `retry` (an operator-table index), whose
+    /// operands are still on the operand stack. The load runs in global
+    /// allocation mode; when the frame ends, however it ends, the mode
+    /// returns to `global`. Reached normally, the loaded resource is
+    /// moved into the predefined table and `retry` runs again.
+    CMapLoad {
+        name: Atom,
+        global: bool,
+        retry: u32,
     },
     Interrupt,
     Timeout,

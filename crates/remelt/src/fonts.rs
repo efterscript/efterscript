@@ -29,7 +29,7 @@ use ps_fonts::ResidentFace;
 use ps_graphics::{FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, Resources};
 use ps_vm::{Bounds, Matrix, SpaceSpec};
 
-use crate::content;
+use crate::content::{self, Recode};
 use crate::embedded::EmbeddedTable;
 use crate::resources::Objects;
 
@@ -120,9 +120,10 @@ impl FontTable {
 }
 
 /// Writes the font objects `page` needs that the document lacks and
-/// returns one reference per font resource, in index order. `objects`
-/// holds the page's colour spaces and images, already written, for the
-/// `Resources` of a Type 3 font.
+/// returns one reference per font resource, in index order, with the
+/// one-byte codes of every composite font the document writes as a
+/// Type 3 fallback. `objects` holds the page's colour spaces and
+/// images, already written, for the `Resources` of a Type 3 font.
 pub(crate) fn write_fonts<W: Write>(
     doc: &mut Document<W>,
     page: &Page,
@@ -130,13 +131,18 @@ pub(crate) fn write_fonts<W: Write>(
     table: &mut FontTable,
     objects: &Objects,
     notes: &mut Vec<String>,
-) -> Result<Vec<Ref>, pdf_out::Error> {
+) -> Result<(Vec<Ref>, Recode), pdf_out::Error> {
     let resources = &page.resources;
     let mut refs = Vec::with_capacity(resources.fonts.len());
     let mut pending = Vec::new();
+    let mut recode = Recode::new();
     for (index, spec) in resources.fonts.iter().enumerate() {
-        if matches!(spec, FontSpec::Embedded { .. }) {
-            refs.push(table.embedded.use_font(doc, page, index));
+        if matches!(spec, FontSpec::Embedded { .. } | FontSpec::Composite { .. }) {
+            refs.push(
+                table
+                    .embedded
+                    .use_font(doc, page, index, &mut recode, notes),
+            );
             continue;
         }
         let key = Key::of(spec, resources);
@@ -172,13 +178,15 @@ pub(crate) fn write_fonts<W: Write>(
                     refs: references(spec),
                 };
                 let mut glyph_notes =
-                    write_type3(doc, r, &type3, resources, objects, &refs, filter)?;
+                    write_type3(doc, r, &type3, resources, objects, &refs, &recode, filter)?;
                 notes.append(&mut glyph_notes);
             }
-            FontSpec::Embedded { .. } => unreachable!("routed to the embedded table"),
+            FontSpec::Embedded { .. } | FontSpec::Composite { .. } => {
+                unreachable!("routed to the embedded table")
+            }
         }
     }
-    Ok(refs)
+    Ok((refs, recode))
 }
 
 // --- shared pieces ---------------------------------------------------------------------
@@ -222,24 +230,11 @@ fn hex_utf16(chars: &[char]) -> String {
     out
 }
 
-/// A ToUnicode CMap over the codes whose glyph names the glyph list
-/// maps — or `fallback` does, for a name the list lacks — in code
-/// order; `None` when no code maps.
-fn to_unicode<'a>(
-    entries: impl Iterator<Item = (u8, &'a [u8])>,
-    fallback: impl Fn(&[u8]) -> Option<Vec<char>>,
-) -> Option<Vec<u8>> {
-    let mapped: Vec<(u8, Vec<char>)> = entries
-        .filter_map(|(code, name)| {
-            ps_fonts::unicode(name)
-                .or_else(|| fallback(name))
-                .map(|chars| (code, chars))
-        })
-        .collect();
-    if mapped.is_empty() {
-        return None;
-    }
-    let mut text = String::from(
+/// The text of a ToUnicode CMap (ISO 32000-1 §9.10.3) over `mapped`,
+/// `(code, characters)` pairs in code order with codes of `len` bytes.
+pub(crate) fn to_unicode_text(len: u8, mapped: &[(u32, Vec<char>)]) -> Vec<u8> {
+    let digits = usize::from(len) * 2;
+    let mut text = format!(
         "/CIDInit /ProcSet findresource begin\n\
          12 dict begin\n\
          begincmap\n\
@@ -247,14 +242,16 @@ fn to_unicode<'a>(
          /CMapName /Adobe-Identity-UCS def\n\
          /CMapType 2 def\n\
          1 begincodespacerange\n\
-         <00> <FF>\n\
+         <{:0digits$X}> <{:0digits$X}>\n\
          endcodespacerange\n",
+        0,
+        (1u64 << (8 * u32::from(len))) - 1
     );
     // A bfchar block holds at most a hundred entries.
     for block in mapped.chunks(100) {
         text.push_str(&format!("{} beginbfchar\n", block.len()));
         for (code, chars) in block {
-            text.push_str(&format!("<{code:02X}> <{}>\n", hex_utf16(chars)));
+            text.push_str(&format!("<{code:0digits$X}> <{}>\n", hex_utf16(chars)));
         }
         text.push_str("endbfchar\n");
     }
@@ -264,7 +261,43 @@ fn to_unicode<'a>(
          end\n\
          end\n",
     );
-    Some(text.into_bytes())
+    text.into_bytes()
+}
+
+/// A ToUnicode CMap over the codes whose glyph names the glyph list
+/// maps — or `fallback` does, for a name the list lacks — in code
+/// order; `None` when no code maps.
+fn to_unicode<'a>(
+    entries: impl Iterator<Item = (u8, &'a [u8])>,
+    fallback: impl Fn(&[u8]) -> Option<Vec<char>>,
+) -> Option<Vec<u8>> {
+    let mapped: Vec<(u32, Vec<char>)> = entries
+        .filter_map(|(code, name)| {
+            ps_fonts::unicode(name)
+                .or_else(|| fallback(name))
+                .map(|chars| (u32::from(code), chars))
+        })
+        .collect();
+    if mapped.is_empty() {
+        return None;
+    }
+    Some(to_unicode_text(1, &mapped))
+}
+
+/// Writes a ToUnicode CMap over `mapped` (see [`to_unicode_text`]);
+/// none when nothing maps.
+pub(crate) fn write_to_unicode_codes<W: Write>(
+    doc: &mut Document<W>,
+    filter: Filter,
+    len: u8,
+    mapped: &[(u32, Vec<char>)],
+) -> Result<Option<Ref>, pdf_out::Error> {
+    if mapped.is_empty() {
+        return Ok(None);
+    }
+    let r = doc.alloc();
+    doc.write_stream(r, filter, &to_unicode_text(len, mapped), |_| {})?;
+    Ok(Some(r))
 }
 
 pub(crate) fn write_to_unicode<'a, W: Write>(
@@ -444,6 +477,7 @@ fn pdf_out_reals(values: &[f32]) -> String {
         .join(" ")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_type3<W: Write>(
     doc: &mut Document<W>,
     r: Ref,
@@ -451,12 +485,13 @@ fn write_type3<W: Write>(
     resources: &Resources,
     objects: &Objects,
     fonts: &[Ref],
+    recode: &Recode,
     filter: Filter,
 ) -> Result<Vec<String>, pdf_out::Error> {
     let mut notes = Vec::new();
     let mut procs: Vec<(&[u8], Ref)> = Vec::with_capacity(font.glyphs.len());
     for (name, glyph) in font.glyphs {
-        let rendered = content::render(&glyph.ops, resources);
+        let rendered = content::render(&glyph.ops, resources, recode);
         let mut body = glyph_prefix(glyph).into_bytes();
         body.extend_from_slice(&rendered.bytes);
         notes.extend(rendered.notes);
@@ -549,6 +584,10 @@ mod tests {
                 .contains("<01> <0078>\n")
         );
         assert_eq!(hex_utf16(&['😀']), "D83DDE00");
+        let two_byte = String::from_utf8(to_unicode_text(2, &[(1, vec!['A'])])).unwrap();
+        assert!(
+            two_byte.contains("<0000> <FFFF>\nendcodespacerange\n1 beginbfchar\n<0001> <0041>\n")
+        );
     }
 
     #[test]

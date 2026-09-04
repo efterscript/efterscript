@@ -18,6 +18,10 @@ struct Run {
 }
 
 fn exec(program: &str) -> Run {
+    exec_bytes(program.as_bytes())
+}
+
+fn exec_bytes(program: &[u8]) -> Run {
     let (io, out, _) = Io::capture();
     let mut interp = Interp::with_config(Config {
         io,
@@ -25,7 +29,7 @@ fn exec(program: &str) -> Run {
     });
     let pages = Rc::new(RefCell::new(Vec::new()));
     interp.set_graphics_backend(Box::new(Graphics::new(pages.clone())));
-    let outcome = interp.run(&mut SliceSource::new(program.as_bytes()));
+    let outcome = interp.run(&mut SliceSource::new(program));
     let pages = pages.take();
     Run {
         outcome,
@@ -236,6 +240,7 @@ fn text_ops(page: &Page) -> Vec<(FontIndex, Matrix, Vec<Glyph>)> {
                 font,
                 matrix,
                 glyphs,
+                ..
             } => Some((*font, *matrix, glyphs.clone())),
             _ => None,
         })
@@ -262,16 +267,8 @@ fn text_operation_shape() {
     assert_eq!(
         text[0].2,
         [
-            Glyph {
-                code: 72,
-                dx: 722.0,
-                dy: 0.0
-            },
-            Glyph {
-                code: 105,
-                dx: 222.0,
-                dy: 0.0
-            }
+            Glyph::simple(72, 722.0, 0.0),
+            Glyph::simple(105, 222.0, 0.0)
         ]
     );
     assert_eq!(
@@ -502,14 +499,7 @@ fn an_embedded_font_is_one_resource_and_the_dump_lists_it_without_its_bytes() {
     let text = text_ops(page);
     assert_eq!(text.len(), 1);
     assert_eq!(text[0].0, FontIndex(0));
-    assert_eq!(
-        text[0].2,
-        [Glyph {
-            code: 97,
-            dx: 600.0,
-            dy: 0.0
-        }]
-    );
+    assert_eq!(text[0].2, [Glyph::simple(97, 600.0, 0.0)]);
     assert_eq!(
         page.dump(),
         "ir/1\npage 612 792\nresources:\n\
@@ -590,14 +580,7 @@ fn a_seac_glyph_shows_with_the_composite_advance_and_outlines_both_components() 
     let page = &run.pages[0];
     let text = text_ops(page);
     assert_eq!(text.len(), 1);
-    assert_eq!(
-        text[0].2,
-        [Glyph {
-            code: 233,
-            dx: 500.0,
-            dy: 0.0
-        }]
-    );
+    assert_eq!(text[0].2, [Glyph::simple(233, 500.0, 0.0)]);
     let fills = fills(page);
     assert_eq!(fills.len(), 1);
     // The base e at its sidebearing, then the accent displaced by
@@ -653,4 +636,185 @@ fn a_type42_charpath_box_is_the_cubic_control_box() {
     let hi = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!((lo - (500.0 / 3.0 * scale - 5.0)).abs() < 1e-3, "{lo}");
     assert!((hi - (2500.0 / 3.0 * scale - 5.0)).abs() < 1e-3, "{hi}");
+}
+
+// --- composite fonts -----------------------------------------------------------------
+
+use ps_fonts::testing::{corpus_cid_cff, corpus_cmap};
+
+/// The corpus CID-keyed CFF as a FontSet, followed by `program`.
+fn with_cid_set(program: &str) -> Vec<u8> {
+    let mut out = corpus_cid_cff().font_set("SynCIDSet");
+    out.extend_from_slice(program.as_bytes());
+    out
+}
+
+fn cid_glyph(code: u32, len: u8, cid: u16, dx: f32, dy: f32) -> Glyph {
+    Glyph {
+        code,
+        len,
+        cid,
+        dx,
+        dy,
+    }
+}
+
+// composite-dump.ps, composite-two-byte-width.ps
+#[test]
+fn a_composite_run_is_one_text_op_over_a_composite_resource() {
+    let run = exec_bytes(&with_cid_set(
+        "/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 72 700 moveto <00010002> show currentpoint showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    assert_eq!(page.resources.fonts.len(), 1);
+    let FontSpec::Composite {
+        cmap_name,
+        wmode,
+        unicode_based,
+        descendant,
+        cid_to_code,
+    } = &page.resources.fonts[0]
+    else {
+        panic!("a composite resource, got {:?}", page.resources.fonts[0]);
+    };
+    assert_eq!(cmap_name, b"Identity-H");
+    assert_eq!(*wmode, 0);
+    assert!(!unicode_based);
+    assert!(matches!(
+        &**descendant,
+        FontSpec::Embedded { kind: ProgramKind::Cff, font_name, .. } if font_name == b"SynCID"
+    ));
+    assert_eq!(cid_to_code.get(&1), Some(&(1, 2)));
+    assert_eq!(cid_to_code.get(&2), Some(&(2, 2)));
+    let text = text_ops(page);
+    assert_eq!(text.len(), 1);
+    assert!(near(text[0].1, [0.01, 0.0, 0.0, 0.01, 72.0, 700.0]));
+    assert_eq!(
+        text[0].2,
+        [
+            cid_glyph(1, 2, 1, 500.0, 0.0),
+            cid_glyph(2, 2, 2, 700.0, 0.0)
+        ]
+    );
+    assert_eq!(
+        page.dump(),
+        "ir/1\npage 612 792\nresources:\n\
+         font 0 composite Identity-H wmode=0 cff SynCID glyphs=6\n\
+         ops:\ntext 0 0.01 0 0 0.01 72 700 <00010002> 500 0 700 0\n"
+    );
+}
+
+// composite-mixed-lengths.ps, composite-partial-match.ps
+#[test]
+fn mixed_byte_lengths_dump_each_code_padded_to_its_length() {
+    let program = format!(
+        "{}/SynMixed /Syn-H [ /SynCID /CIDFont findresource ] composefont 10 scalefont setfont \
+         72 700 moveto <41814042> show 0 0 moveto <41812042> show showpage",
+        corpus_cmap()
+    );
+    let run = exec_bytes(&with_cid_set(&program));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    let text = text_ops(page);
+    assert_eq!(text.len(), 2);
+    assert_eq!(
+        text[0].2,
+        [
+            cid_glyph(0x41, 1, 34, 500.0, 0.0),
+            cid_glyph(0x8140, 2, 200, 300.0, 0.0),
+            cid_glyph(0x42, 1, 35, 700.0, 0.0),
+        ]
+    );
+    assert_eq!(
+        text[1].2[1],
+        cid_glyph(0x8120, 2, 0, 250.0, 0.0),
+        "the notdef keeps its two bytes"
+    );
+    let dump = page.dump();
+    assert!(dump.contains("font 0 composite Syn-H wmode=0 cff SynCID glyphs=6\n"));
+    assert!(dump.contains("text 0 0.01 0 0 0.01 72 700 <41814042> 500 0 300 0 700 0\n"));
+    assert!(dump.contains("text 0 0.01 0 0 0.01 0 0 <41812042> 500 0 250 0 700 0\n"));
+}
+
+// composite-vertical-width.ps
+#[test]
+fn a_vertical_run_carries_its_writing_mode() {
+    let run = exec_bytes(&with_cid_set(
+        "/r { 1000 mul round 1000 div } def \
+         /SynV /Identity-V [ /SynCID /CIDFont findresource ] composefont 10 scalefont setfont \
+         0 100 moveto <0001> show currentpoint r exch r = = showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "0.0\n90.0\n");
+    let page = &run.pages[0];
+    let modes: Vec<u8> = page
+        .ops
+        .iter()
+        .filter_map(|o| match &o.op {
+            IrOp::Text { wmode, .. } => Some(*wmode),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(modes, [1]);
+    assert_eq!(
+        page.dump(),
+        "ir/1\npage 612 792\nresources:\n\
+         font 0 composite Identity-V wmode=1 cff SynCID glyphs=6\n\
+         ops:\ntext 0 0.01 0 0 0.01 0 100 <0001> 0 -1000 wmode=1\n"
+    );
+}
+
+// composite-charpath-fill.ps
+#[test]
+fn charpath_through_a_composite_font_fills_the_outline() {
+    let run = exec_bytes(&with_cid_set(
+        "/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 100 100 moveto <0001> false charpath fill showpage",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    assert!(text_ops(page).is_empty());
+    assert!(page.resources.fonts.is_empty());
+    let fills = fills(page);
+    assert_eq!(fills.len(), 1);
+    assert!(
+        path_near(
+            &fills[0],
+            &[
+                Seg::Move(p(100.0, 100.0)),
+                Seg::Move(p(100.5, 100.0)),
+                Seg::Line(p(104.5, 100.0)),
+                Seg::Line(p(104.5, 104.0)),
+                Seg::Line(p(100.5, 104.0)),
+                Seg::Close,
+                Seg::Move(p(105.0, 100.0)),
+            ]
+        ),
+        "{:?}",
+        fills[0]
+    );
+}
+
+#[test]
+fn a_simple_descendant_shows_as_that_font_with_the_cid_as_its_code() {
+    let run = exec(
+        "/H /Identity-H [ /Helvetica findfont ] composefont 12 scalefont setfont \
+         100 700 moveto <00480069> show showpage",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    let page = &run.pages[0];
+    assert!(matches!(
+        &page.resources.fonts[0],
+        FontSpec::Resident {
+            base: ps_fonts::ResidentFace::Helvetica,
+            ..
+        }
+    ));
+    assert_eq!(
+        page.dump(),
+        "ir/1\npage 612 792\nresources:\nfont 0 Helvetica\n\
+         ops:\ntext 0 0.012 0 0 0.012 100 700 <00480069> 722 0 222 0\n"
+    );
 }

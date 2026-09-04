@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 //! The resource operators (PLRM3 §3.9) over the `Font`, `Encoding`,
-//! `ProcSet`, and `FontSet` categories. Each category has a local and a
-//! global instance dictionary selected by the allocation mode, plus its
-//! built-in instances: the resident fonts, the two encoding arrays in
-//! `systemdict`, and the `FontSetInit` procedure set. Other categories
-//! are `undefined`.
+//! `ProcSet`, `FontSet`, `CMap`, and `CIDFont` categories. Each category
+//! has a local and a global instance dictionary selected by the
+//! allocation mode, plus its built-in instances: the resident fonts, the
+//! two encoding arrays in `systemdict`, the `FontSetInit` and `CIDInit`
+//! procedure sets, and the predefined CMaps, loaded on first use. Other
+//! categories are `undefined`.
 
 use ps_fonts::ResidentFace;
 
@@ -14,6 +15,7 @@ use crate::error::VmError;
 use crate::interp::{Category, Frame, Interp, LoopFrame};
 use crate::object::{Access, Object, Type};
 use crate::ops::array::bytes;
+use crate::ops::cidinit::{self, Resolved};
 use crate::ops::font;
 
 op_table! { OPS {
@@ -30,10 +32,12 @@ enum Kind {
     Encoding,
     ProcSet,
     FontSet,
+    CMap,
+    CidFont,
 }
 
 const BUILTIN_ENCODINGS: [&str; 2] = ["ISOLatin1Encoding", "StandardEncoding"];
-const BUILTIN_PROCSETS: [&str; 1] = ["FontSetInit"];
+const BUILTIN_PROCSETS: [&str; 2] = ["CIDInit", "FontSetInit"];
 
 /// Status of an instance defined by the program, in VM.
 const STATUS_DEFINED: i32 = 0;
@@ -47,6 +51,8 @@ fn kind(i: &Interp, category: Object) -> Result<Kind, VmError> {
         b"Encoding" => Ok(Kind::Encoding),
         b"ProcSet" => Ok(Kind::ProcSet),
         b"FontSet" => Ok(Kind::FontSet),
+        b"CMap" => Ok(Kind::CMap),
+        b"CIDFont" => Ok(Kind::CidFont),
         _ => Err(VmError::Undefined),
     }
 }
@@ -57,6 +63,8 @@ fn dicts(i: &Interp, kind: Kind) -> Category {
         Kind::Encoding => i.encoding_category,
         Kind::ProcSet => i.procset_category,
         Kind::FontSet => i.fontset_category,
+        Kind::CMap => i.cmap_category,
+        Kind::CidFont => i.cidfont_category,
     }
 }
 
@@ -81,8 +89,14 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
             b"ISOLatin1Encoding" => Some(i.iso_latin1_encoding),
             _ => None,
         }),
-        Kind::ProcSet => Ok((name == b"FontSetInit").then_some(i.font_set_init)),
-        Kind::FontSet => Ok(None),
+        Kind::ProcSet => Ok(match name {
+            b"FontSetInit" => Some(i.font_set_init),
+            b"CIDInit" => Some(i.cid_init),
+            _ => None,
+        }),
+        // Predefined CMaps are resolved by `findresource` itself, since
+        // loading one runs a program.
+        Kind::FontSet | Kind::CMap | Kind::CidFont => Ok(None),
     }
 }
 
@@ -91,7 +105,8 @@ fn has_builtin(kind: Kind, name: &[u8]) -> bool {
         Kind::Font => ResidentFace::from_postscript_name(name).is_some(),
         Kind::Encoding => BUILTIN_ENCODINGS.iter().any(|e| e.as_bytes() == name),
         Kind::ProcSet => BUILTIN_PROCSETS.iter().any(|p| p.as_bytes() == name),
-        Kind::FontSet => false,
+        Kind::CMap => cidinit::is_predefined(name),
+        Kind::FontSet | Kind::CidFont => false,
     }
 }
 
@@ -101,6 +116,10 @@ fn findresource(i: &mut Interp) -> Result<(), VmError> {
     let key = i.mem.dict_key(key)?;
     let found = match defined(i, kind, key)? {
         Some(instance) => instance,
+        None if kind == Kind::CMap => match cidinit::resolve(i, key, "findresource")? {
+            Resolved::Found(dict) => dict,
+            Resolved::Pending => return Ok(()),
+        },
         None => {
             let name = key.as_name().map(|a| i.mem.name_text(a).to_vec());
             match name {
@@ -125,7 +144,9 @@ fn resourcestatus(i: &mut Interp) -> Result<(), VmError> {
             .as_name()
             .filter(|&a| has_builtin(kind, i.mem.name_text(a)))
         {
-            Some(_) if matches!(kind, Kind::Font | Kind::ProcSet) => Some(STATUS_RESIDENT),
+            Some(_) if matches!(kind, Kind::Font | Kind::ProcSet | Kind::CMap) => {
+                Some(STATUS_RESIDENT)
+            }
             Some(_) => Some(STATUS_DEFINED),
             None => None,
         }
@@ -147,11 +168,27 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
     let instance = i.peek(1)?;
     let key = i.peek(2)?;
     match kind {
-        Kind::Font => {
+        Kind::Font | Kind::CidFont => {
             if instance.ty() != Type::Dict {
                 return Err(VmError::TypeCheck);
             }
-            font::define(i, key, instance)?;
+            if font::define(i, key, instance)?.is_none() {
+                return Ok(());
+            }
+        }
+        Kind::CMap => {
+            if !cidinit::is_cmap_dict(i, instance) {
+                return Err(VmError::TypeCheck);
+            }
+            let key = i.mem.dict_key(key)?;
+            let category = dicts(i, kind);
+            let dict = if i.mem.current_global() {
+                category.global
+            } else {
+                category.local
+            };
+            i.mem.dict_put(dict, key, instance)?;
+            i.mem.dict_set_access(instance, Access::ReadOnly)?;
         }
         Kind::Encoding | Kind::ProcSet | Kind::FontSet => {
             let wanted = match kind {
@@ -187,7 +224,7 @@ fn undefineresource(i: &mut Interp) -> Result<(), VmError> {
     let key = i.peek(1)?;
     match kind {
         Kind::Font => font::undefine(i, key)?,
-        Kind::Encoding | Kind::ProcSet | Kind::FontSet => {
+        Kind::Encoding | Kind::ProcSet | Kind::FontSet | Kind::CMap | Kind::CidFont => {
             let key = i.mem.dict_key(key)?;
             let category = dicts(i, kind);
             i.mem.dict_undef(category.local, key)?;
@@ -222,7 +259,8 @@ fn names(i: &mut Interp, kind: Kind, template: &[u8]) -> Result<Vec<Vec<u8>>, Vm
             .collect(),
         Kind::Encoding => BUILTIN_ENCODINGS.to_vec(),
         Kind::ProcSet => BUILTIN_PROCSETS.to_vec(),
-        Kind::FontSet => Vec::new(),
+        Kind::CMap => cidinit::predefined_names(),
+        Kind::FontSet | Kind::CidFont => Vec::new(),
     };
     for name in builtins {
         if !names.iter().any(|n| n == name.as_bytes()) {

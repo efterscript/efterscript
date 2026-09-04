@@ -102,7 +102,7 @@ impl<W: Write> PdfSink<W> {
         let number = self.pages + 1;
         let mut notes = Vec::new();
         let objects = Objects::write(&mut self.doc, page, filter, &mut self.fonts, &mut notes)?;
-        let content = content::content(page);
+        let content = content::content(page, objects.recode());
         notes.extend(content.notes);
         self.notes.extend(
             notes

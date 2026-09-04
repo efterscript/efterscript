@@ -14,7 +14,8 @@
 //! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate]
 //! font <n> <BaseName> [diff=[<code> /<name>…]]
 //! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
-//! font <n> embedded <type1|truetype> <FontName> glyphs=<count> enc=[<code> /<name>…]
+//! font <n> embedded <type1|truetype|cff> <FontName> glyphs=<count> enc=[<code> /<name>…]
+//! font <n> composite <CMapName> wmode=<m> <cff|truetype|cidtype1> <FontName> glyphs=<count>
 //! glyph /<name> <wx> <wy> [<llx> <lly> <urx> <ury>] {
 //!   <op>                              the glyph's procedure, indented
 //! }
@@ -29,7 +30,10 @@
 //! for a `setcachedevice` glyph. An embedded font has no built-in
 //! encoding to differ from, so it lists every code that names a glyph,
 //! with the kind of program, its `FontName`, and how many glyphs it
-//! defines; the program's bytes never appear.
+//! defines; the program's bytes never appear. A composite font names
+//! its CMap and writing mode, then its descendant's kind, `FontName`,
+//! and glyph count; the descendant is addressed by CID and has no
+//! encoding to list.
 //!
 //! Colour spaces are described by family: `DeviceGray`, `DeviceRGB`,
 //! `DeviceCMYK`, `Separation (<name>) alt=<space> tint=<len> bytes`,
@@ -52,12 +56,14 @@
 //!                                     when the CTM at the stroke is not
 //!                                     the identity
 //! Do img <n> <a> <b> <c> <d> <tx> <ty>   image with its unit-square matrix
-//! text <n> <a> <b> <c> <d> <tx> <ty> (<bytes>) <dx> <dy>…
+//! text <n> <a> <b> <c> <d> <tx> <ty> (<bytes>) <dx> <dy>… [wmode=1]
 //!                                     a glyph run: font, the matrix from
 //!                                     glyph space to default user space
-//!                                     at the first glyph, the codes, and
-//!                                     each glyph's displacement in glyph
-//!                                     space
+//!                                     at the first glyph, the codes (as
+//!                                     <hex> when any code is longer than
+//!                                     one byte), each glyph's
+//!                                     displacement in glyph space, and
+//!                                     the writing mode when vertical
 //! ```
 //!
 //! Numbers use the project's canonical real syntax ([`crate::fmt_real`]).
@@ -65,7 +71,7 @@
 //! its value.
 
 use ps_fonts::ProgramKind;
-use ps_vm::{Bounds, ImageSpec, Matrix, Seg, SpaceSpec};
+use ps_vm::{Bounds, Glyph, ImageSpec, Matrix, Seg, SpaceSpec};
 
 use crate::ir::{FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page};
 use crate::real::{fmt_real, fmt_reals};
@@ -85,6 +91,17 @@ fn ps_string(bytes: &[u8]) -> String {
         }
     }
     out.push(')');
+    out
+}
+
+/// A run's code bytes in hexadecimal, the form a run with a code longer
+/// than one byte takes.
+fn hex_string(bytes: &[u8]) -> String {
+    let mut out = String::from("<");
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out.push('>');
     out
 }
 
@@ -189,18 +206,47 @@ fn font(index: usize, spec: &FontSpec) -> String {
             encoding,
             ..
         } => {
-            let kind = match kind {
-                ProgramKind::Type1 => "type1",
-                ProgramKind::TrueType => "truetype",
-                ProgramKind::Cff => "cff",
-            };
             let enc = code_names(encoding, |_, name| name.is_some());
             format!(
-                "font {index} embedded {kind} {} glyphs={} enc=[{enc}]\n",
+                "font {index} embedded {} {} glyphs={} enc=[{enc}]\n",
+                kind_text(*kind),
                 name_text(font_name),
                 program.glyph_count()
             )
         }
+        FontSpec::Composite {
+            cmap_name,
+            wmode,
+            descendant,
+            ..
+        } => {
+            let (kind, font_name, glyphs) = match &**descendant {
+                FontSpec::Embedded {
+                    kind,
+                    font_name,
+                    program,
+                    ..
+                } => (
+                    kind_text(*kind),
+                    name_text(font_name),
+                    program.glyph_count(),
+                ),
+                _ => ("unknown", String::new(), 0),
+            };
+            format!(
+                "font {index} composite {} wmode={wmode} {kind} {font_name} glyphs={glyphs}\n",
+                name_text(cmap_name)
+            )
+        }
+    }
+}
+
+fn kind_text(kind: ProgramKind) -> &'static str {
+    match kind {
+        ProgramKind::Type1 => "type1",
+        ProgramKind::TrueType => "truetype",
+        ProgramKind::Cff => "cff",
+        ProgramKind::Type1Cid => "cidtype1",
     }
 }
 
@@ -332,14 +378,21 @@ fn op(out: &mut String, op: &IrOp) {
             font,
             matrix: m,
             glyphs,
+            wmode,
         } => {
-            let codes: Vec<u8> = glyphs.iter().map(|g| g.code).collect();
+            let codes: Vec<u8> = glyphs.iter().flat_map(Glyph::code_bytes).collect();
+            let codes = if glyphs.iter().all(|g| g.len == 1) {
+                ps_string(&codes)
+            } else {
+                hex_string(&codes)
+            };
             let displacements: Vec<f32> = glyphs.iter().flat_map(|g| [g.dx, g.dy]).collect();
+            let vertical = if *wmode == 1 { " wmode=1" } else { "" };
             out.push_str(&format!(
-                "text {} {} {} {}\n",
+                "text {} {} {} {}{vertical}\n",
                 font.0,
                 matrix(*m),
-                ps_string(&codes),
+                codes,
                 fmt_reals(&displacements)
             ));
         }

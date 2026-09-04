@@ -96,10 +96,9 @@ fn approx(a: f32, b: f32) -> bool {
 
 fn glyphs_approx(got: &[Glyph], want: &[(u8, f32, f32)]) -> bool {
     got.len() == want.len()
-        && got
-            .iter()
-            .zip(want)
-            .all(|(g, &(code, dx, dy))| g.code == code && approx(g.dx, dx) && approx(g.dy, dy))
+        && got.iter().zip(want).all(|(g, &(code, dx, dy))| {
+            g.code == u32::from(code) && approx(g.dx, dx) && approx(g.dy, dy)
+        })
 }
 
 fn matrix_approx(a: Matrix, b: Matrix) -> bool {
@@ -136,16 +135,8 @@ fn a_resident_show_is_one_run_of_glyph_widths() {
     assert_eq!(
         shows[0],
         [
-            Glyph {
-                code: 72,
-                dx: 722.0,
-                dy: 0.0
-            },
-            Glyph {
-                code: 105,
-                dx: 222.0,
-                dy: 0.0
-            }
+            Glyph::simple(72, 722.0, 0.0),
+            Glyph::simple(105, 222.0, 0.0)
         ]
     );
     let point = run.top_numbers(2);
@@ -224,11 +215,7 @@ fn kshow_shows_each_segment_before_its_procedure() {
         .into_iter()
         .filter(|c| matches!(c, Call::Show(_) | Call::MoveTo(_)))
         .collect();
-    let glyph = |code| Glyph {
-        code,
-        dx: 600.0,
-        dy: 0.0,
-    };
+    let glyph = |code| Glyph::simple(code, 600.0, 0.0);
     assert_eq!(
         text,
         [
@@ -287,14 +274,7 @@ fn type3_glyphs_run_inside_a_captured_graphics_state() {
     }
     assert_eq!(
         text[at],
-        Call::Show(vec![
-            Glyph {
-                code: 97,
-                dx: 1000.0,
-                dy: 0.0
-            };
-            2
-        ])
+        Call::Show(vec![Glyph::simple(97, 1000.0, 0.0); 2])
     );
     assert_eq!(text.len(), at + 1);
     let point = run.top_numbers(2);

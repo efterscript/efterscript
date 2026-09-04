@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 //! `cargo xtask fetch-fonts [--check] [--force]`: the intake and audit
-//! path for the resident set's outline assets. Downloads the exact
-//! upstream releases (through the system `curl`) into `target/fetch-fonts`,
-//! verifies the archives' SHA-256 against the constants below, extracts
-//! exactly the listed members (system `tar` and `unzip`), derives the
-//! metric table of each Type 1 program, and compares each file with the
-//! committed one and with its entry in `crates/ps-fonts/data/PROVENANCE.md`.
+//! path for the resident set's outline assets and the shipped CMap
+//! resources. Downloads the exact upstream releases (through the system
+//! `curl`) into `target/fetch-fonts`, verifies the archives' SHA-256
+//! against the constants below, extracts exactly the listed members
+//! (system `tar` and `unzip`), derives the metric table of each Type 1
+//! program, and compares each file with the committed one and with its
+//! entry in `crates/ps-fonts/data/PROVENANCE.md`.
 //! The committed files are the source of truth; this tool is the audit
 //! trail.
 //!
@@ -126,7 +127,11 @@ const LIBERATION_FILES: [Source; 13] = [
     ),
 ];
 
-const UPSTREAMS: [Upstream; 4] = [
+/// The commit of `adobe-type-tools/cmap-resources` the Identity CMaps
+/// and their licence were taken from; nothing else is fetched from it.
+const CMAP_RESOURCES_COMMIT: &str = "f5cf3bca7fdfeaceb77aa82847e974f2306c20b4";
+
+const UPSTREAMS: [Upstream; 8] = [
     Upstream {
         file: "liberation-fonts-ttf-2.1.5.tar.gz",
         url: "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
@@ -156,6 +161,34 @@ const UPSTREAMS: [Upstream; 4] = [
         sha256: "3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66",
         kind: Kind::Text,
         files: &[src!("LPPL-1.3c.txt", "LICENSES/LPPL-1.3c.txt")],
+    },
+    Upstream {
+        file: "BSD-3-Clause.txt",
+        url: "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/BSD-3-Clause.txt",
+        sha256: "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+        kind: Kind::Text,
+        files: &[src!("BSD-3-Clause.txt", "LICENSES/BSD-3-Clause.txt")],
+    },
+    Upstream {
+        file: "Identity-H",
+        url: "https://raw.githubusercontent.com/adobe-type-tools/cmap-resources/f5cf3bca7fdfeaceb77aa82847e974f2306c20b4/Adobe-Identity-0/CMap/Identity-H",
+        sha256: "a06aff40c5e4393829d572b3771e5cafcf450ec4fa6ef3df5ae4024f16fc6efa",
+        kind: Kind::Text,
+        files: &[src!("Identity-H", "cmap/Identity-H")],
+    },
+    Upstream {
+        file: "Identity-V",
+        url: "https://raw.githubusercontent.com/adobe-type-tools/cmap-resources/f5cf3bca7fdfeaceb77aa82847e974f2306c20b4/Adobe-Identity-0/CMap/Identity-V",
+        sha256: "c03430489caf73dc71c723d9ae0413a31132f6ac9f16149d9a1d19e5d913af0f",
+        kind: Kind::Text,
+        files: &[src!("Identity-V", "cmap/Identity-V")],
+    },
+    Upstream {
+        file: "cmap-LICENSE.md",
+        url: "https://raw.githubusercontent.com/adobe-type-tools/cmap-resources/f5cf3bca7fdfeaceb77aa82847e974f2306c20b4/LICENSE.md",
+        sha256: "742665db9c8e1bc72603c6d319ca3e90b83bd6d95202f0cd4ef11068a07a9c29",
+        kind: Kind::Text,
+        files: &[src!("cmap-LICENSE.md", "cmap/LICENSE.md")],
     },
 ];
 
@@ -431,6 +464,7 @@ fn fetch(check: bool, force: bool) -> Result<bool, String> {
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let listed = provenance(&root);
     let extracted = work.join("extract");
+    println!("cmap      adobe-type-tools/cmap-resources at {CMAP_RESOURCES_COMMIT}");
     let mut audits = Vec::new();
     for upstream in &UPSTREAMS {
         let archive = download(upstream, &work)?;
@@ -513,7 +547,17 @@ mod tests {
         let count = dests.len();
         dests.dedup();
         assert_eq!(dests.len(), count);
-        assert_eq!(count, 13 + 21 * 2 + 1 + 6 + 2);
+        assert_eq!(count, 13 + 21 * 2 + 1 + 6 + 3 + 3);
+        assert!(
+            all.iter()
+                .any(|(m, d)| m == "Identity-V" && d == "cmap/Identity-V")
+        );
+        assert!(
+            UPSTREAMS
+                .iter()
+                .filter(|u| u.url.contains("cmap-resources"))
+                .all(|u| u.url.contains(CMAP_RESOURCES_COMMIT))
+        );
         assert!(all.iter().any(|(m, d)| m == "tex-gyre/type1/qzcmi.pfb"
             && d == "outlines/tex-gyre/qzcmi.pfb"));
         assert_eq!(tex_gyre_table("qzcmi"), "outlines/tex-gyre/qzcmi.metrics");

@@ -3,19 +3,23 @@
 
 //! The pieces a CFF program is assembled from — indexes, dictionary
 //! operands and operators, charsets, encodings, and select tables — and
-//! the subset writer built on them ([`subset`]): a name-keyed program
-//! holding the kept glyphs, a charset naming them, no encoding, and only
-//! the subroutines those glyphs reach, renumbered densely with every
-//! call's operand re-encoded against the new bias. Offsets that are only
-//! known after layout are written in the fixed five-byte form so a
-//! dictionary's size does not depend on their values. Where a call's
-//! operand is not a literal the rewrite can see, the numbering stays and
-//! the unreached subroutines are written as `return` stubs instead.
+//! the subset writers built on them: [`subset`] writes a name-keyed
+//! program holding the kept glyphs, a charset naming them, no encoding,
+//! and only the subroutines those glyphs reach, renumbered densely with
+//! every call's operand re-encoded against the new bias; [`subset_cid`]
+//! does the same for a CID-keyed program, keeping only the font
+//! dictionaries the kept glyphs run under, each with its own pruned
+//! local subroutines, and the global subroutines pruned across all of
+//! them. Offsets that are only known after layout are written in the
+//! fixed five-byte form so a dictionary's size does not depend on their
+//! values. Where a call's operand is not a literal the rewrite can see,
+//! the numbering stays and the unreached subroutines are written as
+//! `return` stubs instead.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::charstring::{Token, bias, encode, tokens_with_masks};
-use super::{CffProgram, DictOp, PrivateDict, Reached, STANDARD_STRINGS, Site, esc, op};
+use super::{CffProgram, DictOp, PrivateDict, Privates, Reached, STANDARD_STRINGS, Site, esc, op};
 use crate::program::FontError;
 
 /// An INDEX over `items`: count, offset size, offsets, data.
@@ -555,6 +559,303 @@ pub fn subset(
     Ok(out)
 }
 
+// --- CID-keyed subsets --------------------------------------------------------------------
+
+/// A CID-keyed subset's charstrings and subroutines: the global ones,
+/// the local ones of each kept font dictionary in order, and the kept
+/// charstrings in glyph order.
+struct CidPruned {
+    global: Vec<Vec<u8>>,
+    locals: Vec<Vec<Vec<u8>>>,
+    charstrings: Vec<Vec<u8>>,
+}
+
+/// The kept glyphs grouped by the font dictionary they run under, in
+/// dictionary order: `(old dictionary index, its glyphs)`.
+fn glyphs_by_fd(select: &[u8], gids: &BTreeSet<u16>) -> Vec<(u8, BTreeSet<u16>)> {
+    let mut by_fd: BTreeMap<u8, BTreeSet<u16>> = BTreeMap::new();
+    for &gid in gids {
+        let fd = select.get(usize::from(gid)).copied().unwrap_or(0);
+        by_fd.entry(fd).or_default().insert(gid);
+    }
+    by_fd.into_iter().collect()
+}
+
+/// Every kept charstring of every dictionary rewritten to the dense
+/// numbering: each dictionary's local subroutines by its own trace, the
+/// global ones by the union. A global subroutine may call a local one
+/// only when a single dictionary is kept, since the numbering it would
+/// need is the caller's; otherwise its call cannot be rewritten and the
+/// caller falls back to stubs. `None` when any call cannot be rewritten.
+fn renumber_cid(
+    program: &CffProgram,
+    dicts: &[PrivateDict],
+    groups: &[(u8, BTreeSet<u16>)],
+    traces: &[Reached],
+) -> Option<CidPruned> {
+    let dense = |keep: &BTreeSet<usize>| -> BTreeMap<usize, usize> {
+        keep.iter()
+            .enumerate()
+            .map(|(new, &old)| (old, new))
+            .collect()
+    };
+    let mut global_reached = BTreeSet::new();
+    let mut global_masks = Reached::default();
+    for reached in traces {
+        global_reached.extend(reached.global.iter().copied());
+        global_masks.masks.extend(
+            reached
+                .masks
+                .iter()
+                .filter(|(site, _, _)| matches!(site, Site::Global(_)))
+                .copied(),
+        );
+    }
+    let global_map = dense(&global_reached);
+    let global_bias = (
+        bias(program.global_subrs().len()),
+        bias(global_reached.len()),
+    );
+    let numbering_for = |fd: u8, reached: &Reached| Numbering {
+        local: dense(&reached.local),
+        global: global_map.clone(),
+        local_bias: (
+            bias(dicts[usize::from(fd)].subrs.len()),
+            bias(reached.local.len()),
+        ),
+        global_bias,
+    };
+    let mut locals = Vec::with_capacity(groups.len());
+    let mut charstrings = Vec::new();
+    for ((fd, gids), reached) in groups.iter().zip(traces) {
+        let numbering = numbering_for(*fd, reached);
+        let private = &dicts[usize::from(*fd)];
+        let rewrite = |code: &[u8], site: Site| -> Option<Vec<u8>> {
+            renumber_charstring(code, &mask_lengths(reached, site)?, &numbering)
+        };
+        locals.push(
+            reached
+                .local
+                .iter()
+                .map(|&k| rewrite(private.subrs.get(k)?, Site::Local(k)))
+                .collect::<Option<Vec<_>>>()?,
+        );
+        for &gid in gids {
+            charstrings.push(rewrite(program.charstring(gid).ok()?, Site::Glyph(gid))?);
+        }
+    }
+    let global_numbering = match (groups, traces) {
+        ([(fd, _)], [reached]) => numbering_for(*fd, reached),
+        _ => Numbering {
+            local: BTreeMap::new(),
+            global: global_map.clone(),
+            local_bias: (0, 0),
+            global_bias,
+        },
+    };
+    let global = global_reached
+        .iter()
+        .map(|&k| {
+            renumber_charstring(
+                program.global_subrs().get(k)?,
+                &mask_lengths(&global_masks, Site::Global(k))?,
+                &global_numbering,
+            )
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(CidPruned {
+        global,
+        locals,
+        charstrings,
+    })
+}
+
+/// The subset's subroutines and charstrings, tier by tier as for a
+/// name-keyed program (see [`prune`]), with the local subroutines
+/// handled per kept font dictionary.
+fn prune_cid(
+    program: &CffProgram,
+    dicts: &[PrivateDict],
+    groups: &[(u8, BTreeSet<u16>)],
+) -> CidPruned {
+    let verbatim = || -> Vec<Vec<u8>> {
+        groups
+            .iter()
+            .flat_map(|(_, gids)| gids.iter())
+            .map(|&gid| {
+                program
+                    .charstring(gid)
+                    .map(<[u8]>::to_vec)
+                    .unwrap_or_default()
+            })
+            .collect()
+    };
+    let traces: Option<Vec<Reached>> = groups
+        .iter()
+        .map(|(_, gids)| trace(program, gids))
+        .collect();
+    let Some(traces) = traces else {
+        return CidPruned {
+            global: program.global_subrs().to_vec(),
+            locals: groups
+                .iter()
+                .map(|(fd, _)| dicts[usize::from(*fd)].subrs.clone())
+                .collect(),
+            charstrings: verbatim(),
+        };
+    };
+    renumber_cid(program, dicts, groups, &traces).unwrap_or_else(|| {
+        let mut global_reached = BTreeSet::new();
+        for reached in &traces {
+            global_reached.extend(reached.global.iter().copied());
+        }
+        CidPruned {
+            global: stubbed(program.global_subrs(), &global_reached),
+            locals: groups
+                .iter()
+                .zip(&traces)
+                .map(|((fd, _), reached)| stubbed(&dicts[usize::from(*fd)].subrs, &reached.local))
+                .collect(),
+            charstrings: verbatim(),
+        }
+    })
+}
+
+/// A CID-keyed program holding the glyphs of `cids` and CID 0 under
+/// `font_name`: header, name index, top dictionary (`ROS` first, the
+/// copied entries, `CIDCount`, and the offsets), string index, the
+/// reached global subroutines, a format 0 charset of the kept CIDs, a
+/// format 3 select table, the kept charstrings, the font dictionary
+/// array restricted to the dictionaries the kept glyphs run under, and
+/// each of those dictionaries' private data with its reached local
+/// subroutines (see the module notes). A name-keyed program is
+/// `Unsupported`.
+pub fn subset_cid(
+    program: &CffProgram,
+    font_name: &[u8],
+    cids: &BTreeSet<u16>,
+) -> Result<Vec<u8>, FontError> {
+    let Privates::Cid { dicts, select } = program.privates() else {
+        return Err(FontError::Unsupported("name-keyed program as a CID subset"));
+    };
+    let ros = program
+        .ros()
+        .ok_or(FontError::Malformed("registry, ordering, supplement"))?;
+    let mut gids: BTreeSet<u16> = [0].into_iter().collect();
+    gids.extend(cids.iter().filter_map(|&cid| program.gid_of_cid(cid)));
+    let groups = glyphs_by_fd(select, &gids);
+    let pruned = prune_cid(program, dicts, &groups);
+
+    // Glyphs are written in old index order; each carries its CID and
+    // the new index of its dictionary.
+    let mut glyphs: Vec<(u16, u8, Vec<u8>)> = Vec::with_capacity(gids.len());
+    let mut charstrings = pruned.charstrings.into_iter();
+    for (new_fd, (_, fd_gids)) in groups.iter().enumerate() {
+        for &gid in fd_gids {
+            let code = charstrings.next().expect("one charstring per kept glyph");
+            glyphs.push((program.charset()[usize::from(gid)], new_fd as u8, code));
+        }
+    }
+    glyphs.sort_by_key(|(cid, _, _)| *cid);
+    let charset_ids: Vec<u16> = glyphs.iter().map(|(cid, _, _)| *cid).collect();
+    let fd_select = fd_select_format3(&glyphs.iter().map(|(_, fd, _)| *fd).collect::<Vec<_>>());
+    let charstrings: Vec<Vec<u8>> = glyphs.into_iter().map(|(_, _, code)| code).collect();
+
+    let mut strings = Strings::new();
+    let registry = strings.sid(&ros.registry);
+    let ordering = strings.sid(&ros.ordering);
+    let top_strings: Vec<(DictOp, u16)> = COPIED_TOP_STRINGS
+        .iter()
+        .filter_map(|&entry| Some((entry, strings.sid(program.top_string(entry)?))))
+        .collect();
+    let top = |charset: i32, fd_select: i32, charstrings: i32, fd_array: i32| -> Vec<u8> {
+        let mut w = DictWriter::new();
+        w.entry(
+            op::ROS,
+            &[
+                f64::from(registry),
+                f64::from(ordering),
+                f64::from(ros.supplement),
+            ],
+        );
+        for &(entry, sid) in &top_strings {
+            w.entry(entry, &[f64::from(sid)]);
+        }
+        for entry in COPIED_TOP_ENTRIES {
+            if let Some(operands) = program.top().get(entry) {
+                w.entry(entry, operands);
+            }
+        }
+        w.entry(op::CID_COUNT, &[f64::from(program.cid_count())]);
+        w.fixed(op::CHARSET, &[charset]);
+        w.fixed(op::FD_SELECT, &[fd_select]);
+        w.fixed(op::CHARSTRINGS, &[charstrings]);
+        w.fixed(op::FD_ARRAY, &[fd_array]);
+        w.bytes
+    };
+
+    // Each kept dictionary's private data: the entries, a `Subrs` offset
+    // when local subroutines survive, and the subroutine index after it.
+    let mut privates: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(groups.len());
+    for ((fd, _), local) in groups.iter().zip(&pruned.locals) {
+        let mut dict = DictWriter::new();
+        for (entry, operands) in &dicts[usize::from(*fd)].dict.entries {
+            dict.entry(*entry, operands);
+        }
+        let index = if local.is_empty() {
+            Vec::new()
+        } else {
+            let at = dict.len() + 6;
+            dict.fixed(op::SUBRS, &[at as i32]);
+            index(local)
+        };
+        privates.push((dict.bytes, index));
+    }
+    let fd_dict = |size: i32, offset: i32| -> Vec<u8> {
+        let mut w = DictWriter::new();
+        w.fixed(op::PRIVATE, &[size, offset]);
+        w.bytes
+    };
+
+    let name_index = index(&[font_name.to_vec()]);
+    let top_len = index(&[top(0, 0, 0, 0)]).len();
+    let string_index = index(&strings.own);
+    let global_index = index(&pruned.global);
+    let charset = charset_format0(&charset_ids);
+    let charstrings_index = index(&charstrings);
+    let charset_at = 4 + name_index.len() + top_len + string_index.len() + global_index.len();
+    let fd_select_at = charset_at + charset.len();
+    let charstrings_at = fd_select_at + fd_select.len();
+    let fd_array_at = charstrings_at + charstrings_index.len();
+    let fd_array_len = index(&privates.iter().map(|_| fd_dict(0, 0)).collect::<Vec<_>>()).len();
+    let mut at = fd_array_at + fd_array_len;
+    let mut fd_dicts = Vec::with_capacity(privates.len());
+    for (dict, subrs) in &privates {
+        fd_dicts.push(fd_dict(dict.len() as i32, at as i32));
+        at += dict.len() + subrs.len();
+    }
+    let top = top(
+        charset_at as i32,
+        fd_select_at as i32,
+        charstrings_at as i32,
+        fd_array_at as i32,
+    );
+    let mut out = header(offset_size(at)).to_vec();
+    out.extend(name_index);
+    out.extend(index(&[top]));
+    out.extend(string_index);
+    out.extend(global_index);
+    out.extend(charset);
+    out.extend(fd_select);
+    out.extend(charstrings_index);
+    out.extend(index(&fd_dicts));
+    for (dict, subrs) in privates {
+        out.extend(dict);
+        out.extend(subrs);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,6 +1212,244 @@ mod tests {
         assert!(again.private().unwrap().subrs.is_empty());
         assert_eq!(again.charstring(0).unwrap(), &[]);
         assert_eq!(glyph(&again, "a"), glyph(&program, "a"));
+    }
+
+    /// The CID subset of `font` keeping `cids`, parsed back; every kept
+    /// CID measures and outlines as the original.
+    fn cid_round_trip(font: &CffFont, cids: &[u16]) -> (CffProgram, CffProgram, Vec<u8>) {
+        let program = CffProgram::parse(&font.build()).unwrap();
+        let keep: BTreeSet<u16> = cids.iter().copied().collect();
+        let bytes = subset_cid(&program, b"ABCDEF+Sub", &keep).unwrap();
+        let again = CffProgram::parse(&bytes).unwrap();
+        assert_eq!(again.name(), b"ABCDEF+Sub");
+        assert!(again.is_cid_keyed());
+        assert_eq!(again.ros(), program.ros());
+        assert_eq!(again.cid_count(), program.cid_count());
+        assert_eq!(again.font_bbox(), program.font_bbox());
+        for &cid in keep.iter().chain(std::iter::once(&0)) {
+            let want = program.glyph_by_cid(cid).unwrap();
+            let got = again.glyph_by_cid(cid).unwrap();
+            assert_eq!(got.is_some(), want.is_some(), "CID {cid}");
+            if let (Some(got), Some(want)) = (got, want) {
+                assert_eq!(*got, *want, "CID {cid}");
+            }
+        }
+        (program, again, bytes)
+    }
+
+    #[test]
+    fn cid_subsets_keep_only_the_dictionaries_the_glyphs_run_under() {
+        use crate::testing::corpus_cid_cff;
+        let font = corpus_cid_cff();
+        // CIDs 1 and 2 run under dictionaries 0 and 1: both survive.
+        let (program, again, bytes) = cid_round_trip(&font, &[1, 2]);
+        assert_eq!(again.charset(), &[0, 1, 2]);
+        assert_eq!(again.fd_index(0), Some(0));
+        assert_eq!(again.fd_index(1), Some(0));
+        assert_eq!(again.fd_index(2), Some(1));
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts.len(), 2);
+        assert_eq!(dicts[0].default_width_x, 500.0);
+        assert_eq!(dicts[1].default_width_x, 700.0);
+        assert!(bytes.len() < font.build().len());
+        assert_eq!(program.glyph_count(), 6);
+        // CID 2 alone: only dictionary 1 survives and becomes dictionary
+        // 0 of the subset; CID 0 comes along and keeps its own.
+        let (_, again, _) = cid_round_trip(&font, &[2]);
+        assert_eq!(again.charset(), &[0, 2]);
+        let Privates::Cid { dicts, select } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts.len(), 2, "CID 0's dictionary and CID 2's");
+        assert_eq!(select, &[0, 1]);
+        assert_eq!(dicts[1].default_width_x, 700.0);
+        // CIDs of one dictionary only, out of order, with an unknown one.
+        let (_, again, _) = cid_round_trip(&font, &[200, 34, 99]);
+        assert_eq!(again.charset(), &[0, 34, 200]);
+        let Privates::Cid { dicts, select } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts.len(), 1);
+        assert_eq!(select, &[0, 0, 0]);
+        assert_eq!(again.glyph_by_cid(99).unwrap(), None);
+        // Nothing but CID 0.
+        let (_, again, _) = cid_round_trip(&font, &[]);
+        assert_eq!(again.glyph_count(), 1);
+        // A name-keyed program has no CID form.
+        let named = CffProgram::parse(&corpus_cff().build()).unwrap();
+        assert!(matches!(
+            subset_cid(&named, b"Sub", &BTreeSet::new()),
+            Err(FontError::Unsupported(_))
+        ));
+    }
+
+    /// Two dictionaries with local subroutines of their own and two
+    /// global ones: CID 1 (dictionary 0) reaches local 1 and global 0,
+    /// CID 2 (dictionary 1) reaches local 0 and global 1, CID 3
+    /// (dictionary 1) reaches nothing; local 0 of dictionary 0 and
+    /// local 1 of dictionary 1 are reached by no glyph.
+    fn subr_font() -> CffFont {
+        let bar = Type2Builder::new().rlineto(100, 0).r#return().bytes();
+        let up = Type2Builder::new().rlineto(0, 100).r#return().bytes();
+        let diag = Type2Builder::new().rlineto(50, 50).r#return().bytes();
+        let back = Type2Builder::new().rlineto(-50, 50).r#return().bytes();
+        let unused = Type2Builder::new().rlineto(1, 1).r#return().bytes();
+        let one = Type2Builder::new()
+            .rmoveto(0, 0)
+            .callsubr(1 - 107)
+            .callgsubr(0 - 107)
+            .endchar()
+            .bytes();
+        let two = Type2Builder::new()
+            .rmoveto(10, 10)
+            .callsubr(0 - 107)
+            .callgsubr(1 - 107)
+            .endchar()
+            .bytes();
+        let three = Type2Builder::new()
+            .rmoveto(0, 0)
+            .rlineto(20, 20)
+            .endchar()
+            .bytes();
+        CffFont::cid_keyed("Subrs", "Adobe", "Identity", 0)
+            .fd(CffFd {
+                subrs: vec![unused.clone(), bar],
+                default_width: 500,
+                nominal_width: 0,
+            })
+            .fd(CffFd {
+                subrs: vec![up, unused],
+                default_width: 600,
+                nominal_width: 0,
+            })
+            .gsubr(diag)
+            .gsubr(back)
+            .cid_glyph(1, 0, one)
+            .cid_glyph(2, 1, two)
+            .cid_glyph(3, 1, three)
+    }
+
+    #[test]
+    fn cid_subsets_prune_each_dictionarys_subroutines_and_the_global_ones() {
+        let font = subr_font();
+        let (program, again, _) = cid_round_trip(&font, &[1, 2, 3]);
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        let Privates::Cid {
+            dicts: original, ..
+        } = program.privates()
+        else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts[0].subrs, vec![original[0].subrs[1].clone()]);
+        assert_eq!(dicts[1].subrs, vec![original[1].subrs[0].clone()]);
+        assert_eq!(again.global_subrs(), program.global_subrs());
+        assert_eq!(
+            again.charstring(1).unwrap(),
+            Type2Builder::new()
+                .rmoveto(0, 0)
+                .callsubr(-107)
+                .callgsubr(-107)
+                .endchar()
+                .bytes()
+        );
+        // CID 2 alone: one dictionary, one local, one global, renumbered.
+        let (_, again, _) = cid_round_trip(&font, &[2]);
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts.len(), 2);
+        assert!(dicts[0].subrs.is_empty(), "CID 0 reaches nothing");
+        assert_eq!(dicts[1].subrs.len(), 1);
+        assert_eq!(again.global_subrs().len(), 1);
+        assert_eq!(
+            again.charstring(1).unwrap(),
+            Type2Builder::new()
+                .rmoveto(10, 10)
+                .callsubr(-107)
+                .callgsubr(-107)
+                .endchar()
+                .bytes()
+        );
+        // CID 3 alone: no subroutine of any kind survives.
+        let (_, again, _) = cid_round_trip(&font, &[3]);
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert!(dicts.iter().all(|d| d.subrs.is_empty()));
+        assert!(again.global_subrs().is_empty());
+    }
+
+    #[test]
+    fn a_global_subroutine_calling_a_local_one_is_renumbered_only_under_one_dictionary() {
+        // Global 0 calls local 0 of whichever dictionary the glyph runs
+        // under; both dictionaries have one.
+        let bar = Type2Builder::new().rlineto(100, 0).r#return().bytes();
+        let up = Type2Builder::new().rlineto(0, 100).r#return().bytes();
+        let unused = Type2Builder::new().rlineto(1, 1).r#return().bytes();
+        let glyph = |dx: i32| {
+            Type2Builder::new()
+                .rmoveto(dx, 0)
+                .callgsubr(1 - 107)
+                .endchar()
+                .bytes()
+        };
+        let font = CffFont::cid_keyed("Cross", "Adobe", "Identity", 0)
+            .fd(CffFd {
+                subrs: vec![unused.clone(), bar],
+                default_width: 500,
+                nominal_width: 0,
+            })
+            .fd(CffFd {
+                subrs: vec![unused.clone(), up],
+                default_width: 500,
+                nominal_width: 0,
+            })
+            .gsubr(unused)
+            .gsubr(Type2Builder::new().callsubr(1 - 107).r#return().bytes())
+            .cid_glyph(1, 0, glyph(0))
+            .cid_glyph(2, 1, glyph(10));
+        // Both dictionaries kept: the global call cannot be renumbered
+        // for two numberings at once, so the stub tier keeps counts.
+        let (program, again, _) = cid_round_trip(&font, &[1, 2]);
+        assert_eq!(again.global_subrs().len(), 2);
+        assert_eq!(again.global_subrs()[0], RETURN.to_vec());
+        assert_eq!(again.global_subrs()[1], program.global_subrs()[1]);
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts[0].subrs[0], RETURN.to_vec());
+        assert_eq!(dicts[1].subrs[1], up_of(&program, 1));
+        // One dictionary kept (CID 0 shares dictionary 0 with CID 1):
+        // everything renumbers densely, the global call included.
+        let (_, again, _) = cid_round_trip(&font, &[1]);
+        let Privates::Cid { dicts, .. } = again.privates() else {
+            panic!("CID-keyed");
+        };
+        assert_eq!(dicts.len(), 1);
+        assert_eq!(dicts[0].subrs, vec![bar_of(&program)]);
+        assert_eq!(again.global_subrs().len(), 1);
+        assert_eq!(
+            again.global_subrs()[0],
+            Type2Builder::new().callsubr(-107).r#return().bytes()
+        );
+    }
+
+    fn bar_of(program: &CffProgram) -> Vec<u8> {
+        let Privates::Cid { dicts, .. } = program.privates() else {
+            panic!("CID-keyed");
+        };
+        dicts[0].subrs[1].clone()
+    }
+
+    fn up_of(program: &CffProgram, fd: usize) -> Vec<u8> {
+        let Privates::Cid { dicts, .. } = program.privates() else {
+            panic!("CID-keyed");
+        };
+        dicts[fd].subrs[1].clone()
     }
 
     #[test]

@@ -14,7 +14,7 @@ fn usage() -> ExitCode {
     eprintln!("tasks:");
     eprintln!("  parse-survival    scan every corpus .ps file (and the private tier if set)");
     eprintln!(
-        "  fetch-fonts       download and audit the resident set's outline assets [--check] [--force]"
+        "  fetch-fonts       download and audit the outline and CMap assets [--check] [--force]"
     );
     eprintln!("                    or extract the OpenType test font into target/ [--test-assets]");
     ExitCode::from(2)

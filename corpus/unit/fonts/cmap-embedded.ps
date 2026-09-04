@@ -1,0 +1,40 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% Scenario: an embedded CMap. The CMap program Syn-H, written in the
+% CIDInit operators, maps one-byte codes <20>-<7E> to CIDs from 1 and
+% two-byte codes <8140>-<817E> to CIDs from 200, and defines itself
+% as a CMap resource; resourcestatus finds it with status 0.
+% Expect: true, 0, 0.
+% The font program below is synthesised by ps-fonts' corpus
+% generator (tests/corpus_fonts.rs); regenerate rather than edit.
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo 3 dict dup begin
+/Registry (Adobe) def
+/Ordering (Identity) def
+/Supplement 0 def
+end def
+/CMapName /Syn-H def
+/CMapType 1 def
+/WMode 0 def
+2 begincodespacerange
+<20> <7e>
+<8140> <81fe>
+endcodespacerange
+2 begincidrange
+<20> <7e> 1
+<8140> <817e> 200
+endcidrange
+1 beginnotdefrange
+<817f> <81fe> 0
+endnotdefrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+/Syn-H /CMap resourcestatus = = =

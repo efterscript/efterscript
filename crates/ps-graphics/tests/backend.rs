@@ -599,7 +599,7 @@ fn font(instance: u32, size: f32) -> FontRef {
 }
 
 fn glyph(code: u8, dx: f32) -> Glyph {
-    Glyph { code, dx, dy: 0.0 }
+    Glyph::simple(code, dx, 0.0)
 }
 
 /// Runs a square glyph procedure of `size` glyph units through the
@@ -644,6 +644,7 @@ fn a_run_is_one_text_op_with_colour_before_it_and_advances_the_point() {
         font,
         matrix,
         glyphs,
+        ..
     } = &recorded[1]
     else {
         panic!("a text op, got {:?}", recorded[1]);
@@ -1036,4 +1037,161 @@ fn a_glyph_name_keeps_its_first_procedure() {
         width: (0.0, 0.0),
         bbox: None,
     };
+}
+
+#[test]
+fn composite_fonts_intern_by_cmap_and_descendant_and_record_their_cids() {
+    use ps_fonts::ProgramKind;
+    use ps_fonts::cmap::CMapBuilder;
+    use ps_fonts::testing::corpus_cid_cff;
+    use std::rc::Rc;
+    let program = Rc::new(corpus_cid_cff().program().unwrap());
+    let descendant = FontSource::Embedded {
+        family: 9,
+        kind: ProgramKind::Cff,
+        program: program.clone(),
+        font_matrix: Matrix::scaling(0.001, 0.001),
+        font_name: b"SynCID".to_vec(),
+    };
+    let cmap = |name: &[u8], wmode: u8| {
+        let mut builder = CMapBuilder::new();
+        builder
+            .name(name)
+            .wmode(wmode)
+            .codespace(&[0, 0], &[0xff, 0xff])
+            .unwrap()
+            .cid_range(&[0, 0], &[0xff, 0xff], 0)
+            .unwrap();
+        Rc::new(builder.build())
+    };
+    let composite = |family: u32, name: &[u8], wmode: u8| FontInfo {
+        source: FontSource::Composite {
+            family,
+            cmap_name: name.to_vec(),
+            wmode,
+            unicode_based: false,
+            cmap: cmap(name, wmode),
+            descendant: Box::new(descendant.clone()),
+        },
+        encoding: vec![None; 256],
+    };
+    let cid = |cid: u16, dx: f32, dy: f32| Glyph {
+        code: u32::from(cid),
+        len: 2,
+        cid,
+        dx,
+        dy,
+    };
+    let (mut g, pages) = backend();
+    g.define_font(0, &composite(20, b"Identity-H", 0)).unwrap();
+    g.define_font(1, &composite(20, b"Identity-H", 0)).unwrap();
+    g.define_font(2, &composite(21, b"Identity-V", 1)).unwrap();
+    g.moveto(p(100.0, 100.0)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.show(&[cid(1, 500.0, 0.0), cid(2, 700.0, 0.0)]).unwrap();
+    assert!(close(g.current_point().unwrap(), p(112.0, 100.0)));
+    g.set_font(Some(font(1, 20.0))).unwrap();
+    g.show(&[cid(34, 500.0, 0.0)]).unwrap();
+    g.moveto(p(50.0, 200.0)).unwrap();
+    g.set_font(Some(font(2, 10.0))).unwrap();
+    g.show(&[cid(1, 0.0, -1000.0)]).unwrap();
+    assert!(close(g.current_point().unwrap(), p(50.0, 190.0)));
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let fonts = &pages[0].resources.fonts;
+    assert_eq!(
+        fonts.len(),
+        2,
+        "two instances of one CMap and descendant share"
+    );
+    let FontSpec::Composite {
+        cmap_name,
+        wmode,
+        descendant: inner,
+        cid_to_code,
+        ..
+    } = &fonts[0]
+    else {
+        panic!("a composite resource, got {:?}", fonts[0]);
+    };
+    assert_eq!(cmap_name, b"Identity-H");
+    assert_eq!(*wmode, 0);
+    assert!(matches!(
+        &**inner,
+        FontSpec::Embedded { kind: ProgramKind::Cff, font_name, program: shared, .. }
+            if font_name == b"SynCID" && Rc::ptr_eq(&shared.0, &program)
+    ));
+    assert_eq!(
+        cid_to_code
+            .iter()
+            .map(|(c, v)| (*c, *v))
+            .collect::<Vec<_>>(),
+        [(1, (1, 2)), (2, (2, 2)), (34, (34, 2))]
+    );
+    assert_eq!(fonts[0].cid_width(2), (700.0, 0.0));
+    assert_eq!(fonts[0].glyph_width(&cid(34, 0.0, 0.0)), (500.0, 0.0));
+    assert_eq!(fonts[0].cid_width(99), (0.0, 0.0), "no glyph, no width");
+    assert!(fonts[0].same_font(&fonts[0]));
+    assert!(!fonts[0].same_font(&fonts[1]));
+    assert_eq!(
+        pages[0].dump(),
+        "ir/1\npage 612 792\nresources:\n\
+         font 0 composite Identity-H wmode=0 cff SynCID glyphs=6\n\
+         font 1 composite Identity-V wmode=1 cff SynCID glyphs=6\n\
+         ops:\n\
+         text 0 0.01 0 0 0.01 100 100 <00010002> 500 0 700 0\n\
+         text 0 0.02 0 0 0.02 112 100 <0022> 500 0\n\
+         text 1 0.01 0 0 0.01 50 200 <0001> 0 -1000 wmode=1\n"
+    );
+}
+
+#[test]
+fn a_simple_descendant_is_recorded_as_its_own_font() {
+    use ps_fonts::cmap::CMapBuilder;
+    use std::rc::Rc;
+    let mut builder = CMapBuilder::new();
+    builder
+        .name(b"Identity-H")
+        .codespace(&[0, 0], &[0xff, 0xff])
+        .unwrap()
+        .cid_range(&[0, 0], &[0xff, 0xff], 0)
+        .unwrap();
+    let info = FontInfo {
+        source: FontSource::Composite {
+            family: 30,
+            cmap_name: b"Identity-H".to_vec(),
+            wmode: 0,
+            unicode_based: false,
+            cmap: Rc::new(builder.build()),
+            descendant: Box::new(FontSource::Resident(ResidentFace::Helvetica)),
+        },
+        encoding: standard_names(),
+    };
+    let (mut g, pages) = backend();
+    g.define_font(0, &info).unwrap();
+    g.define_font(1, &helvetica()).unwrap();
+    g.moveto(p(100.0, 700.0)).unwrap();
+    g.set_font(Some(font(0, 12.0))).unwrap();
+    g.show(&[Glyph {
+        code: 0x48,
+        len: 2,
+        cid: 0x48,
+        dx: 722.0,
+        dy: 0.0,
+    }])
+    .unwrap();
+    g.set_font(Some(font(1, 12.0))).unwrap();
+    g.show(&[glyph(105, 222.0)]).unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert_eq!(
+        pages[0].resources.fonts.len(),
+        1,
+        "Helvetica with its encoding"
+    );
+    assert!(pages[0].dump().contains(
+        "font 0 Helvetica\nops:\n\
+         text 0 0.012 0 0 0.012 100 700 <0048> 722 0\n\
+         text 0 0.012 0 0 0.012 108.664 700 (i) 222 0\n"
+    ));
 }

@@ -20,6 +20,7 @@ use pdf_out::{DictBuilder, Document, Filter, Ref, Val};
 use ps_graphics::{FontIndex, Image, ImageRef, Page, SpaceRef};
 use ps_vm::{ImageSpec, SpaceSpec};
 
+use crate::content::Recode;
 use crate::fonts::{FontTable, Refs, write_fonts};
 
 pub(crate) fn space_name(space: SpaceRef) -> String {
@@ -234,6 +235,7 @@ pub(crate) struct Objects {
     spaces: Vec<Form>,
     images: Vec<Ref>,
     fonts: Vec<Ref>,
+    recode: Recode,
 }
 
 impl Objects {
@@ -261,9 +263,16 @@ impl Objects {
             spaces,
             images,
             fonts: Vec::new(),
+            recode: Recode::new(),
         };
-        objects.fonts = write_fonts(doc, page, filter, fonts, &objects, notes)?;
+        (objects.fonts, objects.recode) = write_fonts(doc, page, filter, fonts, &objects, notes)?;
         Ok(objects)
+    }
+
+    /// The one-byte codes of the page's composite fonts written as Type 3
+    /// fallbacks, for the content writer.
+    pub(crate) fn recode(&self) -> &Recode {
+        &self.recode
     }
 
     /// Fills the page's `Resources` dictionary: `ColorSpace` for the

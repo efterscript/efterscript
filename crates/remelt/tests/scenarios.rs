@@ -600,3 +600,265 @@ fn a_truetype_subset_has_a_cmap() {
         "each code by its bare value and in the 0xF0xx range"
     );
 }
+
+// --- composite fonts ------------------------------------------------------------------
+
+use ps_fonts::testing::{CidType1Font, corpus_cid_cff, corpus_cmap};
+
+fn with_cid_set(program: &str) -> Vec<u8> {
+    let mut out = corpus_cid_cff().font_set("SynCIDSet");
+    out.extend_from_slice(program.as_bytes());
+    out
+}
+
+fn distil_bytes(program: &[u8]) -> Run {
+    distil_with(program, &Options { compress: false })
+}
+
+/// The Type 0 font `name` of page `index` and its one descendant.
+fn type0<'a>(pdf: &'a support::Pdf, index: usize, name: &str) -> (&'a Value, &'a Value) {
+    let font = font(pdf, index, name);
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type0");
+    let descendants = array(font.get("DescendantFonts").unwrap());
+    assert_eq!(descendants.len(), 1);
+    (font, pdf.resolve(descendants[0].as_reference()))
+}
+
+fn widths_of(descendant: &Value) -> Vec<String> {
+    array(descendant.get("W").unwrap())
+        .iter()
+        .map(|v| match v {
+            Value::Array(items) => format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(|w| number(w).to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            other => number(other).to_string(),
+        })
+        .collect()
+}
+
+// composite-two-byte-width.ps
+#[test]
+fn a_cid_keyed_cff_embeds_as_cidfonttype0c() {
+    use ps_fonts::CffProgram;
+    let run = distil_bytes(&with_cid_set(
+        "/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 0 0 moveto <00010002> show showpage",
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 0 0 Tm\n<00010002> Tj\nET\n"
+    );
+    let (font, descendant) = type0(&pdf, 0, "F0");
+    assert_eq!(font.get("Encoding").unwrap().as_name(), b"Identity-H");
+    let base = font.get("BaseFont").unwrap().as_name();
+    assert!(
+        base.ends_with(b"+SynCID") && base.len() == 7 + 6,
+        "{base:?}"
+    );
+    assert!(
+        font.get("ToUnicode").is_none(),
+        "no source for a CFF under Identity"
+    );
+    assert_eq!(
+        descendant.get("Subtype").unwrap().as_name(),
+        b"CIDFontType0"
+    );
+    assert_eq!(descendant.get("BaseFont").unwrap().as_name(), base);
+    let info = descendant.get("CIDSystemInfo").unwrap();
+    assert!(matches!(info.get("Registry"), Some(Value::Str(s)) if s == b"Adobe"));
+    assert!(matches!(info.get("Ordering"), Some(Value::Str(s)) if s == b"Identity"));
+    assert_eq!(info.get("Supplement").unwrap().as_int(), 0);
+    assert_eq!(descendant.get("DW").unwrap().as_int(), 1000);
+    assert_eq!(widths_of(descendant), ["1", "[500 700]"]);
+    let descriptor = pdf.resolve(descendant.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("FontName").unwrap().as_name(), base);
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    let font_file = pdf.resolve(descriptor.get("FontFile3").unwrap().as_reference());
+    assert_eq!(
+        font_file.get("Subtype").unwrap().as_name(),
+        b"CIDFontType0C"
+    );
+    let subset = CffProgram::parse(&decoded(font_file)).expect("a CFF program");
+    assert!(subset.is_cid_keyed());
+    assert_eq!(subset.charset(), &[0, 1, 2]);
+    assert_eq!(subset.name(), base);
+    let original = corpus_cid_cff().program().unwrap();
+    for cid in [0u16, 1, 2] {
+        assert_eq!(
+            subset.glyph_by_cid(cid).unwrap(),
+            original.glyph_by_cid(cid).unwrap(),
+            "CID {cid}"
+        );
+    }
+    assert_eq!(
+        subset.glyph_by_cid(34).unwrap(),
+        None,
+        "not shown, not kept"
+    );
+}
+
+// composite-vertical-width.ps
+#[test]
+fn a_vertical_run_uses_identity_v() {
+    let run = distil_bytes(&with_cid_set(
+        "/SynV /Identity-V [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 0 100 moveto <0001> show showpage",
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 0 100 Tm\n<0001> Tj\nET\n"
+    );
+    let (font, descendant) = type0(&pdf, 0, "F0");
+    assert_eq!(font.get("Encoding").unwrap().as_name(), b"Identity-V");
+    assert_eq!(widths_of(descendant), ["1", "[500]"]);
+}
+
+// cidfont-type2-embedded.ps
+#[test]
+fn a_cidfonttype2_descendant_carries_a_cid_to_gid_map() {
+    use ps_fonts::testing::corpus_truetype;
+    let run = distil(&format!(
+        "{}/SynTTComposite /Identity-H [ /SynCIDTT /CIDFont findresource ] composefont \
+         20 scalefont setfont 100 100 moveto <00030004> show showpage",
+        corpus_truetype().cidfont_type2("SynCIDTT", &[(3, 1), (4, 2)])
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n20 0 0 20 100 100 Tm\n<00030004> Tj\nET\n"
+    );
+    let (_, descendant) = type0(&pdf, 0, "F0");
+    assert_eq!(
+        descendant.get("Subtype").unwrap().as_name(),
+        b"CIDFontType2"
+    );
+    assert_eq!(widths_of(descendant), ["3", "[500 585.938]"]);
+    let descriptor = pdf.resolve(descendant.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    let data = decoded(pdf.resolve(descriptor.get("FontFile2").unwrap().as_reference()));
+    let subset = TrueTypeProgram::parse(data).unwrap();
+    assert_eq!(subset.num_glyphs(), 3);
+    let map = decoded(pdf.resolve(descendant.get("CIDToGIDMap").unwrap().as_reference()));
+    assert_eq!(
+        map,
+        [0, 0, 0, 0, 0, 0, 0, 1, 0, 2],
+        "CID 3 to glyph 1, CID 4 to glyph 2"
+    );
+    let a = corpus_truetype().program().unwrap();
+    assert_eq!(
+        subset.glyph_by_index(1).unwrap().advance,
+        a.glyph(b"a").unwrap().unwrap().advance
+    );
+}
+
+// cmap-ucs2-tounicode.ps
+#[test]
+fn a_unicode_based_cmap_gives_tounicode() {
+    let ucs2 = corpus_cmap()
+        .replace("/CMapName /Syn-H def", "/CMapName /Syn-UCS2-H def")
+        .replace(
+            "2 begincodespacerange\n<20> <7e>\n<8140> <81fe>\nendcodespacerange\n",
+            "1 begincodespacerange\n<0000> <ffff>\nendcodespacerange\n",
+        )
+        .replace(
+            "2 begincidrange\n<20> <7e> 1\n<8140> <817e> 200\nendcidrange\n",
+            "1 begincidrange\n<0041> <0042> 1\nendcidrange\n",
+        )
+        .replace("1 beginnotdefrange\n<817f> <81fe> 0\nendnotdefrange\n", "");
+    let run = distil_bytes(&with_cid_set(&format!(
+        "{ucs2}/SynUnicode /Syn-UCS2-H [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 100 100 moveto <00410042> show showpage"
+    )));
+    assert_eq!(run.report.outcome, Outcome::Ok, "{:?}", run.report.outcome);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<00010002> Tj\nET\n",
+        "the CIDs, not the codes"
+    );
+    let (font, _) = type0(&pdf, 0, "F0");
+    let cmap = decoded(pdf.resolve(font.get("ToUnicode").unwrap().as_reference()));
+    let cmap = String::from_utf8(cmap).unwrap();
+    assert!(
+        cmap.contains("<0000> <FFFF>\nendcodespacerange\n"),
+        "{cmap}"
+    );
+    assert!(
+        cmap.contains("2 beginbfchar\n<0001> <0041>\n<0002> <0042>\nendbfchar\n"),
+        "{cmap}"
+    );
+}
+
+// cidfont-type1-fallback.ps
+#[test]
+fn a_type1_charstring_cidfont_falls_back_to_type3() {
+    let mut program = CidType1Font::corpus().file();
+    program.extend_from_slice(
+        b"/SynT1Composite /Identity-H [ /SynCIDT1 /CIDFont findresource ] composefont \
+          10 scalefont setfont 100 100 moveto <0002> show showpage",
+    );
+    let run = distil_bytes(&program);
+    assert_eq!(run.report.outcome, Outcome::Ok, "{:?}", run.report.outcome);
+    let pdf = check(&run.pdf);
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n10 0 0 10 100 100 Tm\n<01> Tj\nET\n",
+        "re-encoded to the one-byte code"
+    );
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"Type3");
+    let matrix: Vec<f64> = array(font.get("FontMatrix").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(matrix, [0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+    let procs = font.get("CharProcs").unwrap();
+    let proc_ = pdf.resolve(procs.get("cid2").unwrap().as_reference());
+    assert_eq!(
+        String::from_utf8(decoded(proc_)).unwrap(),
+        "700 0 0 0 600 600 d1\n0 0 m\n600 0 l\n600 600 l\n0 600 l\nh\nf\n"
+    );
+    let differences = array(font.get("Encoding").unwrap().get("Differences").unwrap());
+    assert_eq!(differences[0].as_int(), 1);
+    assert_eq!(differences[1].as_name(), b"cid2");
+    assert_eq!(differences.len(), 2);
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 1);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 1);
+    let widths: Vec<f64> = array(font.get("Widths").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(widths, [700.0]);
+    assert!(font.get("Resources").is_some());
+    assert!(font.get("ToUnicode").is_none());
+}
+
+#[test]
+fn composite_fonts_are_shared_across_pages_over_the_union_of_their_cids() {
+    let run = distil_bytes(&with_cid_set(
+        "/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+         10 scalefont setfont 0 0 moveto <0001> show showpage \
+         /SynComposite findfont 20 scalefont setfont 0 0 moveto <0002> show showpage",
+    ));
+    assert_eq!(run.report.outcome, Outcome::Ok);
+    let pdf = check(&run.pdf);
+    assert_eq!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F0"));
+    let (_, descendant) = type0(&pdf, 0, "F0");
+    assert_eq!(widths_of(descendant), ["1", "[500 700]"]);
+    assert_eq!(
+        String::from_utf8_lossy(&run.pdf)
+            .matches("/Subtype /Type0")
+            .count(),
+        1
+    );
+}

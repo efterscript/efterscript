@@ -238,6 +238,11 @@ mod tests {
             Outcome::Ok { tokens: 3 }
         );
         assert_eq!(scan(b"/S 99 StartData\x80"), Outcome::Ok { tokens: 3 });
+        // The CIDFont form: a string names the data's form before the count.
+        assert_eq!(
+            scan(b"(Binary) 3 StartData\x80\x81\x82\nend"),
+            Outcome::Ok { tokens: 4 }
+        );
         // Without a count the name is only a name.
         match scan(b"/S StartData \x80") {
             Outcome::Error { kind, .. } => assert_eq!(kind, "BinaryEncoding"),

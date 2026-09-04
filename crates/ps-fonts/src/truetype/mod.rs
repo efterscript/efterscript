@@ -3,7 +3,9 @@
 
 //! TrueType programs as a Type 42 font carries them: the table directory,
 //! the metrics and glyph tables, `post` names, and `cmap` subtables, with
-//! quadratic contours converted to cubic outlines.
+//! quadratic contours converted to cubic outlines. A `CIDFontType 2`
+//! dictionary addresses the same program by CID through its `CIDMap`,
+//! carried here as a [`CidMap`].
 
 pub mod write;
 
@@ -14,6 +16,34 @@ use std::rc::Rc;
 use crate::mac_glyphs::MAC_GLYPH_NAMES;
 use crate::outline::{Glyph, Outline};
 use crate::program::FontError;
+
+/// A `CIDFontType 2` dictionary's `CIDMap`: which glyph index each CID
+/// selects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CidMap {
+    /// One entry per CID, `CIDCount` of them.
+    Table(Vec<u16>),
+    /// Every CID selects the glyph `CID + offset`, over `count` CIDs.
+    Offset { offset: u16, count: u32 },
+}
+
+impl CidMap {
+    pub fn gid(&self, cid: u16) -> Option<u16> {
+        match self {
+            CidMap::Table(table) => table.get(usize::from(cid)).copied(),
+            CidMap::Offset { offset, count } => (u32::from(cid) < *count)
+                .then(|| cid.checked_add(*offset))
+                .flatten(),
+        }
+    }
+
+    pub fn count(&self) -> u32 {
+        match self {
+            CidMap::Table(table) => table.len() as u32,
+            CidMap::Offset { count, .. } => *count,
+        }
+    }
+}
 
 /// Composite glyphs nested deeper than this are a fault.
 const MAX_COMPONENT_DEPTH: usize = 8;
@@ -140,7 +170,9 @@ pub struct TrueTypeProgram {
     fixed_pitch: bool,
     post_names: Vec<Vec<u8>>,
     names: BTreeMap<Vec<u8>, u16>,
+    cid_map: Option<CidMap>,
     cache: RefCell<HashMap<Vec<u8>, Rc<Glyph>>>,
+    cid_cache: RefCell<HashMap<u16, Rc<Glyph>>>,
 }
 
 impl std::fmt::Debug for TrueTypeProgram {
@@ -248,7 +280,9 @@ impl TrueTypeProgram {
             fixed_pitch,
             post_names,
             names: BTreeMap::new(),
+            cid_map: None,
             cache: RefCell::new(HashMap::new()),
+            cid_cache: RefCell::new(HashMap::new()),
             bytes,
         })
     }
@@ -263,6 +297,32 @@ impl TrueTypeProgram {
 
     pub fn names(&self) -> &BTreeMap<Vec<u8>, u16> {
         &self.names
+    }
+
+    /// The CID map of a `CIDFontType 2` dictionary, through which
+    /// [`TrueTypeProgram::glyph_by_cid`] finds glyphs.
+    pub fn with_cid_map(mut self, map: CidMap) -> Self {
+        self.cid_map = Some(map);
+        self.cid_cache.borrow_mut().clear();
+        self
+    }
+
+    pub fn cid_map(&self) -> Option<&CidMap> {
+        self.cid_map.as_ref()
+    }
+
+    /// The glyph a CID selects through the CID map: `Ok(None)` without a
+    /// map or for a CID outside it.
+    pub fn glyph_by_cid(&self, cid: u16) -> Result<Option<Rc<Glyph>>, FontError> {
+        if let Some(glyph) = self.cid_cache.borrow().get(&cid) {
+            return Ok(Some(glyph.clone()));
+        }
+        let Some(gid) = self.cid_map.as_ref().and_then(|map| map.gid(cid)) else {
+            return Ok(None);
+        };
+        let glyph = Rc::new(self.glyph_by_index(gid)?);
+        self.cid_cache.borrow_mut().insert(cid, glyph.clone());
+        Ok(Some(glyph))
     }
 
     pub fn bytes(&self) -> &[u8] {

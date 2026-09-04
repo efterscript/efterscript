@@ -333,7 +333,7 @@ fn the_procset_and_fontset_categories_answer_the_resource_operators() {
     assert_eq!(stack[7].as_i32(), Some(0));
     assert_eq!(stack[8].as_bool(), Some(false));
     assert_eq!(stack.len(), 9);
-    assert_eq!(run.output, "FontSetInit\nSynSet\n");
+    assert_eq!(run.output, "CIDInit\nFontSetInit\nSynSet\n");
     let run = exec(b"/NoSuchSet /ProcSet findresource");
     assert_eq!(run.error(), Some("undefined"));
     let run = exec(b"/NoSuchSet /FontSet findresource");

@@ -1,0 +1,9 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+font 0 composite Syn-UCS2-H wmode=0 cff SynCID glyphs=6
+ops:
+text 0 0.01 0 0 0.01 100 100 <00410042> 500 0 700 0

@@ -6,12 +6,14 @@
 % expect-output: 2
 % expect-output: false
 % expect-output: true
+% expect-output: CIDInit
 % expect-output: FontSetInit
 % Scenario: the ProcSet category. The built-in FontSetInit procedure set
 % has status 2 (held outside VM) and size 0; an unknown procedure set is
 % not found; findresource returns the dictionary holding StartData; and
-% resourceforall lists the built-in set.
-% Expect: true, 0, 2, false, true, FontSetInit.
+% resourceforall lists the built-in sets, CIDInit and FontSetInit, in
+% sorted order.
+% Expect: true, 0, 2, false, true, CIDInit, FontSetInit.
 /FontSetInit /ProcSet resourcestatus = = =
 /NoSuchSet /ProcSet resourcestatus =
 /FontSetInit /ProcSet findresource /StartData known =

@@ -31,7 +31,8 @@ use ps_vm::{
 
 use crate::arc;
 use crate::ir::{
-    FillRule, FontIndex, FontSpec, GlyphProc, IrOp, Op, Page, PageSink, ProgramRef, glyph_names,
+    FillRule, FontIndex, FontSpec, GlyphNames, GlyphProc, IrOp, Op, Page, PageSink, ProgramRef,
+    glyph_names,
 };
 use crate::state::{ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, rect_segments};
 
@@ -327,14 +328,24 @@ impl<S: PageSink> Graphics<S> {
     /// The page resource for the current font instance, interned on first
     /// use: a resident font by base and encoding, an embedded font by its
     /// snapshot (one per family) and encoding, a Type 3 font by family
-    /// and encoding.
+    /// and encoding, a composite font by CMap name, writing mode, and
+    /// descendant snapshot.
     fn font_resource(&mut self, font: FontRef) -> Result<FontIndex, VmError> {
         if let Some(&index) = self.page_fonts.get(&font.instance) {
             return Ok(index);
         }
-        let info = self.fonts.get(&font.instance).ok_or(VmError::InvalidFont)?;
-        let encoding = glyph_names(&info.encoding);
-        let index = match &info.source {
+        let info = self
+            .fonts
+            .get(&font.instance)
+            .ok_or(VmError::InvalidFont)?
+            .clone();
+        let index = self.resource_for(&info.source, glyph_names(&info.encoding));
+        self.page_fonts.insert(font.instance, index);
+        Ok(index)
+    }
+
+    fn resource_for(&mut self, source: &FontSource, encoding: GlyphNames) -> FontIndex {
+        match source {
             FontSource::Resident(base) => self.page.resources.intern_font(FontSpec::Resident {
                 base: *base,
                 encoding,
@@ -375,9 +386,58 @@ impl<S: PageSink> Graphics<S> {
                     }
                 }
             }
-        };
-        self.page_fonts.insert(font.instance, index);
-        Ok(index)
+            FontSource::Composite {
+                cmap_name,
+                wmode,
+                unicode_based,
+                descendant,
+                ..
+            } => match &**descendant {
+                FontSource::Embedded {
+                    family,
+                    kind,
+                    program,
+                    font_matrix,
+                    font_name,
+                } => {
+                    let spec = FontSpec::Composite {
+                        cmap_name: cmap_name.clone(),
+                        wmode: *wmode,
+                        unicode_based: *unicode_based,
+                        descendant: Box::new(FontSpec::Embedded {
+                            family: *family,
+                            kind: *kind,
+                            font_name: font_name.clone(),
+                            font_matrix: *font_matrix,
+                            program: ProgramRef(program.clone()),
+                            encoding: glyph_names(&[]),
+                        }),
+                        cid_to_code: BTreeMap::new(),
+                    };
+                    let fonts = &self.page.resources.fonts;
+                    match fonts.iter().position(|f| f.same_font(&spec)) {
+                        Some(i) => FontIndex(i),
+                        None => self.page.resources.add_font(spec),
+                    }
+                }
+                // A simple descendant draws the run itself: each CID is
+                // one of its own codes, and the encoding received is the
+                // descendant's.
+                simple => self.resource_for(simple, encoding),
+            },
+        }
+    }
+
+    /// The writing mode of the current font: a composite font's CMap's,
+    /// 0 for every other kind.
+    fn wmode(&self, font: FontRef) -> u8 {
+        match self.fonts.get(&font.instance) {
+            Some(FontInfo {
+                source: FontSource::Composite { wmode, .. },
+                ..
+            }) => *wmode,
+            _ => 0,
+        }
     }
 
     /// Whether the current font is a Type 3 font, whose text depends on
@@ -803,12 +863,21 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             } else {
                 Needs::Fill
             };
+            if let FontSpec::Composite { cid_to_code, .. } = &mut self.page.resources.fonts[index.0]
+            {
+                for glyph in glyphs {
+                    cid_to_code
+                        .entry(glyph.cid)
+                        .or_insert((glyph.code, glyph.len));
+                }
+            }
             self.sync_clip();
             self.flush(needs);
             self.record(IrOp::Text {
                 font: index,
                 matrix,
                 glyphs: glyphs.to_vec(),
+                wmode: self.wmode(font),
             });
         }
         let delta = ctm.apply_delta(font.matrix.apply_delta(Glyph::total(glyphs)));
@@ -1012,10 +1081,12 @@ fn transformed(op: IrOp, m: [f64; 6]) -> IrOp {
             font,
             matrix,
             glyphs,
+            wmode,
         } => IrOp::Text {
             font,
             matrix: then64(matrix, m),
             glyphs,
+            wmode,
         },
         other => other,
     }

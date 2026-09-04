@@ -5,8 +5,11 @@
 //! the current file and defines its name-keyed fonts as FontType 2
 //! dictionaries whose glyph programs are cached on the interpreter, and
 //! the FontSet resource as the array of their names. A CID-keyed font in
-//! the data is parsed and held by name for the composite-font machinery;
-//! it is not a font a program can `findfont`.
+//! the data becomes a `CIDFontType 0` resource of the `CIDFont` category
+//! (and stays reachable by name through `Interp::cid_program`); it is
+//! not a font a program can `findfont`. The one `StartData` operator
+//! also serves the `CIDInit` procedure set, whose form takes a string
+//! and a dictionary; the operand type tells the two apart.
 
 use std::rc::Rc;
 
@@ -19,7 +22,7 @@ use crate::object::{Access, Object, Type};
 use crate::ops::font::{self, number};
 
 op_table! { procset OPS {
-    "StartData" => start_data, [Name, Int];
+    "StartData" => start_data, [Any, Int];
 }}
 
 /// The `FontSetInit` dictionary: the one operator, read-only, in the
@@ -49,6 +52,14 @@ fn read_exact(i: &mut Interp, file: Object, count: usize) -> Result<Vec<u8>, VmE
 }
 
 fn start_data(i: &mut Interp) -> Result<(), VmError> {
+    match i.peek(1)?.ty() {
+        Type::Name => font_set_data(i),
+        Type::String => crate::ops::cidinit::start_data(i),
+        _ => Err(VmError::TypeCheck),
+    }
+}
+
+fn font_set_data(i: &mut Interp) -> Result<(), VmError> {
     let count = i.peek(0)?.as_i32().expect("integer");
     let key = i.peek(1)?;
     let count = usize::try_from(count).map_err(|_| VmError::RangeCheck)?;
@@ -59,13 +70,18 @@ fn start_data(i: &mut Interp) -> Result<(), VmError> {
     for cff in fonts {
         let name_text = cff.name().to_vec();
         if cff.is_cid_keyed() {
-            i.cache_cid_program(name_text, Rc::new(Program::Cff(cff)));
+            let name = i.mem.intern(&name_text).map_err(|_| VmError::LimitCheck)?;
+            let (dict, fid) = cidfont_dict(i, &cff, name)?;
+            let program = Rc::new(Program::Cff(cff));
+            i.cache_font_program(fid, program.clone());
+            i.cache_cid_program(name_text, program);
+            font::define(i, name, dict)?.ok_or(VmError::InvalidFont)?;
             continue;
         }
         let name = i.mem.intern(&name_text).map_err(|_| VmError::LimitCheck)?;
         let (dict, fid) = font_dict(i, &cff, name)?;
         i.cache_font_program(fid, Rc::new(Program::Cff(cff)));
-        font::define(i, name, dict)?;
+        font::define(i, name, dict)?.ok_or(VmError::InvalidFont)?;
         names.push(name);
     }
     let set = i
@@ -84,6 +100,50 @@ fn start_data(i: &mut Interp) -> Result<(), VmError> {
     i.pop()?;
     i.pop()?;
     Ok(())
+}
+
+/// A `CIDFontType 0` dictionary for a CID-keyed program: its system
+/// information from the `ROS`, its CID count, matrix, and box, with its
+/// `FID` allocated so the program can be cached before it is defined.
+fn cidfont_dict(i: &mut Interp, cff: &CffProgram, name: Object) -> Result<(Object, u32), VmError> {
+    let matrix = i.mem.alloc_array(cff.font_matrix().map(number).to_vec())?;
+    let bbox = i.mem.alloc_array(cff.font_bbox().map(number).to_vec())?;
+    let ros = cff.ros().unwrap_or(ps_fonts::cff::Ros {
+        registry: b"Adobe".to_vec(),
+        ordering: b"Identity".to_vec(),
+        supplement: 0,
+    });
+    let info = i.mem.new_dict(3);
+    let registry = i.mem.alloc_string(ros.registry);
+    let ordering = i.mem.alloc_string(ros.ordering);
+    for (key, value) in [
+        ("Registry", registry),
+        ("Ordering", ordering),
+        ("Supplement", Object::integer(ros.supplement)),
+    ] {
+        let key = i.intern(key);
+        i.mem.dict_put(info, key, value)?;
+    }
+    i.mem.dict_set_access(info, Access::ReadOnly)?;
+    let fid = i.allocate_fid();
+    let dict = i.mem.new_dict(10);
+    let count = i32::try_from(cff.cid_count()).map_err(|_| VmError::InvalidFont)?;
+    let entries = [
+        ("CIDFontType", Object::integer(0)),
+        ("FontType", Object::integer(9)),
+        ("CIDFontName", name),
+        ("CIDSystemInfo", info),
+        ("CIDCount", Object::integer(count)),
+        ("FontMatrix", matrix),
+        ("FontBBox", bbox),
+        ("PaintType", Object::integer(cff.paint_type())),
+        ("FID", fid),
+    ];
+    for (key, value) in entries {
+        let key = i.intern(key);
+        i.mem.dict_put(dict, key, value)?;
+    }
+    Ok((dict, fid.as_font_id().expect("a font id")))
 }
 
 /// A FontType 2 dictionary for a name-keyed program, with its `FID`

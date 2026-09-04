@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: (Identity-H)
+% expect-output: (Identity-V)
+% Scenario: CMap category listing. Before any embedded CMap is defined,
+% resourceforall over the CMap category names the two predefined CMaps
+% in sorted order.
+% Expect: (Identity-H), (Identity-V).
+(*) { == } 64 string /CMap resourceforall

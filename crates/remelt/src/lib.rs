@@ -27,6 +27,7 @@ use std::{error, fmt};
 use ps_graphics::{Graphics, Page, PageSink};
 use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
 
+mod composite;
 mod content;
 mod embedded;
 mod fonts;

@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontRef, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, Matrix, Point, Rect,
-    Seg, SpaceSpec, VmError,
+    Bounds, FontInfo, FontRef, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, Matrix, Point,
+    Rect, Seg, SpaceSpec, VmError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,17 +98,25 @@ impl Default for State {
 }
 
 pub type Log = Rc<RefCell<Vec<Call>>>;
+/// The font descriptions received, by instance.
+pub type Fonts = Rc<RefCell<Vec<(u32, FontInfo)>>>;
 
 pub struct Recording {
     pub log: Log,
+    pub fonts: Fonts,
     pub state: State,
     pub stack: Vec<State>,
 }
 
 impl Recording {
     pub fn new(log: Log) -> Self {
+        Self::with_fonts(log, Rc::new(RefCell::new(Vec::new())))
+    }
+
+    pub fn with_fonts(log: Log, fonts: Fonts) -> Self {
         Recording {
             log,
+            fonts,
             state: State::default(),
             stack: Vec::new(),
         }
@@ -383,6 +391,11 @@ impl GraphicsBackend for Recording {
 
     fn imagemask(&mut self, spec: &ImageSpec, data: &[u8]) -> Result<(), VmError> {
         self.record(Call::ImageMask(spec.clone(), data.to_vec()));
+        Ok(())
+    }
+
+    fn define_font(&mut self, instance: u32, info: &FontInfo) -> Result<(), VmError> {
+        self.fonts.borrow_mut().push((instance, info.clone()));
         Ok(())
     }
 

@@ -18,18 +18,32 @@
 //! A text run becomes one text object (ISO 32000-1 §9.4): the font at
 //! size 1, a text matrix derived from the run's glyph matrix, and the
 //! glyph codes. A glyph whose recorded displacement is the font's own
-//! width needs nothing more; a horizontal difference is a `TJ`
-//! adjustment, and any vertical difference moves the line with `Td`.
-//! The text matrix takes the run's glyph-to-page matrix back through
-//! the font's own matrix: thousandths for a resident font, the Type 3
-//! or embedded font's `FontMatrix` otherwise, so the PDF font's glyph
-//! space lands where the program's did.
+//! width needs nothing more; a difference along the writing direction
+//! is a `TJ` adjustment, and any difference across it moves the line
+//! with `Td`. The text matrix takes the run's glyph-to-page matrix back
+//! through the font's own matrix: thousandths for a resident font, the
+//! Type 3 or embedded font's `FontMatrix` otherwise (a composite font's
+//! descendant's), so the PDF font's glyph space lands where the
+//! program's did. A composite run's string holds two-byte CIDs, written
+//! in hexadecimal; in writing mode 1 the font's `Identity-V` encoding
+//! has the viewer place each glyph at its vertical origin and advance
+//! downward, as the run was recorded. A composite font written as a
+//! Type 3 fallback has its CIDs re-encoded to the one-byte codes the
+//! font object assigned (`Recode`), and in vertical mode its glyphs are
+//! drawn pre-shifted with zero width, so every advance is a `Td` move.
+
+use std::collections::BTreeMap;
 
 use pdf_out::fmt_real;
 use ps_graphics::{FillRule, FontIndex, FontSpec, IrOp, Op, Page, Resources, SpaceRef};
 use ps_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
 use crate::resources::{font_name, image_name, space_name};
+
+/// The one-byte code each CID takes in a composite font written as a
+/// Type 3 fallback, by the page's font index; fonts absent here are
+/// written with their CIDs.
+pub(crate) type Recode = BTreeMap<usize, BTreeMap<u16, u8>>;
 
 /// Content-stream text and what could not be written into it.
 pub(crate) struct Rendered {
@@ -38,9 +52,9 @@ pub(crate) struct Rendered {
 }
 
 /// A string operand: literal when every byte is printable ASCII,
-/// hexadecimal otherwise.
-fn pdf_string(bytes: &[u8]) -> String {
-    if bytes.iter().all(|b| (0x20..=0x7E).contains(b)) {
+/// hexadecimal otherwise or when `hex` asks for it.
+fn pdf_string(bytes: &[u8], hex: bool) -> String {
+    if !hex && bytes.iter().all(|b| (0x20..=0x7E).contains(b)) {
         let mut out = String::from("(");
         for &b in bytes {
             if matches!(b, b'(' | b')' | b'\\') {
@@ -139,10 +153,22 @@ fn matrix(m: Matrix) -> String {
 struct Writer<'a> {
     out: String,
     resources: &'a Resources,
+    recode: &'a Recode,
     /// The colour operator in effect, one entry per open `q` plus the
     /// base: `Q` restores the colour space with the rest of the state.
     color_ops: Vec<ColorOp>,
     notes: Vec<String>,
+}
+
+/// How a run's glyphs are encoded in the content stream.
+enum Codes<'a> {
+    /// One byte per glyph: the code, which is the CID for a simple font.
+    Byte,
+    /// Two bytes per glyph: the CID of a composite font.
+    Cid,
+    /// The Type 3 fallback's one-byte codes by CID; a CID it lacks is
+    /// code 0.
+    Recoded(&'a BTreeMap<u16, u8>),
 }
 
 impl Writer<'_> {
@@ -153,18 +179,18 @@ impl Writer<'_> {
 
     /// Writes the pieces of a run gathered since the last positioning:
     /// `Tj` for a plain string, `TJ` when adjustments are among them.
-    fn show(&mut self, pieces: &mut Vec<Piece>) {
+    fn show(&mut self, pieces: &mut Vec<Piece>, hex: bool) {
         match pieces.as_slice() {
             [] => {}
             [Piece::Codes(codes)] => {
-                let text = format!("{} Tj", pdf_string(codes));
+                let text = format!("{} Tj", pdf_string(codes, hex));
                 self.line(&text);
             }
             _ => {
                 let items: Vec<String> = pieces
                     .iter()
                     .map(|piece| match piece {
-                        Piece::Codes(codes) => pdf_string(codes),
+                        Piece::Codes(codes) => pdf_string(codes, hex),
                         Piece::Adjust(v) => fmt_real(*v),
                     })
                     .collect();
@@ -178,7 +204,7 @@ impl Writer<'_> {
     /// One text object for the run. Positions are tracked in text space:
     /// where PDF's own advance leaves the pen after each glyph against
     /// where the recorded displacement puts the next one.
-    fn text(&mut self, font: FontIndex, matrix: Matrix, glyphs: &[Glyph]) {
+    fn text(&mut self, font: FontIndex, matrix: Matrix, glyphs: &[Glyph], wmode: u8) {
         let spec = &self.resources.fonts[font.0];
         let glyph_to_text = spec.font_matrix();
         let tm = match spec {
@@ -198,17 +224,29 @@ impl Writer<'_> {
             },
             // In double precision: the inverse of a thousandths matrix in
             // single precision would print as 999.99994.
-            FontSpec::Embedded { font_matrix, .. } => match through_inverse(*font_matrix, matrix) {
-                Some(tm) => tm,
-                None => {
-                    self.notes.push(format!(
-                        "text in font {} skipped: its font matrix is singular",
-                        font_name(font)
-                    ));
-                    return;
+            FontSpec::Embedded { .. } | FontSpec::Composite { .. } => {
+                match through_inverse(glyph_to_text, matrix) {
+                    Some(tm) => tm,
+                    None => {
+                        self.notes.push(format!(
+                            "text in font {} skipped: its font matrix is singular",
+                            font_name(font)
+                        ));
+                        return;
+                    }
                 }
-            },
+            }
         };
+        let codes = match (spec, self.recode.get(&font.0)) {
+            (FontSpec::Composite { .. }, Some(map)) => Codes::Recoded(map),
+            (FontSpec::Composite { .. }, None) => Codes::Cid,
+            _ => Codes::Byte,
+        };
+        // A vertical composite font advances the pen down by the default
+        // vertical advance, one em, and its adjustments run along that
+        // axis; the fallback and every simple font write horizontally.
+        let vertical = wmode == 1 && matches!(codes, Codes::Cid);
+        let (main, cross) = if vertical { (1, 0) } else { (0, 1) };
         self.line("BT");
         let select = format!("/{} 1 Tf", font_name(font));
         self.line(&select);
@@ -217,39 +255,50 @@ impl Writer<'_> {
         let mut pieces: Vec<Piece> = Vec::new();
         // Positions accumulate in double precision so an adjustment of
         // whole glyph units prints as one.
-        let mut line_start = (0.0f64, 0.0f64);
-        let mut pen = (0.0f64, 0.0f64);
-        let mut wanted = (0.0f64, 0.0f64);
+        let mut line_start = [0.0f64; 2];
+        let mut pen = [0.0f64; 2];
+        let mut wanted = [0.0f64; 2];
+        let hex = matches!(codes, Codes::Cid);
         for glyph in glyphs {
-            if !same(pen.1, wanted.1) {
-                self.show(&mut pieces);
+            if !same(pen[cross], wanted[cross]) {
+                self.show(&mut pieces, hex);
                 let step = format!(
                     "{} Td",
                     reals(&[
-                        (wanted.0 - line_start.0) as f32,
-                        (wanted.1 - line_start.1) as f32
+                        (wanted[0] - line_start[0]) as f32,
+                        (wanted[1] - line_start[1]) as f32
                     ])
                 );
                 self.line(&step);
                 line_start = wanted;
                 pen = wanted;
-            } else if !same(pen.0, wanted.0) {
-                pieces.push(Piece::Adjust(((pen.0 - wanted.0) * 1000.0) as f32));
-                pen.0 = wanted.0;
+            } else if !same(pen[main], wanted[main]) {
+                pieces.push(Piece::Adjust(((pen[main] - wanted[main]) * 1000.0) as f32));
+                pen[main] = wanted[main];
             }
+            let bytes: Vec<u8> = match codes {
+                Codes::Byte => vec![u8::try_from(glyph.cid).unwrap_or(0)],
+                Codes::Cid => glyph.cid.to_be_bytes().to_vec(),
+                Codes::Recoded(map) => vec![map.get(&glyph.cid).copied().unwrap_or(0)],
+            };
             match pieces.last_mut() {
-                Some(Piece::Codes(codes)) => codes.push(glyph.code),
-                _ => pieces.push(Piece::Codes(vec![glyph.code])),
+                Some(Piece::Codes(codes)) => codes.extend(bytes),
+                _ => pieces.push(Piece::Codes(bytes)),
             }
-            let (wx, _) = spec.width(glyph.code);
-            pen.0 += f64::from(wx) * f64::from(glyph_to_text.0[0]);
+            let (wx, _) = spec.glyph_width(glyph);
+            let own = match codes {
+                Codes::Cid if vertical => -1.0,
+                Codes::Recoded(_) if wmode == 1 => 0.0,
+                _ => f64::from(wx) * f64::from(glyph_to_text.0[0]),
+            };
+            pen[main] += own;
             let advance = glyph_to_text.apply_delta(Point::new(glyph.dx, glyph.dy));
-            wanted = (
-                wanted.0 + f64::from(advance.x),
-                wanted.1 + f64::from(advance.y),
-            );
+            wanted = [
+                wanted[0] + f64::from(advance.x),
+                wanted[1] + f64::from(advance.y),
+            ];
         }
-        self.show(&mut pieces);
+        self.show(&mut pieces, hex);
         self.line("ET");
     }
 
@@ -359,17 +408,20 @@ impl Writer<'_> {
                 font,
                 matrix,
                 glyphs,
-            } => self.text(*font, *matrix, glyphs),
+                wmode,
+            } => self.text(*font, *matrix, glyphs, *wmode),
         }
     }
 }
 
 /// `ops` as content-stream text against `resources`: a page's stream or
-/// a glyph procedure's.
-pub(crate) fn render(ops: &[Op], resources: &Resources) -> Rendered {
+/// a glyph procedure's; `recode` names the composite fonts written as
+/// Type 3 fallbacks and their codes.
+pub(crate) fn render(ops: &[Op], resources: &Resources, recode: &Recode) -> Rendered {
     let mut writer = Writer {
         out: String::new(),
         resources,
+        recode,
         color_ops: vec![ColorOp::Gray],
         notes: Vec::new(),
     };
@@ -383,8 +435,8 @@ pub(crate) fn render(ops: &[Op], resources: &Resources) -> Rendered {
 }
 
 /// The content stream of `page`.
-pub(crate) fn content(page: &Page) -> Rendered {
-    render(&page.ops, &page.resources)
+pub(crate) fn content(page: &Page, recode: &Recode) -> Rendered {
+    render(&page.ops, &page.resources, recode)
 }
 
 #[cfg(test)]
@@ -401,7 +453,7 @@ mod tests {
     }
 
     fn text(page: &Page) -> String {
-        String::from_utf8(content(page).bytes).unwrap()
+        String::from_utf8(content(page, &Recode::default()).bytes).unwrap()
     }
 
     fn p(x: f32, y: f32) -> Point {

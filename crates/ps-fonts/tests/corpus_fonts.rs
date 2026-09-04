@@ -11,8 +11,8 @@
 use std::path::PathBuf;
 
 use ps_fonts::testing::{
-    CffFont, TRAILER, TrueTypeFont, Type1Font, corpus_cff, corpus_truetype, corpus_type1,
-    eexec_binary, eexec_hex,
+    CffFont, CidType1Font, TRAILER, TrueTypeFont, Type1Font, corpus_cff, corpus_cid_cff,
+    corpus_cmap, corpus_truetype, corpus_type1, eexec_binary, eexec_hex,
 };
 
 fn corpus_dir() -> PathBuf {
@@ -352,6 +352,285 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
     );
     short_data.extend_from_slice(&data);
 
+    // --- CMaps, CIDFonts, and composite text -----------------------------------
+
+    let cmap_embedded = format!(
+        "{}{}/Syn-H /CMap resourcestatus = = =\n",
+        header(
+            &["true", "0", "0"],
+            "% Scenario: an embedded CMap. The CMap program Syn-H, written in the\n\
+             % CIDInit operators, maps one-byte codes <20>-<7E> to CIDs from 1 and\n\
+             % two-byte codes <8140>-<817E> to CIDs from 200, and defines itself\n\
+             % as a CMap resource; resourcestatus finds it with status 0.\n\
+             % Expect: true, 0, 0.\n",
+        ),
+        corpus_cmap()
+    );
+
+    let cid_set = corpus_cid_cff().font_set("SynCIDSet");
+    let mut cidfont_fontset = font_set_header(
+        &["true", "0", "0", "201"],
+        "% Scenario: a CID-keyed CFF from a FontSet. SynCIDSet holds the\n\
+         % CID-keyed CFF SynCID, whose CIDs 1 and 2 lie in different font\n\
+         % dictionaries; StartData defines it as a CIDFontType 0 resource of\n\
+         % the CIDFont category with the program's CIDCount, 201.\n\
+         % Expect: true, 0, 0, 201.\n",
+    )
+    .into_bytes();
+    cidfont_fontset.extend_from_slice(&cid_set);
+    cidfont_fontset.extend_from_slice(
+        b"/SynCID /CIDFont resourcestatus = = =\n\
+          /SynCID /CIDFont findresource /CIDCount get =\n",
+    );
+
+    // The resource files carry their own DSC header line, which the
+    // corpus header already supplies.
+    let without_header = |text: &str| {
+        text.split_once('\n')
+            .map_or(text, |(_, rest)| rest)
+            .to_string()
+    };
+    let cid_tt = without_header(&corpus_truetype().cidfont_type2("SynCIDTT", &[(3, 1)]));
+    let cidfont_type2 = format!(
+        "{}{cid_tt}{ROUND}/SynTTComposite /Identity-H [ /SynCIDTT /CIDFont findresource ] \
+         composefont 20 scalefont setfont\n<0003> stringwidth r exch r = =\n",
+        header_with(
+            "%!PS-Adobe-3.0 Resource-CIDFont",
+            &["10.0", "0.0"],
+            "% Scenario: CIDFontType 2 by CID map. The synthesised TrueType font\n\
+             % is wrapped as a CIDFontType 2 dictionary whose CIDMap maps CID 3 to\n\
+             % glyph 1, the 1024-unit a in a 2048 em; shown through Identity-H at\n\
+             % size 20, CID 3 advances 10.\n\
+             % Expect: 10.0 and 0.0.\n",
+        )
+    );
+
+    let mut cidfont_type1 = header_with(
+        "%!PS-Adobe-3.0 Resource-CIDFont",
+        &["true", "0", "0", "5.0", "0.0", "7.0", "0.0", "3.0", "0.0"],
+        "% Scenario: a Type 1 charstring CIDFont. SynCIDT1 is in the CIDInit\n\
+         % StartData form: two font dictionaries in FDArray, each with its own\n\
+         % lenIV and subroutines, and the CIDMap and charstrings in the\n\
+         % binary GlyphData that follows StartData. CID 1 (dictionary 0)\n\
+         % advances 500, CID 2 (dictionary 1, drawn through its subroutine)\n\
+         % 700, and CID 3 (dictionary 0) 300; at size 10 through Identity-H\n\
+         % they measure 5, 7, and 3.\n\
+         % Expect: true, 0, 0, then 5.0 0.0, 7.0 0.0, 3.0 0.0.\n",
+    )
+    .into_bytes();
+    let cid_file = CidType1Font::corpus().file();
+    let body = cid_file
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(0, |n| n + 1);
+    cidfont_type1.extend_from_slice(&cid_file[body..]);
+    cidfont_type1.extend_from_slice(
+        format!(
+            "/SynCIDT1 /CIDFont resourcestatus = = =\n\
+             {ROUND}/SynT1Composite /Identity-H [ /SynCIDT1 /CIDFont findresource ] \
+             composefont 10 scalefont setfont\n\
+             <0001> stringwidth r exch r = =\n\
+             <0002> stringwidth r exch r = =\n\
+             <0003> stringwidth r exch r = =\n"
+        )
+        .as_bytes(),
+    );
+
+    let mut compose = font_set_header(
+        &["0"],
+        "% Scenario: composefont. A Type 0 font named SynComposite is composed\n\
+         % over the predefined Identity-H CMap and the CID-keyed CFF SynCID;\n\
+         % findfont returns it and its FontType is 0.\n\
+         % Expect: 0.\n",
+    )
+    .into_bytes();
+    compose.extend_from_slice(&cid_set);
+    compose.extend_from_slice(
+        b"/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont pop\n\
+          /SynComposite findfont /FontType get =\n",
+    );
+
+    let mut two_byte = font_set_header(
+        &["12.0", "0.0"],
+        "% Scenario: two-byte show through Identity. SynCID's CIDs 1 and 2\n\
+         % advance 500 and 700; through Identity-H at size 10 the two-byte\n\
+         % string <00010002> shows from (0, 0) and leaves the current point\n\
+         % at 12. The page carries the run as one text operation over a\n\
+         % composite resource; the PDF embeds the CID-keyed CFF subset as a\n\
+         % CIDFontType0C descendant of a Type 0 font with Identity-H.\n\
+         % Expect: 12.0 and 0.0.\n",
+    )
+    .into_bytes();
+    two_byte.extend_from_slice(&cid_set);
+    two_byte.extend_from_slice(
+        format!(
+            "{ROUND}/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+             10 scalefont setfont\n0 0 moveto <00010002> show currentpoint r exch r = =\nshowpage\n"
+        )
+        .as_bytes(),
+    );
+
+    let mut vertical = font_set_header(
+        &["0.0", "90.0"],
+        "% Scenario: vertical writing. Through Identity-V, writing mode 1,\n\
+         % every glyph advances downward by the default vertical advance, one\n\
+         % em, and sits at its vertical origin; at size 10 the one-glyph\n\
+         % string <0001> shown from (0, 100) leaves the current point at\n\
+         % (0, 90). The text operation records the writing mode and the PDF\n\
+         % font's encoding is Identity-V.\n\
+         % Expect: 0.0 and 90.0.\n",
+    )
+    .into_bytes();
+    vertical.extend_from_slice(&cid_set);
+    vertical.extend_from_slice(
+        format!(
+            "{ROUND}/SynV /Identity-V [ /SynCID /CIDFont findresource ] composefont \
+             10 scalefont setfont\n0 100 moveto <0001> show currentpoint r exch r = =\nshowpage\n"
+        )
+        .as_bytes(),
+    );
+
+    let mut partial = font_set_header(
+        &["14.5", "0.0"],
+        "% Scenario: a partial match decodes as notdef. Through the corpus\n\
+         % CMap Syn-H, the string <41 81 20 42> holds the one-byte code A\n\
+         % (CID 34, advance 500), then the lead byte 81 of the two-byte\n\
+         % codespace followed by 20, which lies outside it: two bytes of\n\
+         % notdef (CID 0, advance 250), then B (CID 35, advance 700). At\n\
+         % size 10 the run leaves the current point at 14.5, and the page's\n\
+         % text operation holds three glyphs, the notdef with its two bytes.\n\
+         % Expect: 14.5 and 0.0.\n",
+    )
+    .into_bytes();
+    partial.extend_from_slice(&cid_set);
+    partial.extend_from_slice(corpus_cmap().as_bytes());
+    partial.extend_from_slice(
+        format!(
+            "{ROUND}/SynMixed /Syn-H [ /SynCID /CIDFont findresource ] composefont \
+             10 scalefont setfont\n0 0 moveto <41812042> show currentpoint r exch r = =\nshowpage\n"
+        )
+        .as_bytes(),
+    );
+
+    let mut mixed = font_set_header(
+        &[],
+        "% Scenario: mixed byte lengths. Through the corpus CMap Syn-H the\n\
+         % string <41 8140 42> decodes as a one-byte, a two-byte, and a\n\
+         % one-byte code (CIDs 34, 200, and 35); the run holds three glyphs\n\
+         % whose codes the dump writes in hexadecimal, each padded to its\n\
+         % length, with the displacements 500, 300, and 700.\n",
+    )
+    .into_bytes();
+    mixed.extend_from_slice(&cid_set);
+    mixed.extend_from_slice(corpus_cmap().as_bytes());
+    mixed.extend_from_slice(
+        b"/SynMixed /Syn-H [ /SynCID /CIDFont findresource ] composefont \
+          10 scalefont setfont\n72 700 moveto <41814042> show\nshowpage\n",
+    );
+
+    let mut composite_dump = font_set_header(
+        &[],
+        "% Scenario: a composite run in the dump. The two-byte string\n\
+         % <00010002> shown through Identity-H records one text operation\n\
+         % whose codes print as <00010002> with the displacements 500 and\n\
+         % 700, over the resource line naming Identity-H, the writing mode,\n\
+         % and the CID-keyed CFF descendant.\n",
+    )
+    .into_bytes();
+    composite_dump.extend_from_slice(&cid_set);
+    composite_dump.extend_from_slice(
+        b"/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+          10 scalefont setfont\n72 700 moveto <00010002> show\nshowpage\n",
+    );
+
+    let cid_tt_two =
+        without_header(&corpus_truetype().cidfont_type2("SynCIDTT", &[(3, 1), (4, 2)]));
+    let cidfont_type2_embedded = format!(
+        "{}{cid_tt_two}/SynTTComposite /Identity-H [ /SynCIDTT /CIDFont findresource ] \
+         composefont 20 scalefont setfont\n100 100 moveto <00030004> show\nshowpage\n",
+        header_with(
+            "%!PS-Adobe-3.0 Resource-CIDFont",
+            &[],
+            "% Scenario: CIDFontType2 with a CID map. The synthesised TrueType\n\
+             % font wrapped as CIDFontType 2 maps CID 3 to glyph 1 and CID 4 to\n\
+             % glyph 2; shown through Identity-H, the PDF's descendant is a\n\
+             % CIDFontType2 whose FontFile2 is the subset and whose CIDToGIDMap\n\
+             % stream maps each CID to the subset's glyph index, with ToUnicode\n\
+             % from the program's own Unicode cmap.\n",
+        )
+    );
+
+    let ucs2_cmap = "/CIDInit /ProcSet findresource begin\n\
+         12 dict begin\n\
+         begincmap\n\
+         /CIDSystemInfo 3 dict dup begin\n\
+         /Registry (Adobe) def\n\
+         /Ordering (Identity) def\n\
+         /Supplement 0 def\n\
+         end def\n\
+         /CMapName /Syn-UCS2-H def\n\
+         /CMapType 1 def\n\
+         /WMode 0 def\n\
+         1 begincodespacerange\n\
+         <0000> <ffff>\n\
+         endcodespacerange\n\
+         1 begincidchar\n\
+         <0041> 1\n\
+         endcidchar\n\
+         1 begincidrange\n\
+         <0042> <0042> 2\n\
+         endcidrange\n\
+         endcmap\n\
+         CMapName currentdict /CMap defineresource pop\n\
+         end\n\
+         end\n";
+    let mut ucs2 = font_set_header(
+        &[],
+        "% Scenario: a Unicode-based CMap gives ToUnicode. The CMap Syn-UCS2-H\n\
+         % maps the UTF-16 codes <0041> and <0042> to CIDs 1 and 2; its name\n\
+         % marks it Unicode-based, so the Type 0 font's ToUnicode maps CID 1\n\
+         % to U+0041 and CID 2 to U+0042 from the codes the run came from, and\n\
+         % text extraction yields AB.\n",
+    )
+    .into_bytes();
+    ucs2.extend_from_slice(&cid_set);
+    ucs2.extend_from_slice(ucs2_cmap.as_bytes());
+    ucs2.extend_from_slice(
+        b"/SynUnicode /Syn-UCS2-H [ /SynCID /CIDFont findresource ] composefont \
+          10 scalefont setfont\n100 100 moveto <00410042> show\nshowpage\n",
+    );
+
+    let mut fallback = header_with(
+        "%!PS-Adobe-3.0 Resource-CIDFont",
+        &[],
+        "% Scenario: a Type 1 charstring CID font falls back to Type 3. The\n\
+         % CIDFont SynCIDT1 has no PDF embedding form, so its one shown glyph,\n\
+         % CID 2 (drawn through dictionary 1's subroutine, advance 700),\n\
+         % becomes a Type 3 font with one CharProc holding the outline under\n\
+         % d1, an Encoding naming it cid2 at code 1, and the content stream\n\
+         % re-encoded to that one-byte code.\n",
+    )
+    .into_bytes();
+    fallback.extend_from_slice(&cid_file[body..]);
+    fallback.extend_from_slice(
+        b"/SynT1Composite /Identity-H [ /SynCIDT1 /CIDFont findresource ] composefont \
+          10 scalefont setfont\n100 100 moveto <0002> show\nshowpage\n",
+    );
+
+    let mut composite_charpath = font_set_header(
+        &[],
+        "% Scenario: charpath through a composite font. <0001> false charpath\n\
+         % appends CID 1's outline, the 400-unit square from (50, 0), scaled\n\
+         % by the size at (100, 100), and advances the current point by its\n\
+         % width; the fill paints one path and no text operation is recorded.\n",
+    )
+    .into_bytes();
+    composite_charpath.extend_from_slice(&cid_set);
+    composite_charpath.extend_from_slice(
+        b"/SynComposite /Identity-H [ /SynCID /CIDFont findresource ] composefont \
+          10 scalefont setfont\n100 100 moveto <0001> false charpath fill\nshowpage\n",
+    );
+
     vec![
         ("eexec-hex.ps", eexec_hex_file),
         ("eexec-string.ps", eexec_string_file),
@@ -373,6 +652,23 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         ("fontset-defines-fonts.ps", fontset_defines),
         ("fontset-short-data.ps", short_data),
         ("cff-embedded-type1c.ps", cff_type1c),
+        ("cmap-embedded.ps", cmap_embedded.into_bytes()),
+        ("cidfont-fontset.ps", cidfont_fontset),
+        ("cidfont-type2-cidmap.ps", cidfont_type2.into_bytes()),
+        ("cidfont-type1-charstrings.ps", cidfont_type1),
+        ("composefont.ps", compose),
+        ("composite-two-byte-width.ps", two_byte),
+        ("composite-vertical-width.ps", vertical),
+        ("composite-partial-match.ps", partial),
+        ("composite-mixed-lengths.ps", mixed),
+        ("composite-dump.ps", composite_dump),
+        (
+            "cidfont-type2-embedded.ps",
+            cidfont_type2_embedded.into_bytes(),
+        ),
+        ("cmap-ucs2-tounicode.ps", ucs2),
+        ("cidfont-type1-fallback.ps", fallback),
+        ("composite-charpath-fill.ps", composite_charpath),
     ]
 }
 

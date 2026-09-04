@@ -500,6 +500,17 @@ pub fn subset(
     used: &BTreeSet<u16>,
     codes: &BTreeMap<u8, u16>,
 ) -> Result<Vec<u8>, FontError> {
+    subset_with_map(program, used, codes).map(|(bytes, _)| bytes)
+}
+
+/// [`subset`] together with the old-to-new glyph index map of every
+/// kept glyph, which a CID-keyed embedding needs for its CID-to-glyph
+/// map.
+pub fn subset_with_map(
+    program: &TrueTypeProgram,
+    used: &BTreeSet<u16>,
+    codes: &BTreeMap<u8, u16>,
+) -> Result<(Vec<u8>, BTreeMap<u16, u16>), FontError> {
     let keep = closure(program, used)?;
     let map: BTreeMap<u16, u16> = keep
         .iter()
@@ -560,7 +571,7 @@ pub fn subset(
             tables.push(Table::new(tag, data.to_vec()));
         }
     }
-    Ok(assemble(tables))
+    Ok((assemble(tables), map))
 }
 
 #[cfg(test)]
