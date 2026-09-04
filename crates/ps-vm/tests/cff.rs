@@ -288,6 +288,32 @@ fn start_data_reads_through_an_eexec_layer() {
 }
 
 #[test]
+fn start_data_ends_the_procedure_sets_dictionary() {
+    let mut program = b"countdictstack\n".to_vec();
+    program.extend(corpus_cff().font_set("SynSet"));
+    program.extend_from_slice(b"countdictstack");
+    let run = exec(&program);
+    assert_eq!(run.outcome, Outcome::Ok);
+    let counts = run.top_numbers(2);
+    assert_eq!(counts[0], counts[1]);
+    assert_eq!(run.interp.dstack().len(), 3);
+    // Without a dictionary above the permanent ones the pop underflows,
+    // after the fonts and the FontSet have been defined.
+    let data = corpus_cff().build();
+    let mut bare = format!(
+        "/SynSet {} /FontSetInit /ProcSet findresource /StartData get exec\n",
+        data.len()
+    )
+    .into_bytes();
+    bare.extend(data);
+    let run = exec(&bare);
+    assert_eq!(run.error(), Some("dictstackunderflow"));
+    assert_eq!(run.command(), Some("StartData"));
+    let run = exec(&with_syn("/SynSet /FontSet resourcestatus pop pop"));
+    assert_eq!(run.outcome, Outcome::Ok);
+}
+
+#[test]
 fn hand_built_type2_dictionaries_define_but_cannot_draw() {
     let run = exec(
         b"/Hand << /FontType 2 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding >> \

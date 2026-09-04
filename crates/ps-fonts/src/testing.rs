@@ -1494,9 +1494,9 @@ impl CffFont {
         Ok(Program::Cff(crate::cff::CffProgram::parse(&self.build())?))
     }
 
-    /// The font as a FontSet resource file: the `FontSetInit` procedure
-    /// set, `StartData` with the byte count, the binary program, and
-    /// `end`.
+    /// The font as a FontSet resource file in its canonical form: the
+    /// `FontSetInit` procedure set, `StartData` with the byte count, and
+    /// the binary program; `StartData` ends the procedure set's `begin`.
     pub fn font_set(&self, set_name: &str) -> Vec<u8> {
         let data = self.build();
         let mut out = format!(
@@ -1505,7 +1505,7 @@ impl CffFont {
         )
         .into_bytes();
         out.extend(data);
-        out.extend_from_slice(b"\nend\n");
+        out.push(b'\n');
         out
     }
 }
@@ -1792,9 +1792,10 @@ impl CidType1Font {
         crate::cidfont::Type1CidProgram::parse(&data, &layout)
     }
 
-    /// The complete CIDFont resource file: the dictionary with its
-    /// `FDArray`, `(Binary) <count> StartData`, the glyph data, and the
-    /// `end` matching the procedure set's `begin`.
+    /// The complete CIDFont resource file in its canonical form: the
+    /// dictionary with its `FDArray`, still current when `(Binary)
+    /// <count> StartData` runs, and the glyph data; `StartData` ends the
+    /// dictionary and the procedure set's `begin`.
     pub fn file(&self) -> Vec<u8> {
         let (data, layout) = self.glyph_data();
         let mut out = format!(
@@ -1856,13 +1857,10 @@ impl CidType1Font {
             }
             out.push_str("end def\ncurrentdict end put\n");
         }
-        out.push_str(&format!(
-            "def\ncurrentdict end\n(Binary) {} StartData\n",
-            data.len()
-        ));
+        out.push_str(&format!("def\n(Binary) {} StartData\n", data.len()));
         let mut bytes = out.into_bytes();
         bytes.extend(data);
-        bytes.extend_from_slice(b"\nend\n");
+        bytes.push(b'\n');
         bytes
     }
 

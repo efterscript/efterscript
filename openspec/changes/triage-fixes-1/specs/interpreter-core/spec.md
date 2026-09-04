@@ -18,4 +18,4 @@
 #### Scenario: null through both writers
 
 - **GIVEN** `null == null =`
-- **THEN** the output is `null` then `null`
+- **THEN** the output is `null` then `--nostringval--`

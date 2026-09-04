@@ -4,12 +4,13 @@
 //! The `FontSetInit` procedure set: `StartData` reads a CFF program from
 //! the current file and defines its name-keyed fonts as FontType 2
 //! dictionaries whose glyph programs are cached on the interpreter, and
-//! the FontSet resource as the array of their names. A CID-keyed font in
+//! the FontSet resource as the array of their names, then ends the
+//! dictionary the procedure set's `begin` pushed. A CID-keyed font in
 //! the data becomes a `CIDFontType 0` resource of the `CIDFont` category
 //! (and stays reachable by name through `Interp::cid_program`); it is
 //! not a font a program can `findfont`. The one `StartData` operator
 //! also serves the `CIDInit` procedure set, whose form takes a string
-//! and a dictionary; the operand type tells the two apart.
+//! and a count; the operand type tells the two apart.
 
 use std::rc::Rc;
 
@@ -99,6 +100,9 @@ fn font_set_data(i: &mut Interp) -> Result<(), VmError> {
     i.mem.dict_put(dict, key, set)?;
     i.pop()?;
     i.pop()?;
+    // The canonical FontSet file carries no `end` of its own: StartData
+    // closes the procedure set's `begin`.
+    i.end_dict()?;
     Ok(())
 }
 

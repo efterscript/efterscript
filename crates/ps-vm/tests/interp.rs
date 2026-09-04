@@ -924,9 +924,9 @@ fn type_attribute_and_conversion_operators() {
     assert_eq!(outcome, Outcome::Ok);
     assert_eq!(
         out.text(),
-        "/integertype\n/realtype\n/stringtype\n/nametype\n/booleantype\n/nulltype\n/marktype\n\
-         /arraytype\n/arraytype\n/packedarraytype\n/dicttype\n/operatortype\n/filetype\n\
-         /savetype\nfalse\n"
+        "integertype\nrealtype\nstringtype\nnametype\nbooleantype\nnulltype\nmarktype\n\
+         arraytype\narraytype\npackedarraytype\ndicttype\noperatortype\nfiletype\n\
+         savetype\ntrue\n"
     );
 
     let (interp, _, _, _) = run(
@@ -1094,7 +1094,7 @@ fn standard_files_and_currentfile() {
     assert_eq!(outcome, Outcome::Ok);
     assert_eq!(
         out.text(),
-        "via stdout\nA\ntrue\nthe data line\ntrue\nXYZWV\ntrue\nABC\ntrue\n/tokenized\ntrue\n65\ntrue\n/filetype\n12\n(ab)\nfalse\ntrue\n"
+        "via stdout\nA\ntrue\nthe data line\ntrue\nXYZWV\ntrue\nABC\ntrue\n/tokenized\ntrue\n65\ntrue\nfiletype\n12\n(ab)\nfalse\ntrue\n"
     );
     assert_eq!(err.text(), "oops\n");
 
@@ -1299,7 +1299,7 @@ fn double_equals_pstack_and_stack() {
     assert_eq!(outcome, Outcome::Ok);
     assert_eq!(
         out.text(),
-        "(a\\(b\\)\\\\\\n\\t\\001\\177)\n/n\nn\n[1 (x) []]\n{1 [ 2 ] {}}\n--add--\n-mark-\n-null-\n-dict-\n-file-\n-save-\n2\n--nostringval--\n--nostringval--\n--nostringval--\n"
+        "(a\\(b\\)\\\\\\n\\t\\001\\177)\n/n\nn\n[1 (x) []]\n{1 [ 2 ] {}}\n--add--\n-mark-\nnull\n-dict-\n-file-\n-save-\n2\n--nostringval--\n--nostringval--\n--nostringval--\n"
     );
     assert_eq!(interp.ostack().len(), 1);
     let (interp, outcome, out, _) = run("1 (a) /b [ 1 ] pstack stack count");

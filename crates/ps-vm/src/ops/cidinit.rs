@@ -4,11 +4,11 @@
 //! The `CIDInit` procedure set (PLRM3 §5.11.4): the operators a CMap
 //! program is written in, which build a `ps_fonts::cmap::CMap` on the
 //! interpreter between `begincmap` and `endcmap`, and the `StartData`
-//! form that reads a CIDFont's glyph data (`ops::fontset` dispatches
-//! here for the string-operand form). `endcmap` turns the current
-//! dictionary into the CMap dictionary by giving it a `CodeMap` entry
-//! whose id resolves to the built CMap; `/CMap defineresource` then
-//! stores that dictionary.
+//! form that reads the glyph data of the CIDFont dictionary being
+//! defined (`ops::fontset` dispatches here for the string-operand
+//! form). `endcmap` turns the current dictionary into the CMap
+//! dictionary by giving it a `CodeMap` entry whose id resolves to the
+//! built CMap; `/CMap defineresource` then stores that dictionary.
 //!
 //! The predefined CMaps are the shipped resource files, run through
 //! these same operators on first use. An operator that needs one not
@@ -549,18 +549,17 @@ fn layout(i: &mut Interp, dict: Object) -> Result<CidLayout, VmError> {
     })
 }
 
-/// `dict (Binary|Hex) count StartData`: reads the glyph data from the
-/// current file, parses it as the dictionary's `CIDMap` and `FDArray`
-/// entries describe, and defines the dictionary as a `CIDFont` resource
-/// under its `CIDFontName`. The operands stay in place until everything
-/// has been read and parsed.
+/// `(Binary|Hex) count StartData`, with the CIDFont dictionary as the
+/// current dictionary: reads the glyph data from the current file,
+/// parses it as the dictionary's `CIDMap` and `FDArray` entries
+/// describe, defines the dictionary as a `CIDFont` resource under its
+/// `CIDFontName`, and then ends both that dictionary and the procedure
+/// set's, which the canonical file form leaves open. The operands stay
+/// in place until everything has been read and parsed.
 pub(crate) fn start_data(i: &mut Interp) -> Result<(), VmError> {
     let count = i.peek(0)?.as_i32().expect("integer");
     let form = string_of(i, i.peek(1)?)?;
-    let dict = i.peek(2)?;
-    if dict.ty() != Type::Dict {
-        return Err(VmError::TypeCheck);
-    }
+    let dict = i.current_dict();
     let count = usize::try_from(count).map_err(|_| VmError::RangeCheck)?;
     let hex = match form.as_slice() {
         b"Binary" => false,
@@ -597,6 +596,7 @@ pub(crate) fn start_data(i: &mut Interp) -> Result<(), VmError> {
     font::define(i, name, dict)?.ok_or(VmError::InvalidFont)?;
     i.pop()?;
     i.pop()?;
-    i.pop()?;
+    i.end_dict()?;
+    i.end_dict()?;
     Ok(())
 }

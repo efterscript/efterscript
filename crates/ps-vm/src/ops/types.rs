@@ -31,7 +31,7 @@ op_table! { OPS {
 
 fn type_(i: &mut Interp) -> Result<(), VmError> {
     let object = i.pop()?;
-    let name = i.intern(object.ty().name());
+    let name = i.intern(object.ty().name()).as_executable();
     i.push(name)
 }
 
@@ -212,4 +212,27 @@ fn cvrs(i: &mut Interp) -> Result<(), VmError> {
         _ => return Err(VmError::RangeCheck),
     };
     fill(i, text.as_bytes(), 3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SliceSource;
+
+    #[test]
+    fn type_yields_an_executable_name() {
+        let mut interp = Interp::new();
+        interp.run(&mut SliceSource::new(b"1 type 1.5 type null type"));
+        let stack = interp.ostack().to_vec();
+        assert_eq!(stack.len(), 3);
+        for (object, expected) in stack
+            .into_iter()
+            .zip(["integertype", "realtype", "nulltype"])
+        {
+            assert_eq!(object.ty(), Type::Name);
+            assert!(object.is_executable());
+            let atom = object.as_name().expect("name");
+            assert_eq!(interp.memory().name_text(atom), expected.as_bytes());
+        }
+    }
 }

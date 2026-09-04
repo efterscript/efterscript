@@ -262,6 +262,8 @@ fn the_font_set_file_wraps_the_program() {
     );
     assert!(set.starts_with(head.as_bytes()));
     assert_eq!(&set[head.len()..head.len() + data.len()], &data[..]);
-    assert!(set.ends_with(b"\nend\n"));
+    // The canonical form: nothing follows the data, StartData ends the begin.
+    assert_eq!(set.len(), head.len() + data.len() + 1);
+    assert!(set.ends_with(b"\n"));
     assert_eq!(font.gid("f"), Some(4));
 }

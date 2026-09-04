@@ -451,13 +451,29 @@ fn a_type1_charstring_cidfont_loads_through_startdata() {
     let run = exec(&short);
     assert_eq!(run.error(), Some("invalidfont"));
     assert_eq!(run.command(), Some("StartData"));
-    assert_eq!(run.interp.ostack().len(), 3, "operands stay on failure");
-    let run = exec(b"/CIDInit /ProcSet findresource begin 5 dict (Octal) 4 StartData\nabcd");
+    assert_eq!(run.interp.ostack().len(), 2, "operands stay on failure");
+    assert_eq!(run.interp.dstack().len(), 5, "dictionaries stay on failure");
+    let run = exec(b"/CIDInit /ProcSet findresource begin 5 dict begin (Octal) 4 StartData\nabcd");
     assert_eq!(run.error(), Some("rangecheck"));
-    let run = exec(b"/CIDInit /ProcSet findresource begin 5 dict (Binary) 4 StartData\nabcd");
+    // A current dictionary that is not a CIDFont's (here the procedure
+    // set itself) has no CIDFontName.
+    let run = exec(b"/CIDInit /ProcSet findresource begin (Binary) 4 StartData\nabcd");
     assert_eq!(run.error(), Some("invalidfont"));
-    let run = exec(b"/CIDInit /ProcSet findresource begin 5 (Binary) 4 StartData\nabcd");
+    let run = exec(b"/CIDInit /ProcSet findresource begin (Binary) (4) StartData\nabcd");
     assert_eq!(run.error(), Some("typecheck"));
+}
+
+#[test]
+fn start_data_ends_the_font_and_procedure_set_dictionaries() {
+    let mut program = b"countdictstack\n".to_vec();
+    program.extend(CidType1Font::corpus().file());
+    program.extend_from_slice(b"countdictstack count");
+    let run = exec(&program);
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let top = run.top_numbers(3);
+    assert_eq!(top[0], top[1]);
+    assert_eq!(top[2], 2.0, "nothing but the two counts remains");
+    assert_eq!(run.interp.dstack().len(), 3);
 }
 
 #[test]
@@ -473,7 +489,7 @@ fn hexadecimal_glyph_data_is_read_too() {
     program.push_str(&format!("(Hex) {} StartData\n", data.len()));
     program.push_str(&ps_fonts::testing::hex_lines(&data));
     program.push_str(
-        "end /T /Identity-H [ /SynCIDT1 /CIDFont findresource ] composefont 10 scalefont setfont \
+        "/T /Identity-H [ /SynCIDT1 /CIDFont findresource ] composefont 10 scalefont setfont \
          <0002> stringwidth",
     );
     let run = exec(program.as_bytes());

@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: integertype
+% expect-output: true
+% expect-output: true
+% expect-output: arraytype
+% expect-output: /integertype
+% Scenario: type yields an executable name: xcheck answers true and ==
+% prints it without a slash; the name is still eq to its literal
+% spelling, and cvlit gives the literal form, which prints with one.
+1 type xcheck =
+1 type ==
+1 type /integertype eq =
+[ ] type dup xcheck = ==
+1 type cvlit ==

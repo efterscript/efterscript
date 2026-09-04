@@ -135,7 +135,7 @@ fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize, sourc
             out.extend(brief(i, object));
             out.extend(b"--");
         }
-        Type::Null if source => out.extend(b"null"),
+        Type::Null => out.extend(b"null"),
         Type::Mark if source => out.extend(b"mark"),
         Type::Dict | Type::File | Type::Save | Type::FontId | Type::GState if source => {
             out.extend(b"null")
@@ -143,7 +143,6 @@ fn write_full(i: &Interp, object: Object, out: &mut Vec<u8>, depth: usize, sourc
         Type::Dict => out.extend(b"-dict-"),
         Type::File => out.extend(b"-file-"),
         Type::Mark => out.extend(b"-mark-"),
-        Type::Null => out.extend(b"-null-"),
         Type::Save => out.extend(b"-save-"),
         Type::FontId => out.extend(b"-fontID-"),
         Type::GState => out.extend(b"-gstate-"),
@@ -163,6 +162,14 @@ pub fn format_real(value: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn null_has_a_syntactic_form_and_mark_does_not() {
+        let interp = Interp::new();
+        assert_eq!(full(&interp, Object::null()), b"null");
+        assert_eq!(brief(&interp, Object::null()), b"--nostringval--");
+        assert_eq!(full(&interp, Object::mark()), b"-mark-");
+    }
 
     #[test]
     fn reals_print_with_a_decimal_point() {

@@ -318,6 +318,19 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
           /SynCFF findfont /FontType get =\n",
     );
 
+    let mut dict_stack = font_set_header(
+        &["true"],
+        "% Scenario: the dictionary stack is restored. countdictstack before\n\
+         % the procedure set's begin and after StartData has consumed the\n\
+         % data agree: StartData ends the dictionary the begin pushed, and\n\
+         % the file, in its canonical form, carries no end of its own.\n\
+         % Expect: true.\n",
+    )
+    .into_bytes();
+    dict_stack.extend_from_slice(b"countdictstack\n");
+    dict_stack.extend_from_slice(&set);
+    dict_stack.extend_from_slice(b"countdictstack eq =\n");
+
     let mut cff_type1c = font_set_header(
         &[],
         "% Scenario: Type1C embedded. SynCFF is shown once with only a, so\n\
@@ -650,6 +663,7 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         ("cff-width.ps", cff_width),
         ("cff-charpath-bbox.ps", cff_bbox),
         ("fontset-defines-fonts.ps", fontset_defines),
+        ("fontset-dictionary-stack.ps", dict_stack),
         ("fontset-short-data.ps", short_data),
         ("cff-embedded-type1c.ps", cff_type1c),
         ("cmap-embedded.ps", cmap_embedded.into_bytes()),

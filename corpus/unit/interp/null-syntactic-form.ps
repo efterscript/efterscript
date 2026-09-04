@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: null
+% expect-output: --nostringval--
+% expect-output: [null null]
+% expect-output: -mark-
+% Scenario: == writes null in its syntactic form, null, and = writes it
+% as --nostringval--, since null has no text for cvs; an array of nulls
+% prints each element the same way, while mark keeps its bracketed form.
+null == null =
+2 array ==
+mark ==
