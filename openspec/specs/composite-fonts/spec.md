@@ -48,11 +48,16 @@ whose CFF is CID-keyed SHALL define a `CIDFontType 0` resource named
 by the font, with `CIDSystemInfo`, `CIDCount`, `FontMatrix`, and
 `FontBBox`. The `CIDInit` `StartData` form (font dictionary array,
 `GlyphData` with `CIDMap`, `FDBytes`, `GDBytes`, Type 1 charstrings)
-SHALL define a `CIDFontType 0` resource too. A `CIDFontType 2`
-dictionary with `sfnts` and `CIDMap` SHALL define through
-`defineresource` and `definefont`. Glyphs SHALL be found by CID through
-the program's charset, the glyph data map, or the CID map respectively,
-with advances from the program.
+SHALL define a `CIDFontType 0` resource too: it SHALL take the form
+string (`Binary` or `Hex`) and the byte count as operands with the
+CIDFont dictionary as the current dictionary, and after defining the
+resource SHALL end that dictionary and the procedure set's, so a
+CIDFont file in its canonical form (no trailing `end`) leaves the
+dictionary stack as it found it. A `CIDFontType 2` dictionary with
+`sfnts` and `CIDMap` SHALL define through `defineresource` and
+`definefont`. Glyphs SHALL be found by CID through the program's
+charset, the glyph data map, or the CID map respectively, with advances
+from the program.
 
 #### Scenario: CID-keyed CFF from a FontSet
 
@@ -75,6 +80,13 @@ with advances from the program.
   font dictionaries and three glyphs
 - **THEN** each CID's advance and outline come from its own
   dictionary's private data, and `charpath` yields the outline
+
+#### Scenario: CIDInit StartData restores the dictionary stack
+
+- **GIVEN** `countdictstack` before `/CIDInit /ProcSet findresource
+  begin` and after the CIDFont's `StartData` has consumed its data
+- **THEN** the two counts are equal and the operand stack holds nothing
+  else
 
 ### Requirement: Type 0 fonts
 
