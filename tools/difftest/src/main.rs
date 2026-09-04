@@ -207,7 +207,21 @@ pub fn execute(program: &[u8]) -> Actual {
 }
 
 pub fn execute_with(program: &[u8], graphics: bool) -> Actual {
-    let (io, out, err) = Io::capture();
+    execute_in(program, graphics, false)
+}
+
+/// Runs `program` as `execute_with` does but with an empty, readable
+/// `%stdin`, the way an interpreter run from a shell has one; the oracle
+/// tier uses this so `%stdin` opens on both sides.
+pub fn execute_with_stdin(program: &[u8], graphics: bool) -> Actual {
+    execute_in(program, graphics, true)
+}
+
+fn execute_in(program: &[u8], graphics: bool, stdin: bool) -> Actual {
+    let (mut io, out, err) = Io::capture();
+    if stdin {
+        io = io.with_stdin(ps_vm::Capture::new());
+    }
     let config = Config {
         io,
         ..Default::default()

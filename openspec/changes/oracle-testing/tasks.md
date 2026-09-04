@@ -16,8 +16,8 @@
 
 ## 4. Vault and triage (private)
 
-- [ ] 4.1 Vault: `oracles/README.md`, `oracles/default.toml`, `oracles/denylist.txt`, `reference-outputs/oracle/` with provenance notes; verified by the lint passing on repo A and the profile loading
-- [ ] 4.2 First triage over the full corpus with the private profile; findings recorded in the implementation notes in repo-A vocabulary; no corpus or golden changed to match
+- [x] 4.1 Vault: `oracles/README.md`, `oracles/default.toml`, `oracles/denylist.txt`, `reference-outputs/oracle/` with provenance notes; verified by the lint passing on repo A and the profile loading
+- [x] 4.2 First triage over the full corpus with the private profile; findings recorded in the implementation notes in repo-A vocabulary; no corpus or golden changed to match
 
 ## 5. Verification
 

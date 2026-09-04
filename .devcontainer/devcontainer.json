@@ -12,8 +12,9 @@
     // Node 20+ for the OpenSpec CLI (decision registry tooling)
     "ghcr.io/devcontainers/features/node:1": { "version": "20" }
   },
-  "postCreateCommand": "npm install -g @fission-ai/openspec",
+  // The vault may provide private-tier tooling (an optional install hook); repo A names none of it.
+  "postCreateCommand": "npm install -g @fission-ai/openspec && if [ -x \"$EFTERSCRIPT_HELLBOX/oracles/install.sh\" ]; then \"$EFTERSCRIPT_HELLBOX/oracles/install.sh\"; fi",
   "containerEnv": {
-    "EFTERSCRIPT_HELLBOX": "/workspaces/es/efterscript-hellbox"
+    "EFTERSCRIPT_HELLBOX": "${containerWorkspaceFolder}/../efterscript-hellbox"
   }
 }

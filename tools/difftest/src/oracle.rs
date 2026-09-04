@@ -30,7 +30,7 @@ use remelt::{Options, PdfSink};
 
 use crate::pnm;
 use crate::profile::{self, Profile};
-use crate::{Actual, collect, execute_with, expectation, workspace_root};
+use crate::{Actual, collect, execute_with_stdin, expectation, workspace_root};
 
 /// The names `% divergence:` may declare, read from the
 /// expected-divergences specification: the living spec when it exists,
@@ -148,6 +148,9 @@ pub struct FileReport {
     pub fractions: Vec<f64>,
     /// Why the documents did not match, or what stopped the comparison.
     pub reasons: Vec<String>,
+    /// What the comparison decided that a reader should know without
+    /// it counting against the file.
+    pub notes: Vec<String>,
 }
 
 pub struct Settings<'a> {
@@ -351,13 +354,20 @@ pub fn normalise_output(text: &str) -> String {
     lines.join("\n")
 }
 
+/// Whether every pixel of `image` is white.
+fn blank(image: &pnm::Image) -> bool {
+    image.data.iter().all(|&byte| byte == 255)
+}
+
 /// The document comparison: mismatches go into `report.reasons`; an
-/// error is anything that stopped the comparison itself.
+/// error is anything that stopped the comparison itself. `declared` is
+/// the error the file expects to end with, when it declares one.
 fn compare_documents(
     settings: &Settings<'_>,
     path: &Path,
     dir: &Path,
     actual: &Actual,
+    declared: Option<&str>,
     report: &mut FileReport,
     deadline: Instant,
 ) -> Result<(), String> {
@@ -375,13 +385,26 @@ fn compare_documents(
         deadline,
     )? {
         Exit::TimedOut => return Err("reference converter timed out".to_string()),
-        Exit::Status(status) if !status.success() => {
-            report
-                .reasons
-                .push(format!("reference converter failed ({status})"));
-            return Ok(());
+        Exit::Status(status) if !status.success() => match declared {
+            // The file ends in an error on both sides; the document
+            // written up to it is still compared.
+            Some(error) => report.notes.push(format!(
+                "reference converter ended abnormally ({status}), as the file declares {error}"
+            )),
+            None => {
+                report
+                    .reasons
+                    .push(format!("reference converter failed ({status})"));
+                return Ok(());
+            }
+        },
+        Exit::Status(_) => {
+            if let Some(error) = declared {
+                report.reasons.push(format!(
+                    "reference converter ended normally where the file declares {error}"
+                ));
+            }
         }
-        Exit::Status(_) => {}
     }
     if !theirs_pdf.is_file() {
         report
@@ -401,8 +424,35 @@ fn compare_documents(
             actual.pages.len()
         ));
     }
-    let theirs = render(settings, dir, "theirs", &theirs_pdf, deadline)?;
+    let mut theirs = render(settings, dir, "theirs", &theirs_pdf, deadline)?;
     report.pages_theirs = Some(theirs.len());
+    // A converter may close a job that showed nothing with one empty
+    // page; such a page is not a page the program showed.
+    let theirs_text = if profile.text.is_some() {
+        Some(extract_text(
+            settings,
+            dir,
+            "theirs",
+            &theirs_pdf,
+            deadline,
+        )?)
+    } else {
+        None
+    };
+    if ours.is_empty() && theirs.len() == 1 {
+        let bytes =
+            std::fs::read(&theirs[0]).map_err(|e| format!("{}: {e}", theirs[0].display()))?;
+        let image = pnm::parse(&bytes).map_err(|e| format!("{}: {e}", theirs[0].display()))?;
+        let wordless = theirs_text
+            .as_deref()
+            .is_none_or(|text| normalise_text(text).is_empty());
+        if blank(&image) && wordless {
+            report
+                .notes
+                .push("theirs: one blank page where ours shows none, taken as no page".to_string());
+            theirs.clear();
+        }
+    }
     if ours.len() != theirs.len() {
         report.reasons.push(format!(
             "pages: ours {}, theirs {}",
@@ -451,9 +501,13 @@ fn compare_documents(
             ));
         }
     }
-    if profile.text.is_some() {
-        let ours_text = extract_text(settings, dir, "ours", &ours_pdf, deadline)?;
-        let theirs_text = extract_text(settings, dir, "theirs", &theirs_pdf, deadline)?;
+    if let Some(theirs_text) = theirs_text {
+        // A document without pages has no text to extract.
+        let ours_text = if ours.is_empty() {
+            String::new()
+        } else {
+            extract_text(settings, dir, "ours", &ours_pdf, deadline)?
+        };
         if normalise_text(&ours_text) != normalise_text(&theirs_text) {
             report
                 .reasons
@@ -509,6 +563,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         pages_theirs: None,
         fractions: Vec::new(),
         reasons: Vec::new(),
+        notes: Vec::new(),
     };
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -522,7 +577,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         return Checked::Skipped(feature.to_string());
     }
     report.divergence = expected.divergence.clone();
-    let actual = execute_with(&bytes, expected.graphics);
+    let actual = execute_with_stdin(&bytes, expected.graphics);
     report.pages_ours = actual.pages.len();
     let dir = settings.out_root.join(&shown);
     let prepared = match std::fs::remove_dir_all(&dir) {
@@ -539,7 +594,15 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
     }
     let deadline = Instant::now() + Duration::from_millis(settings.profile.timeout_ms);
     let mut error = false;
-    if let Err(e) = compare_documents(settings, path, &dir, &actual, &mut report, deadline) {
+    if let Err(e) = compare_documents(
+        settings,
+        path,
+        &dir,
+        &actual,
+        expected.error.as_deref(),
+        &mut report,
+        deadline,
+    ) {
         error = true;
         report.reasons.push(e);
     }
@@ -635,6 +698,9 @@ pub fn run_files(settings: &Settings<'_>, files: &[PathBuf]) -> (Vec<FileReport>
                 for reason in &report.reasons {
                     println!("  {reason}");
                 }
+                for note in &report.notes {
+                    println!("  note: {note}");
+                }
                 reports.push(report);
             }
             Checked::Skipped(feature) => {
@@ -689,15 +755,17 @@ pub fn json_report(profile: &Profile, reports: &[FileReport], summary: &Summary)
             .map_or("null".to_string(), |n| n.to_string());
         let fractions: Vec<String> = report.fractions.iter().map(|f| format!("{f}")).collect();
         let reasons: Vec<String> = report.reasons.iter().map(|r| json_string(r)).collect();
+        let notes: Vec<String> = report.notes.iter().map(|n| json_string(n)).collect();
         out.push_str(&format!(
-            "{}\n    {{\"path\": {}, \"verdict\": {}, \"output\": {}, \"divergence\": {divergence}, \"pages\": {{\"ours\": {}, \"theirs\": {theirs}}}, \"fractions\": [{}], \"reasons\": [{}]}}",
+            "{}\n    {{\"path\": {}, \"verdict\": {}, \"output\": {}, \"divergence\": {divergence}, \"pages\": {{\"ours\": {}, \"theirs\": {theirs}}}, \"fractions\": [{}], \"reasons\": [{}], \"notes\": [{}]}}",
             if index == 0 { "" } else { "," },
             json_string(&report.shown),
             json_string(report.verdict.name()),
             json_string(report.output.name()),
             report.pages_ours,
             fractions.join(", "),
-            reasons.join(", ")
+            reasons.join(", "),
+            notes.join(", ")
         ));
     }
     out.push_str(&format!(
@@ -919,7 +987,8 @@ mod tests {
 
     /// A converter that copies our own document and appends the
     /// `mark` lines of the control file, refuses when the control says
-    /// `reject`, and stalls when it says `hang`.
+    /// `reject`, stalls when it says `hang`, and ends abnormally after
+    /// writing when it says `fail-after`.
     const PS2PDF: &str = "#!/bin/sh
 export LC_ALL=C
 ctl=\"$(dirname \"$0\")/control\"
@@ -927,6 +996,7 @@ if grep -q '^reject' \"$ctl\"; then echo refused >&2; exit 3; fi
 if grep -q '^hang' \"$ctl\"; then sleep 5; fi
 cp \"$(dirname \"$2\")/ours.pdf\" \"$2\" || exit 1
 sed -n 's/^mark //p' \"$ctl\" >> \"$2\"
+if grep -q '^fail-after' \"$ctl\"; then echo failed >&2; exit 3; fi
 ";
 
     /// A rasteriser: one white P5 page per `/MediaBox` line, sized from
@@ -969,10 +1039,12 @@ sed -n 's/^output //p' \"$(dirname \"$0\")/control\"
 exit 0
 ";
 
-    /// A text extractor: a constant plus whatever `%fake-text` says.
+    /// A text extractor: a constant for a document with a page, plus
+    /// whatever `%fake-text` says.
     const TEXT: &str = "#!/bin/sh
 export LC_ALL=C
-printf 'hello %s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
+if grep -a -q '/MediaBox' \"$1\"; then printf 'hello '; fi
+printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
 ";
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1088,6 +1160,98 @@ printf 'hello %s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert_eq!(report.pages_ours, 0);
         assert_eq!(report.pages_theirs, Some(0));
         assert!(report.fractions.is_empty());
+    }
+
+    #[test]
+    fn the_oracle_run_opens_an_empty_stdin() {
+        let fixture = Fixture::new(0.005, 20_000, false);
+        let path = fixture.program(
+            "stdin.ps",
+            "%!PS\n% expect-output: 0\n% expect-output: ok\n(%stdin) (r) file dup 4 string readstring pop length = closefile (ok) =\n",
+        );
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.output, Output::Same);
+        let out = fixture.dir.join("out").join("external").join("stdin.ps");
+        assert_eq!(
+            std::fs::read_to_string(out.join("ours.stdout")).unwrap(),
+            "0\nok\n"
+        );
+    }
+
+    #[test]
+    fn a_blank_page_closing_a_page_free_job_is_no_page() {
+        let fixture = Fixture::new(0.005, 20_000, true);
+        let path = fixture.program("sum.ps", "%!PS\n% expect-output: 3\n1 2 add =\n");
+        fixture.control("mark %fake-extra-pages 1\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.pages_theirs, Some(1));
+        assert!(report.fractions.is_empty());
+        assert_eq!(
+            report.notes,
+            ["theirs: one blank page where ours shows none, taken as no page"]
+        );
+
+        fixture.control("mark %fake-extra-pages 1\nmark %fake-fill 0 1\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(report.reasons, ["pages: ours 0, theirs 1"]);
+        assert!(report.notes.is_empty());
+
+        fixture.control("mark %fake-extra-pages 1\nmark %fake-text words\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            [
+                "pages: ours 0, theirs 1",
+                "text differs (ours.txt against theirs.txt)"
+            ]
+        );
+
+        // Two pages are never taken as none.
+        fixture.control("mark %fake-extra-pages 2\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.reasons, ["pages: ours 0, theirs 2"]);
+    }
+
+    #[test]
+    fn a_declared_error_expects_the_converter_to_end_abnormally() {
+        let fixture = Fixture::new(0.005, 20_000, false);
+        let declared = fixture.program(
+            "erring.ps",
+            "%!PS\n% expect-error: undefined\n0 0 10 10 rectfill showpage nosuchname\n",
+        );
+        fixture.control("fail-after\n");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.pages_theirs, Some(1));
+        assert_eq!(report.fractions, [0.0]);
+        assert_eq!(
+            report.notes,
+            [
+                "reference converter ended abnormally (exit status: 3), as the file declares undefined"
+            ]
+        );
+
+        fixture.control("");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["reference converter ended normally where the file declares undefined"]
+        );
+
+        let plain = fixture.program("drawing.ps", DRAWING);
+        fixture.control("fail-after\n");
+        let report = fixture.check(&plain);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["reference converter failed (exit status: 3)"]
+        );
+        assert_eq!(report.pages_theirs, None);
     }
 
     #[test]
@@ -1253,7 +1417,7 @@ printf 'hello %s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert!(summary.line().starts_with("2 files, 2 pass, 0 fail,"));
         let json = json_report(&fixture.profile, &reports, &summary);
         assert!(json.contains("\"name\": \"fake\""));
-        assert!(json.contains("\"path\": \"external/a.ps\", \"verdict\": \"pass\", \"output\": \"differs\", \"divergence\": null, \"pages\": {\"ours\": 1, \"theirs\": 1}, \"fractions\": [0], \"reasons\": []"));
+        assert!(json.contains("\"path\": \"external/a.ps\", \"verdict\": \"pass\", \"output\": \"differs\", \"divergence\": null, \"pages\": {\"ours\": 1, \"theirs\": 1}, \"fractions\": [0], \"reasons\": [], \"notes\": []"));
         assert!(json.contains("\"summary\": {\"files\": 2, \"pass\": 2, \"fail\": 0,"));
         assert_eq!(json_string("a\"b\\c\nd\u{1}"), "\"a\\\"b\\\\c\\nd\\u0001\"");
     }
