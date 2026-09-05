@@ -39,10 +39,15 @@ raw PNM at the profile's resolution, and compare page count, media box
 by more than the profile's threshold, and a page fails when the
 differing fraction exceeds the profile's limit. When the profile
 provides a text extractor, extracted text SHALL be compared after
-whitespace normalisation. The harness SHALL also run the file through
-the reference interpreter and compare standard output with
+whitespace normalisation, except that a page whose EfterScript PDF
+carries no Unicode mapping for its fonts SHALL report its text as not
+comparable rather than as a failure. The harness SHALL also run the
+file through the reference interpreter and compare standard output with
 EfterScript's after normalising real-number formatting and trailing
-whitespace. Each file SHALL be given the profile's timeout.
+whitespace; when the profile gives an `error_marker`, the reference's
+output SHALL be cut at the marker's first occurrence and the presence of
+the marker recorded as the reference ending in error. Each file SHALL be
+given the profile's timeout.
 
 #### Scenario: Identical pages pass
 
@@ -62,6 +67,19 @@ whitespace. Each file SHALL be given the profile's timeout.
 - **THEN** the report shows whether the reference interpreter's output
   equals EfterScript's after normalisation, independently of the raster
   verdict
+
+#### Scenario: Text without a Unicode mapping
+
+- **GIVEN** a page whose EfterScript fonts carry no ToUnicode
+- **THEN** the report marks text as not comparable and the verdict
+  depends on the other checks only
+
+#### Scenario: Error marker
+
+- **GIVEN** a profile with an `error_marker` and a declared-error corpus
+  file
+- **THEN** the output comparison covers only the text before the marker
+  and the reference is recorded as having ended in error
 
 ### Requirement: Verdicts and divergence headers
 
