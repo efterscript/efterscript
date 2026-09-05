@@ -300,20 +300,38 @@ fn a_program_is_built_once_per_font_and_missing_programs_are_invalidfont() {
          /Encoding StandardEncoding >> definefont setfont (a) stringwidth",
     );
     assert_eq!(run.error(), Some("invalidfont"));
-    assert_eq!(run.command(), Some("stringwidth"));
+    assert_eq!(run.command(), Some("definefont"));
+
+    let run = exec(
+        "/NoPrivate << /FontType 1 /FontMatrix [0.001 0 0 0.001 0 0] \
+         /Encoding StandardEncoding /CharStrings << /a <00> >> >> definefont",
+    );
+    assert_eq!(run.error(), Some("invalidfont"));
+    assert_eq!(run.command(), Some("definefont"));
 
     let run = exec(
         "/NoSfnts << /FontType 42 /FontMatrix [1 0 0 1 0 0] /Encoding StandardEncoding \
          /CharStrings << /a 1 >> >> definefont setfont (a) stringwidth",
     );
     assert_eq!(run.error(), Some("invalidfont"));
+    assert_eq!(run.command(), Some("definefont"));
 
+    let run = exec(
+        "/NoCharStrings << /FontType 42 /FontMatrix [1 0 0 1 0 0] /Encoding StandardEncoding \
+         /sfnts [ <00010000000100> ] >> definefont",
+    );
+    assert_eq!(run.error(), Some("invalidfont"));
+    assert_eq!(run.command(), Some("definefont"));
+
+    // A program that is present but unreadable is found out at the
+    // first glyph.
     let run = exec(
         "/ShortSfnts << /FontType 42 /FontMatrix [1 0 0 1 0 0] /Encoding StandardEncoding \
          /CharStrings << /a 1 >> /sfnts [ <00010000000100> ] >> definefont setfont \
          (a) stringwidth",
     );
     assert_eq!(run.error(), Some("invalidfont"));
+    assert_eq!(run.command(), Some("stringwidth"));
 }
 
 #[test]
@@ -539,4 +557,39 @@ fn type42_glyphs_missing_from_charstrings_use_notdef() {
         "notdef advances half an em"
     );
     assert!(run.output.is_empty());
+}
+
+#[test]
+fn a_name_the_resident_face_lacks_advances_by_its_notdef_width() {
+    let reencode = |face: &str| {
+        format!(
+            "/R /{face} findfont dup length dict copy dup /Encoding StandardEncoding \
+             dup length array copy dup 65 /nosuchglyph put put definefont 10 scalefont setfont \
+             (A) stringwidth (AA) stringwidth"
+        )
+    };
+    // The derived tables carry a `.notdef` width of their own.
+    let run = exec(&reencode("Palatino-Roman"));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let top = run.top_numbers(4);
+    assert!(approx(top[0], 5.0) && approx(top[2], 10.0), "{top:?}");
+    // The Core 14 metrics lack one: the outline asset's `.notdef`
+    // advance when the assets are embedded, else 0.
+    let run = exec(&reencode("Times-Roman"));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let top = run.top_numbers(4);
+    let expected = ps_fonts::ResidentFace::TimesRoman.notdef_width() / 100.0;
+    if ps_fonts::has_resident_outlines() {
+        assert!(expected > 7.0 && expected < 8.0, "{expected}");
+    } else {
+        assert_eq!(expected, 0.0);
+    }
+    assert!(
+        approx(top[0], expected) && approx(top[2], 2.0 * expected),
+        "{top:?}"
+    );
+    // A face without an asset advances by nothing.
+    let run = exec(&reencode("Symbol"));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert!(approx(run.top_numbers(4)[0], 0.0));
 }

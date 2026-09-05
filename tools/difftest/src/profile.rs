@@ -8,11 +8,15 @@
 //! Grammar: one `key = value` per line; blank lines and lines starting
 //! with `#` are ignored; a `"…"` string honours `\"` and `\\`; a bare
 //! value is a number. Keys: `name`, `version`, `ps2pdf`, `render`, `run`
-//! (strings, required), `text` (string, optional), `dpi`, `threshold`,
-//! `limit`, `timeout_ms` (numbers, optional). Command strings carry the
-//! placeholders `{in}`, `{out}`, and `{dpi}`; the harness substitutes
-//! shell-quoted paths and the resolution, and a command runs through
-//! `sh -c` from the file's output directory.
+//! (strings, required), `text` and `error_marker` (strings, optional),
+//! `dpi`, `threshold`, `limit`, `timeout_ms` (numbers, optional).
+//! Command strings carry the placeholders `{in}`, `{out}`, and `{dpi}`;
+//! the harness substitutes shell-quoted paths and the resolution, and a
+//! command runs through `sh -c` from the file's output directory.
+//! `error_marker` is the text the reference interpreter's error report
+//! starts with on standard output: the harness compares its output only
+//! up to the marker's first occurrence and records that the reference
+//! ended in error.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -35,6 +39,9 @@ pub struct Profile {
     pub run: String,
     /// `{in}` a PDF; standard output is its text.
     pub text: Option<String>,
+    /// Where the reference interpreter's error report begins on its
+    /// standard output, when the profile describes it.
+    pub error_marker: Option<String>,
     pub dpi: u32,
     /// The channel difference above which a pixel differs.
     pub threshold: u8,
@@ -43,7 +50,15 @@ pub struct Profile {
     pub timeout_ms: u64,
 }
 
-const STRING_KEYS: [&str; 6] = ["name", "version", "ps2pdf", "render", "run", "text"];
+const STRING_KEYS: [&str; 7] = [
+    "name",
+    "version",
+    "ps2pdf",
+    "render",
+    "run",
+    "text",
+    "error_marker",
+];
 const NUMBER_KEYS: [&str; 4] = ["dpi", "threshold", "limit", "timeout_ms"];
 
 enum Value {
@@ -157,6 +172,10 @@ pub fn parse(text: &str) -> Result<Profile, String> {
     if let Some(text) = &text {
         placeholders(text, "text", &["{in}"])?;
     }
+    let error_marker = string("error_marker").ok();
+    if error_marker.as_deref() == Some("") {
+        return Err("`error_marker` must not be empty".to_string());
+    }
     let limit = number("limit").unwrap_or(DEFAULT_LIMIT);
     if !(0.0..=1.0).contains(&limit) {
         return Err(format!("`limit` must be between 0 and 1, not {limit}"));
@@ -168,6 +187,7 @@ pub fn parse(text: &str) -> Result<Profile, String> {
         render,
         run,
         text,
+        error_marker,
         dpi: number("dpi").map_or(Ok(DEFAULT_DPI), |n| {
             integer(n, "dpi", 1.0, f64::from(u32::MAX)).map(|n| n as u32)
         })?,
@@ -265,6 +285,7 @@ mod tests {
         assert_eq!(p.version, "1");
         assert_eq!(p.ps2pdf, "a {in} {out}");
         assert_eq!(p.text, None);
+        assert_eq!(p.error_marker, None);
         assert_eq!(p.dpi, DEFAULT_DPI);
         assert_eq!(p.threshold, DEFAULT_THRESHOLD);
         assert_eq!(p.limit, DEFAULT_LIMIT);
@@ -274,10 +295,11 @@ mod tests {
     #[test]
     fn every_key_comments_and_escapes_are_read() {
         let text = format!(
-            "# a comment\n\n{MINIMAL}text = \"t \\\"q\\\" \\\\ {{in}}\"  # trailing\n  dpi = 72\nthreshold=0\nlimit = 0.25 # note\ntimeout_ms = 500\n"
+            "# a comment\n\n{MINIMAL}text = \"t \\\"q\\\" \\\\ {{in}}\"  # trailing\n  dpi = 72\nthreshold=0\nlimit = 0.25 # note\ntimeout_ms = 500\nerror_marker = \"Oops: \"\n"
         );
         let p = parse(&text).unwrap();
         assert_eq!(p.text.as_deref(), Some("t \"q\" \\ {in}"));
+        assert_eq!(p.error_marker.as_deref(), Some("Oops: "));
         assert_eq!(p.dpi, 72);
         assert_eq!(p.threshold, 0);
         assert_eq!(p.limit, 0.25);
@@ -302,6 +324,11 @@ mod tests {
         assert!(err(&MINIMAL.replace("{out} {dpi}", "{dpi}")).contains("`render` lacks the {out}"));
         assert!(err(&MINIMAL.replace("c {in}", "c")).contains("`run` lacks the {in}"));
         assert!(err(&format!("{MINIMAL}text = \"t\"\n")).contains("`text` lacks the {in}"));
+        assert!(
+            err(&format!("{MINIMAL}error_marker = \"\"\n"))
+                .contains("`error_marker` must not be empty")
+        );
+        assert!(err(&format!("{MINIMAL}error_marker = 1\n")).contains("must be a quoted string"));
         assert!(
             err(&format!("{MINIMAL}threshold = 300\n"))
                 .contains("`threshold` must be an integer between 0 and 255")

@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 2
+% expect-output: 1
+% expect-output: 2
+% expect-output: 1
+% Scenario: resident faces report loading. A resident face — one of the
+% fourteen or one of the extra twenty-one — reports status 2 until
+% findfont has materialised it in VM and 1 afterwards.
+% Expect: 2, 1, 2, 1.
+/Helvetica /Font resourcestatus pop pop =
+/Helvetica findfont pop
+/Helvetica /Font resourcestatus pop pop =
+/Palatino-Roman /Font resourcestatus pop pop =
+/Palatino-Roman findfont pop
+/Palatino-Roman /Font resourcestatus pop pop =

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 2
+% expect-output: 1
+% Scenario: loaded CMap status. A predefined CMap reports status 2 while
+% it is held outside VM and 1 once findresource has loaded it.
+% Expect: 2, then 1.
+/Identity-H /CMap resourcestatus pop pop =
+/Identity-H /CMap findresource pop
+/Identity-H /CMap resourcestatus pop pop =

@@ -2,6 +2,7 @@
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
 % expect-output: /limitcheck
+% divergence: procedure-nesting-limit
 % Scenario: nesting deeper than the limit is a limitcheck at scan time.
 % Expect: prints "/limitcheck".
 /prog 2002 string def

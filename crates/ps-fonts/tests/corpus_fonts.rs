@@ -490,7 +490,8 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
 
     let mut vertical = font_set_header(
         &["0.0", "90.0"],
-        "% Scenario: vertical writing. Through Identity-V, writing mode 1,\n\
+        "% divergence: vertical-default-metrics\n\
+         % Scenario: vertical writing. Through Identity-V, writing mode 1,\n\
          % every glyph advances downward by the default vertical advance, one\n\
          % em, and sits at its vertical origin; at size 10 the one-glyph\n\
          % string <0001> shown from (0, 100) leaves the current point at\n\

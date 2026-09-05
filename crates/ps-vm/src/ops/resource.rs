@@ -6,8 +6,12 @@
 //! has a local and a global instance dictionary selected by the
 //! allocation mode, plus its built-in instances: the resident fonts, the
 //! two encoding arrays in `systemdict`, the `FontSetInit` and `CIDInit`
-//! procedure sets, and the predefined CMaps, loaded on first use. Other
-//! categories are `undefined`.
+//! procedure sets, and the predefined CMaps, loaded on first use. A
+//! built-in instance reports status 2 until it has been loaded — a
+//! resident face materialised, a predefined CMap's program run, a
+//! procedure set found — and 1 from then on; `restore` does not clear
+//! that, the loaded object living in global VM. Other categories are
+//! `undefined`.
 
 use ps_fonts::ResidentFace;
 
@@ -41,7 +45,9 @@ const BUILTIN_PROCSETS: [&str; 2] = ["CIDInit", "FontSetInit"];
 
 /// Status of an instance defined by the program, in VM.
 const STATUS_DEFINED: i32 = 0;
-/// Status of a resident font, held outside VM.
+/// Status of a built-in instance loaded into VM.
+const STATUS_LOADED: i32 = 1;
+/// Status of a built-in instance not yet loaded, held outside VM.
 const STATUS_RESIDENT: i32 = 2;
 
 fn kind(i: &Interp, category: Object) -> Result<Kind, VmError> {
@@ -89,14 +95,35 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
             b"ISOLatin1Encoding" => Some(i.iso_latin1_encoding),
             _ => None,
         }),
-        Kind::ProcSet => Ok(match name {
-            b"FontSetInit" => Some(i.font_set_init),
-            b"CIDInit" => Some(i.cid_init),
-            _ => None,
+        Kind::ProcSet => Ok(match procset_index(name) {
+            Some(index) => {
+                i.loaded_procsets[index] = true;
+                Some(if name == b"FontSetInit" {
+                    i.font_set_init
+                } else {
+                    i.cid_init
+                })
+            }
+            None => None,
         }),
         // Predefined CMaps are resolved by `findresource` itself, since
         // loading one runs a program.
         Kind::FontSet | Kind::CMap | Kind::CidFont => Ok(None),
+    }
+}
+
+fn procset_index(name: &[u8]) -> Option<usize> {
+    BUILTIN_PROCSETS.iter().position(|p| p.as_bytes() == name)
+}
+
+/// Whether the built-in instance `name` has been loaded into VM.
+fn loaded(i: &Interp, kind: Kind, name: &[u8]) -> bool {
+    match kind {
+        Kind::Font => ResidentFace::from_postscript_name(name)
+            .is_some_and(|face| i.resident_fonts[face.index()].is_some()),
+        Kind::ProcSet => procset_index(name).is_some_and(|index| i.loaded_procsets[index]),
+        Kind::CMap => i.predefined_cmap(name).is_some(),
+        Kind::Encoding | Kind::FontSet | Kind::CidFont => false,
     }
 }
 
@@ -144,8 +171,13 @@ fn resourcestatus(i: &mut Interp) -> Result<(), VmError> {
             .as_name()
             .filter(|&a| has_builtin(kind, i.mem.name_text(a)))
         {
-            Some(_) if matches!(kind, Kind::Font | Kind::ProcSet | Kind::CMap) => {
-                Some(STATUS_RESIDENT)
+            Some(atom) if matches!(kind, Kind::Font | Kind::ProcSet | Kind::CMap) => {
+                let name = i.mem.name_text(atom).to_vec();
+                Some(if loaded(i, kind, &name) {
+                    STATUS_LOADED
+                } else {
+                    STATUS_RESIDENT
+                })
             }
             Some(_) => Some(STATUS_DEFINED),
             None => None,

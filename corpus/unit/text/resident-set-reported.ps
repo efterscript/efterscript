@@ -10,15 +10,20 @@
 % expect-output: false
 % expect-output: true
 % expect-output: 0
+% expect-output: 1
+% expect-output: true
+% expect-output: 0
 % expect-output: 0
 % divergence: resource-size-unknown
 % Scenario: the resident set is reported. resourcestatus reports a
 % standard font and an extra resident face as resident (status 2) and
 % an alias name as absent, since substitution is findfont's behaviour
-% alone; a font the job defines has status 0.
-% Expect: true 0 2 twice, false, then true 0 0.
+% alone; once findfont has loaded a face it reports status 1; a font
+% the job defines has status 0.
+% Expect: true 0 2 twice, false, true 0 1, then true 0 0.
 /Helvetica /Font resourcestatus = = =
 /Palatino-Roman /Font resourcestatus = = =
 /Arial /Font resourcestatus =
 /Helvetica findfont /Mine exch definefont pop
+/Helvetica /Font resourcestatus = = =
 /Mine /Font resourcestatus = = =

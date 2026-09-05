@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: typecheck
+% expect-output: typecheck
+% expect-output: typecheck
+% expect-output: true
+% Scenario: ill-typed known keys. setpagedevice checks the type of the
+% entries it recognises: a string for InputAttributes, an integer for
+% Duplex, and a real for NumCopies are each a typecheck, while null is
+% accepted for ImagingBBox.
+% Expect: typecheck three times, then true.
+{ << /InputAttributes (tray) >> setpagedevice } stopped pop $error /errorname get =
+{ << /Duplex 1 >> setpagedevice } stopped pop $error /errorname get =
+{ << /NumCopies 1.5 >> setpagedevice } stopped pop $error /errorname get =
+<< /ImagingBBox null >> setpagedevice
+currentpagedevice /ImagingBBox get null eq =

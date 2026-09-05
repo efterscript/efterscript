@@ -109,10 +109,12 @@ pub(crate) fn is_cidfont(i: &mut Interp, dict: Object) -> Result<bool, VmError> 
 }
 
 /// The structure `definefont` requires: a `FontType` this VM can handle,
-/// a matrix, a full encoding, and for Type 3 a glyph procedure; for a
-/// Type 0 font its map type, CMap, descendants, and font-number
-/// encoding; for a CIDFont its type and matrix. `None` when a Type 0
-/// font's CMap is a predefined one whose load has just started.
+/// a matrix, a full encoding, for Type 3 a glyph procedure, for Type 1
+/// (without the resident marker) `CharStrings` and `Private`, for
+/// Type 42 `sfnts` and `CharStrings`; for a Type 0 font its map type,
+/// CMap, descendants, and font-number encoding; for a CIDFont its type
+/// and matrix. `None` when a Type 0 font's CMap is a predefined one
+/// whose load has just started.
 fn validate(i: &mut Interp, font: Object) -> Result<Option<Kind>, VmError> {
     let font_type = entry(i, font, "FontType")?.and_then(Object::as_i32);
     let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
@@ -130,13 +132,31 @@ fn validate(i: &mut Interp, font: Object) -> Result<Option<Kind>, VmError> {
     if !is_array(encoding) || encoding.length() != Some(256) {
         return Err(VmError::InvalidFont);
     }
-    if font_type == Some(3) {
-        let procedure = entry(i, font, "BuildGlyph")?.or(entry(i, font, "BuildChar")?);
-        if !procedure.is_some_and(|p| is_array(p) && p.is_executable()) {
+    match font_type {
+        Some(3) => {
+            let procedure = entry(i, font, "BuildGlyph")?.or(entry(i, font, "BuildChar")?);
+            if !procedure.is_some_and(|p| is_array(p) && p.is_executable()) {
+                return Err(VmError::InvalidFont);
+            }
+        }
+        Some(1) if entry(i, font, RESIDENT_KEY)?.is_none() => {
+            if !has_dict(i, font, "CharStrings")? || !has_dict(i, font, "Private")? {
+                return Err(VmError::InvalidFont);
+            }
+        }
+        Some(42)
+            if !entry(i, font, "sfnts")?.is_some_and(is_array)
+                || !has_dict(i, font, "CharStrings")? =>
+        {
             return Err(VmError::InvalidFont);
         }
+        _ => {}
     }
     Ok(Some(Kind::Simple))
+}
+
+fn has_dict(i: &mut Interp, font: Object, key: &str) -> Result<bool, VmError> {
+    Ok(entry(i, font, key)?.is_some_and(|v| v.ty() == Type::Dict))
 }
 
 fn validate_cidfont(i: &mut Interp, font: Object) -> Result<(), VmError> {

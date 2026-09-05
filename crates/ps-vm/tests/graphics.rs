@@ -1022,3 +1022,46 @@ fn backend_errors_name_the_operator() {
     assert!(interp.ostack().iter().all(|o| o.ty() != ps_vm::Type::Save));
     let _ = Object::null();
 }
+
+#[test]
+fn setpagedevice_type_checks_the_keys_it_recognises() {
+    let run = exec(
+        "<< /InputAttributes << /Priority [0] >> /Duplex false /NumCopies 2 /ImagingBBox null \
+         /HWResolution [300 300] /Orientation 1 /Policies << /PageSize 3 >> /Tumble true \
+         /Collate false /OutputAttributes 1 dict /PageOffset [0 0] /TraySwitch (any) >> \
+         setpagedevice currentpagedevice /ImagingBBox get null eq = \
+         currentpagedevice /NumCopies get =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(run.output, "true\n2\n");
+    for request in [
+        "/InputAttributes (tray)",
+        "/OutputAttributes [1]",
+        "/Policies 1",
+        "/Duplex 1",
+        "/Collate (yes)",
+        "/Tumble null",
+        "/NumCopies 1.5",
+        "/Orientation (portrait)",
+        "/ImagingBBox 1",
+        "/HWResolution (300)",
+        "/PageOffset << >>",
+    ] {
+        let run = exec(&format!(
+            "<< /PageSize [100 100] {request} >> setpagedevice"
+        ));
+        assert_eq!(run.error(), Some("typecheck"), "{request}");
+        assert_eq!(run.command(), Some("setpagedevice"), "{request}");
+        assert_eq!(
+            run.interp.ostack().len(),
+            1,
+            "{request}: the request stays on the stack"
+        );
+    }
+    // Nothing of a refused request is recorded.
+    let run = exec(
+        "{ << /Duplex true /Collate (no) >> setpagedevice } stopped pop \
+         currentpagedevice /Duplex known =",
+    );
+    assert_eq!(run.output, "false\n");
+}

@@ -2,13 +2,17 @@
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
 % requires: resident-outlines
+% expect-output: 7.778
 % expect-output: 0.0
-% expect-output: 0.0
-% expect-output: true
+% expect-output: false
+% divergence: resident-inventory
 % Scenario: missing glyph. Times-Roman re-encoded with code 65 as a name
-% no asset has appends nothing for it and advances by 0, the metrics
-% lacking the name too; the path holds only the start point.
-% Expect: 0.0 and 0.0, then true.
+% no asset has appends no outline for it but advances by the face's
+% .notdef width — the metrics lack the name and carry no .notdef, so the
+% outline asset's .notdef advance stands in, 777.832 units; the path
+% spans from the start point to the advanced current point, so its box
+% is not all zero.
+% Expect: 7.778 and 0.0, then false.
 /r { 1000 mul round 1000 div } def
 /T2 /Times-Roman findfont dup length dict copy
   dup /Encoding StandardEncoding dup length array copy

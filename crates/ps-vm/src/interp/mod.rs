@@ -188,6 +188,9 @@ pub struct Interp {
     pub(crate) font_set_init: Object,
     /// The built-in `CIDInit` procedure set.
     pub(crate) cid_init: Object,
+    /// Which built-in procedure sets `findresource` has returned, in
+    /// the resource operators' table order.
+    pub(crate) loaded_procsets: [bool; 2],
     pub(crate) standard_encoding: Object,
     pub(crate) iso_latin1_encoding: Object,
     pub(crate) resident_fonts: [Option<Object>; ps_fonts::ResidentFace::COUNT],
@@ -219,7 +222,8 @@ pub struct Interp {
     cmaps: HashMap<u32, Rc<CMap>>,
     next_cmap_id: u32,
     // The predefined CMaps loaded so far: global read-only dictionaries
-    // outside every category dictionary, so their status stays 2.
+    // outside every category dictionary, so `resourcestatus` reports
+    // them as loaded rather than defined.
     predefined_cmaps: HashMap<Vec<u8>, Object>,
     // The CMap programs between `begincmap` and `endcmap`, innermost
     // last: loading a predefined parent runs its program inside.
@@ -358,6 +362,7 @@ impl Interp {
             },
             font_set_init,
             cid_init,
+            loaded_procsets: [false; 2],
             standard_encoding,
             iso_latin1_encoding,
             resident_fonts: [None; ps_fonts::ResidentFace::COUNT],

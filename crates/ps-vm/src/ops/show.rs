@@ -641,8 +641,9 @@ fn next_code(f: &ShowFrame) -> Option<Code> {
 
 /// A simple font's glyph for a one-byte code: the width in glyph units
 /// and, when the font has outlines, the program glyph with the scale
-/// its units need. A charstring or glyph record that cannot be
-/// interpreted is `invalidfont`.
+/// its units need. A resident face advances a name it lacks by its
+/// `.notdef` width and draws nothing for it. A charstring or glyph
+/// record that cannot be interpreted is `invalidfont`.
 type SimpleGlyph = (Point, Option<(Rc<ProgramGlyph>, f32)>);
 
 fn simple_glyph(
@@ -659,7 +660,7 @@ fn simple_glyph(
             let width = name
                 .as_deref()
                 .and_then(|name| face.width(std::str::from_utf8(name).ok()?))
-                .unwrap_or(0);
+                .map_or_else(|| face.notdef_width(), f32::from);
             let outline = match (&name, f.outline) {
                 (Some(name), true) => face
                     .outline(name)
@@ -667,7 +668,7 @@ fn simple_glyph(
                     .map(|glyph| (glyph, 1.0)),
                 _ => None,
             };
-            Ok((Point::new(f32::from(width), 0.0), outline))
+            Ok((Point::new(width, 0.0), outline))
         }
         FontKind::Embedded { program, scale } => {
             let glyph = program_glyph(i, f, encoding, program, code)?;

@@ -4,9 +4,11 @@
 //! `setpagedevice` and `currentpagedevice` (PLRM3 §6.1) under the
 //! tolerant-acceptance policy: `PageSize` becomes the backend's media box,
 //! every other entry is recorded and readable back, and no key is
-//! rejected. The page-device dictionary lives in global VM, so the values a
-//! request carries are copied there. These operators work without a
-//! graphics backend, so page setup can be tested in a scripting-only VM.
+//! rejected — though a recognised key given a value of the wrong type is
+//! `typecheck` (PLRM3 §6.2 gives each its type). The page-device
+//! dictionary lives in global VM, so the values a request carries are
+//! copied there. These operators work without a graphics backend, so
+//! page setup can be tested in a scripting-only VM.
 
 use crate::error::VmError;
 use crate::graphics::Bounds;
@@ -24,6 +26,51 @@ op_table! { OPS {
 const MAX_VALUE_DEPTH: usize = 32;
 
 const DEFAULT_PAGE_SIZE: (i32, i32) = (612, 792);
+
+/// What a recognised key's value may be.
+#[derive(Clone, Copy)]
+enum Accepted {
+    Dict,
+    Bool,
+    Int,
+    ArrayOrNull,
+}
+
+/// The recognised keys other than `PageSize`, which has its own check.
+const TYPED_KEYS: [(&str, Accepted); 11] = [
+    ("InputAttributes", Accepted::Dict),
+    ("OutputAttributes", Accepted::Dict),
+    ("Policies", Accepted::Dict),
+    ("Duplex", Accepted::Bool),
+    ("Collate", Accepted::Bool),
+    ("Tumble", Accepted::Bool),
+    ("NumCopies", Accepted::Int),
+    ("Orientation", Accepted::Int),
+    ("ImagingBBox", Accepted::ArrayOrNull),
+    ("HWResolution", Accepted::ArrayOrNull),
+    ("PageOffset", Accepted::ArrayOrNull),
+];
+
+/// `typecheck` when `key` is recognised and `value` is not of a type it
+/// accepts; an unrecognised key accepts anything.
+fn check_type(i: &Interp, key: Object, value: Object) -> Result<(), VmError> {
+    let Some(atom) = key.as_name() else {
+        return Ok(());
+    };
+    let name = i.mem.name_text(atom);
+    let Some((_, accepted)) = TYPED_KEYS.iter().find(|(k, _)| k.as_bytes() == name) else {
+        return Ok(());
+    };
+    let ok = match accepted {
+        Accepted::Dict => value.ty() == Type::Dict,
+        Accepted::Bool => value.ty() == Type::Boolean,
+        Accepted::Int => value.ty() == Type::Integer,
+        Accepted::ArrayOrNull => {
+            matches!(value.ty(), Type::Array | Type::PackedArray | Type::Null)
+        }
+    };
+    if ok { Ok(()) } else { Err(VmError::TypeCheck) }
+}
 
 /// Gives the fresh page-device dictionary its default page size and makes
 /// it read-only; later requests merge through the raw storage.
@@ -120,6 +167,9 @@ fn setpagedevice(i: &mut Interp) -> Result<(), VmError> {
     let dict = i.page_device();
     let page_size_key = i.intern("PageSize");
     let mut media_box = None;
+    for (key, value) in &entries {
+        check_type(i, *key, *value)?;
+    }
     for (key, value) in entries {
         let key = globalize(i, key)?;
         let value = globalize(i, value)?;

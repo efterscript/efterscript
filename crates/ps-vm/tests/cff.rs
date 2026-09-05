@@ -343,8 +343,8 @@ fn the_procset_and_fontset_categories_answer_the_resource_operators() {
     let stack = run.interp.ostack();
     assert_eq!(
         stack[0].as_i32(),
-        Some(2),
-        "built-in procedure sets are resident"
+        Some(1),
+        "the FontSet prologue loaded the built-in procedure set"
     );
     assert_eq!(stack[1].as_i32(), Some(0));
     assert_eq!(stack[2].as_bool(), Some(true));

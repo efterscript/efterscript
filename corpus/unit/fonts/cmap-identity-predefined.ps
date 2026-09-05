@@ -3,14 +3,14 @@
 % SPDX-License-Identifier: MIT
 % expect-output: 0
 % expect-output: 1
-% expect-output: 2
-% expect-output: 2
+% expect-output: 1
+% expect-output: 1
 % Scenario: Identity is predefined. The Identity-H and Identity-V CMaps
-% are resources held outside VM (status 2) and loaded on first use by
-% running the shipped CMap program through the CIDInit operators; their
-% writing modes are 0 and 1, and Identity-V chains to Identity-H through
-% usecmap.
-% Expect: 0, 1, 2, 2.
+% are resources held outside VM and loaded on first use by running the
+% shipped CMap program through the CIDInit operators; their writing
+% modes are 0 and 1, Identity-V chains to Identity-H through usecmap,
+% and once loaded each reports status 1.
+% Expect: 0, 1, 1, 1.
 /Identity-H /CMap findresource /WMode get =
 /Identity-V /CMap findresource /WMode get =
 /Identity-H /CMap resourcestatus pop pop =

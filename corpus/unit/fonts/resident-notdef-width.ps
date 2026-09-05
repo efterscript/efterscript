@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 5.0
+% expect-output: 0.0
+% divergence: resident-inventory
+% Scenario: a missing glyph advances by notdef. Palatino-Roman
+% re-encoded with code 65 as a name the face lacks advances by the
+% face's .notdef width, 500 from its metric table; at size 10 the
+% stringwidth of that code is 5.
+% Expect: 5.0 and 0.0.
+/r { 1000 mul round 1000 div } def
+/P2 /Palatino-Roman findfont dup length dict copy
+  dup /Encoding StandardEncoding dup length array copy
+  dup 65 /nosuchglyph put put definefont pop
+/P2 findfont 10 scalefont setfont
+(A) stringwidth r exch r = =

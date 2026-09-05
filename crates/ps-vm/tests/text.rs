@@ -154,7 +154,10 @@ fn symbol_measures_with_its_own_encoding_and_unknown_glyphs_are_notdef() {
     assert_eq!(run.outcome, Outcome::Ok);
     let stack = run.interp.ostack();
     assert!(approx(stack[0].as_number().unwrap(), 6.31));
-    assert_eq!(stack[1].as_number(), Some(0.0));
+    // An unencoded code selects `.notdef`, whose width the Core 14
+    // metrics lack: the outline asset's stands in when embedded.
+    let notdef = ps_fonts::ResidentFace::Helvetica.notdef_width() / 100.0;
+    assert!(approx(stack[1].as_number().unwrap(), notdef), "{stack:?}");
     let atom = stack[2].as_name().expect("name");
     assert_eq!(run.interp.memory().name_text(atom), b"a60");
 }
@@ -691,4 +694,36 @@ fn resourceforall_writes_names_into_the_scratch_string() {
     assert_eq!(run.error(), Some("invalidaccess"));
     let run = exec("(*) { exit } 32 string /Font resourceforall 7");
     assert_eq!(run.top_numbers(1), [7.0]);
+}
+
+#[test]
+fn built_in_resources_report_loaded_once_materialised() {
+    let run = exec(
+        "/Helvetica /Font resourcestatus pop pop \
+         /Helvetica findfont pop /Helvetica /Font resourcestatus pop pop \
+         /Palatino-Roman /Font resourcestatus pop pop \
+         /BookAntiqua findfont pop /Palatino-Roman /Font resourcestatus pop pop \
+         /Courier /Font resourcestatus pop pop \
+         /FontSetInit /ProcSet resourcestatus pop pop \
+         /FontSetInit /ProcSet findresource pop /FontSetInit /ProcSet resourcestatus pop pop \
+         /CIDInit /ProcSet resourcestatus pop pop \
+         /Identity-H /CMap resourcestatus pop pop \
+         /C /Identity-H [ /Helvetica findfont ] composefont pop \
+         /Identity-H /CMap resourcestatus pop pop \
+         /Identity-V /CMap resourcestatus pop pop \
+         save /Times-Roman findfont pop restore /Times-Roman /Font resourcestatus pop pop \
+         /StandardEncoding /Encoding resourcestatus pop pop",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let statuses: Vec<i32> = run
+        .interp
+        .ostack()
+        .iter()
+        .map(|o| o.as_i32().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        [2, 1, 2, 1, 2, 2, 1, 2, 2, 1, 2, 1, 0],
+        "before and after loading; an alias loads its face; restore keeps the status; encodings are always in VM"
+    );
 }

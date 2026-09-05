@@ -7,10 +7,18 @@
 //!
 //! Per corpus file: EfterScript's PDF and the converter's are rendered
 //! by the profile's rasteriser and compared page by page (count, media
-//! box, pixels, and text when the profile extracts it); separately, the
-//! program's standard output is compared with the reference
-//! interpreter's after normalisation and reported as `output: same`,
-//! `differs`, or `unavailable`. A file carrying `% divergence: <slug>`
+//! box, pixels, and text when the profile extracts it — except that a
+//! page whose fonts in EfterScript's document lack a `ToUnicode` map
+//! makes the text not comparable, which is noted and never counted);
+//! separately, the program's standard output is compared with the
+//! reference interpreter's after normalisation and reported as
+//! `output: same`, `differs`, or `unavailable`. When the profile gives
+//! an `error_marker`, the reference's output is cut at the marker's
+//! first occurrence and the reference is recorded as having ended in
+//! error; on a file declaring `% expect-error:` that record, not the
+//! converter's exit status, is what counts as agreement. The reference
+//! interpreter runs before the converter, so its output is at hand for
+//! that decision. A file carrying `% divergence: <slug>`
 //! is reported as `expected-divergence` instead of `fail` and as
 //! `divergence-closed` when nothing differs any more; every slug must
 //! name a requirement in the expected-divergences registry, or the run
@@ -19,7 +27,7 @@
 //! or compared for it. The exit status is non-zero only for `fail`.
 //! Everything the commands produce stays under `target/oracle/<path>/`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
@@ -184,8 +192,24 @@ enum Exit {
     TimedOut,
 }
 
+/// Kills `child` and, on Unix, every process in the group it leads:
+/// the shell's own children — the converter, a pipeline — would
+/// otherwise outlive it.
+fn kill_all(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Runs `command` through the shell in `dir`, its streams captured to
-/// files, killing it once `deadline` passes.
+/// files, killing it and everything it started once `deadline` passes.
 fn run_command(
     command: &str,
     dir: &Path,
@@ -197,13 +221,22 @@ fn run_command(
         File::create(stdout).map_err(|e| format!("cannot create {}: {e}", stdout.display()))?;
     let err =
         File::create(stderr).map_err(|e| format!("cannot create {}: {e}", stderr.display()))?;
-    let mut child = Command::new("sh")
+    let mut shell = Command::new("sh");
+    shell
         .arg("-c")
         .arg(command)
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(out)
-        .stderr(err)
+        .stderr(err);
+    // The shell leads a process group of its own, so a timeout can take
+    // its children with it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        shell.process_group(0);
+    }
+    let mut child = shell
         .spawn()
         .map_err(|e| format!("cannot run `{command}`: {e}"))?;
     loop {
@@ -211,8 +244,7 @@ fn run_command(
             return Ok(Exit::Status(status));
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_all(&mut child);
             return Ok(Exit::TimedOut);
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -227,6 +259,112 @@ fn document(pages: &[Page]) -> Result<Vec<u8>, String> {
         sink.page(page.clone());
     }
     sink.finish().map_err(|e| e.to_string())
+}
+
+/// The objects of an uncompressed document by number: the bytes
+/// between a line `N G obj` and the next line `endobj`. A byte scan
+/// that relies on the layout our writer produces — one object per
+/// `obj`/`endobj` pair on lines of their own, no object streams — so
+/// it reads only the documents this harness writes.
+fn objects(pdf: &[u8]) -> HashMap<u32, &[u8]> {
+    let mut found = HashMap::new();
+    let mut current: Option<(u32, usize)> = None;
+    let mut at = 0;
+    for line in pdf.split(|&b| b == b'\n') {
+        let start = at;
+        at += line.len() + 1;
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line == b"endobj" {
+            if let Some((number, body)) = current.take() {
+                found.insert(number, &pdf[body..start]);
+            }
+            continue;
+        }
+        if current.is_some() {
+            continue;
+        }
+        let mut words = line.split(|&b| b == b' ');
+        let number = words
+            .next()
+            .and_then(|w| std::str::from_utf8(w).ok())
+            .and_then(|w| w.parse::<u32>().ok());
+        let generation = words
+            .next()
+            .is_some_and(|w| w.iter().all(u8::is_ascii_digit) && !w.is_empty());
+        if let (Some(number), true, Some(b"obj"), None) =
+            (number, generation, words.next(), words.next())
+        {
+            current = Some((number, at));
+        }
+    }
+    found
+}
+
+/// The position after `needle` in `haystack`, from `from`.
+fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| from + p + needle.len())
+}
+
+/// The fonts named by a page object's `/Font << /F0 2 0 R … >>`:
+/// resource name and object number.
+fn page_fonts(page: &[u8]) -> Vec<(String, u32)> {
+    let Some(start) = find(page, b"/Font <<", 0) else {
+        return Vec::new();
+    };
+    let end = find(page, b">>", start).map_or(page.len(), |e| e - 2);
+    let text = String::from_utf8_lossy(&page[start..end]);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    words
+        .windows(4)
+        .filter(|w| w[0].starts_with('/') && w[3] == "R")
+        .filter_map(|w| Some((w[0][1..].to_string(), w[1].parse::<u32>().ok()?)))
+        .collect()
+}
+
+/// Whether the object is a page (not the page tree) dictionary.
+fn is_page(body: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(after) = find(body, b"/Type /Page", from) {
+        if !body.get(after).is_some_and(u8::is_ascii_alphabetic) {
+            return true;
+        }
+        from = after;
+    }
+    false
+}
+
+/// The pages, numbered from 1 in the document's order, whose font
+/// resources include one without a `ToUnicode` entry, with those
+/// fonts' resource names; a font whose object cannot be found counts
+/// as lacking one. Empty for a document without such a page.
+pub fn pages_without_unicode(pdf: &[u8]) -> Vec<(usize, Vec<String>)> {
+    let objects = objects(pdf);
+    let mut pages: Vec<(u32, &[u8])> = objects
+        .iter()
+        .filter(|(_, body)| is_page(body))
+        .map(|(&number, &body)| (number, body))
+        .collect();
+    // Document order: where each object lies in the file.
+    pages.sort_by_key(|(_, body)| body.as_ptr() as usize);
+    let mut found = Vec::new();
+    for (index, (_, page)) in pages.iter().enumerate() {
+        let unmapped: Vec<String> = page_fonts(page)
+            .into_iter()
+            .filter(|(_, number)| {
+                !objects
+                    .get(number)
+                    .is_some_and(|font| find(font, b"/ToUnicode", 0).is_some())
+            })
+            .map(|(name, _)| name)
+            .collect();
+        if !unmapped.is_empty() {
+            found.push((index + 1, unmapped));
+        }
+    }
+    found
 }
 
 /// The page files `<side>-1.pnm`, `<side>-2.pnm`, … up to the first
@@ -371,21 +509,35 @@ fn blank(image: &pnm::Image) -> bool {
     image.data.iter().all(|&byte| byte == 255)
 }
 
+/// How a file is expected to end: the error it declares, if any, and
+/// whether the reference interpreter's output showed the profile's
+/// error marker (`None` for a profile without one).
+#[derive(Clone, Copy)]
+struct Ending<'a> {
+    declared: Option<&'a str>,
+    reference_error: Option<bool>,
+}
+
 /// The document comparison: mismatches go into `report.reasons`; an
-/// error is anything that stopped the comparison itself. `declared` is
-/// the error the file expects to end with, when it declares one.
+/// error is anything that stopped the comparison itself.
 fn compare_documents(
     settings: &Settings<'_>,
     path: &Path,
     dir: &Path,
     actual: &Actual,
-    declared: Option<&str>,
+    ending: Ending<'_>,
     report: &mut FileReport,
     deadline: Instant,
 ) -> Result<(), String> {
     let profile = settings.profile;
+    let Ending {
+        declared,
+        reference_error,
+    } = ending;
     let ours_pdf = dir.join("ours.pdf");
-    std::fs::write(&ours_pdf, document(&actual.pages)?)
+    let ours_document = document(&actual.pages)?;
+    let unmapped = pages_without_unicode(&ours_document);
+    std::fs::write(&ours_pdf, ours_document)
         .map_err(|e| format!("cannot write {}: {e}", ours_pdf.display()))?;
     let theirs_pdf = dir.join("theirs.pdf");
     let command = profile::fill(&profile.ps2pdf, path, Some(&theirs_pdf), profile.dpi);
@@ -397,26 +549,32 @@ fn compare_documents(
         deadline,
     )? {
         Exit::TimedOut => return Err("reference converter timed out".to_string()),
-        Exit::Status(status) if !status.success() => match declared {
+        Exit::Status(status) if !status.success() => match (declared, reference_error) {
             // The file ends in an error on both sides; the document
             // written up to it is still compared.
-            Some(error) => report.notes.push(format!(
+            (Some(error), None) => report.notes.push(format!(
                 "reference converter ended abnormally ({status}), as the file declares {error}"
             )),
-            None => {
+            (Some(error), Some(ended)) => {
+                report
+                    .notes
+                    .push(format!("reference converter ended abnormally ({status})"));
+                declared_error(error, ended, report);
+            }
+            (None, _) => {
                 report
                     .reasons
                     .push(format!("reference converter failed ({status})"));
                 return Ok(());
             }
         },
-        Exit::Status(_) => {
-            if let Some(error) = declared {
-                report.reasons.push(format!(
-                    "reference converter ended normally where the file declares {error}"
-                ));
-            }
-        }
+        Exit::Status(_) => match (declared, reference_error) {
+            (Some(error), None) => report.reasons.push(format!(
+                "reference converter ended normally where the file declares {error}"
+            )),
+            (Some(error), Some(ended)) => declared_error(error, ended, report),
+            (None, _) => {}
+        },
     }
     if !theirs_pdf.is_file() {
         report
@@ -520,24 +678,62 @@ fn compare_documents(
         } else {
             extract_text(settings, dir, "ours", &ours_pdf, deadline)?
         };
-        if normalise_text(&ours_text) != normalise_text(&theirs_text) {
-            report
-                .reasons
-                .push("text differs (ours.txt against theirs.txt)".to_string());
+        if unmapped.is_empty() {
+            if normalise_text(&ours_text) != normalise_text(&theirs_text) {
+                report
+                    .reasons
+                    .push("text differs (ours.txt against theirs.txt)".to_string());
+            }
+        } else {
+            for (page, fonts) in &unmapped {
+                report.notes.push(format!(
+                    "text not comparable: page {page} font{} {} of ours carries no Unicode mapping",
+                    if fonts.len() == 1 { "" } else { "s" },
+                    fonts
+                        .iter()
+                        .map(|f| format!("/{f}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
         }
     }
     Ok(())
 }
 
-/// Whether the reference interpreter's standard output equals ours after
-/// normalisation; an error when it could not be obtained.
+/// What the error marker decided for a file declaring `error`: the
+/// reference ending in error is agreement, its ending normally is not.
+fn declared_error(error: &str, ended: bool, report: &mut FileReport) {
+    if ended {
+        report.notes.push(format!(
+            "reference interpreter ended in error, as the file declares {error}"
+        ));
+    } else {
+        report.reasons.push(format!(
+            "reference interpreter ended normally where the file declares {error}"
+        ));
+    }
+}
+
+/// What running the file through the reference interpreter gave.
+struct ReferenceOutput {
+    /// Whether its standard output equals ours after normalisation.
+    same: bool,
+    /// Whether the profile's error marker appeared in it: `None` for a
+    /// profile without one.
+    ended_in_error: Option<bool>,
+}
+
+/// Runs the file through the reference interpreter and compares its
+/// standard output with ours, cut at the profile's error marker when
+/// there is one; an error when it could not be obtained.
 fn compare_output(
     settings: &Settings<'_>,
     path: &Path,
     dir: &Path,
     actual: &Actual,
     deadline: Instant,
-) -> Result<bool, String> {
+) -> Result<ReferenceOutput, String> {
     let ours = dir.join("ours.stdout");
     std::fs::write(&ours, &actual.output)
         .map_err(|e| format!("cannot write {}: {e}", ours.display()))?;
@@ -548,7 +744,23 @@ fn compare_output(
         return Err("reference interpreter timed out".to_string());
     }
     let theirs = std::fs::read(&theirs).map_err(|e| format!("{}: {e}", theirs.display()))?;
-    Ok(normalise_output(&actual.output) == normalise_output(&String::from_utf8_lossy(&theirs)))
+    let mut theirs = String::from_utf8_lossy(&theirs).into_owned();
+    let ended_in_error =
+        settings
+            .profile
+            .error_marker
+            .as_deref()
+            .map(|marker| match theirs.find(marker) {
+                Some(at) => {
+                    theirs.truncate(at);
+                    true
+                }
+                None => false,
+            });
+    Ok(ReferenceOutput {
+        same: normalise_output(&actual.output) == normalise_output(&theirs),
+        ended_in_error,
+    })
 }
 
 /// A file's path relative to the workspace; `external/<name>` for one
@@ -612,25 +824,41 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
     }
     let deadline = Instant::now() + Duration::from_millis(settings.profile.timeout_ms);
     let mut error = false;
+    let mut reference_error = None;
+    match compare_output(settings, path, &dir, &actual, deadline) {
+        Ok(reference) => {
+            report.output = if reference.same {
+                Output::Same
+            } else {
+                Output::Differs
+            };
+            reference_error = reference.ended_in_error;
+            if reference.ended_in_error == Some(true) {
+                report.notes.push(
+                    "reference interpreter ended in error; its output is compared up to the marker"
+                        .to_string(),
+                );
+            }
+        }
+        Err(e) => {
+            error = true;
+            report.reasons.push(e);
+        }
+    }
     if let Err(e) = compare_documents(
         settings,
         path,
         &dir,
         &actual,
-        expected.error.as_deref(),
+        Ending {
+            declared: expected.error.as_deref(),
+            reference_error,
+        },
         &mut report,
         deadline,
     ) {
         error = true;
         report.reasons.push(e);
-    }
-    match compare_output(settings, path, &dir, &actual, deadline) {
-        Ok(true) => report.output = Output::Same,
-        Ok(false) => report.output = Output::Differs,
-        Err(e) => {
-            error = true;
-            report.reasons.push(e);
-        }
     }
     let matched = report.reasons.is_empty();
     report.verdict = match (error, report.divergence.is_some()) {
@@ -1028,13 +1256,14 @@ mod tests {
 
     /// A converter that copies our own document and appends the
     /// `mark` lines of the control file, refuses when the control says
-    /// `reject`, stalls when it says `hang`, and ends abnormally after
-    /// writing when it says `fail-after`.
+    /// `reject`, stalls when it says `hang` (leaving its `sleep` child's
+    /// pid in `orphan.pid`), and ends abnormally after writing when it
+    /// says `fail-after`.
     const PS2PDF: &str = "#!/bin/sh
 export LC_ALL=C
 ctl=\"$(dirname \"$0\")/control\"
 if grep -q '^reject' \"$ctl\"; then echo refused >&2; exit 3; fi
-if grep -q '^hang' \"$ctl\"; then sleep 5; fi
+if grep -q '^hang' \"$ctl\"; then sleep 30 & echo $! > \"$(dirname \"$0\")/orphan.pid\"; wait; fi
 cp \"$(dirname \"$2\")/ours.pdf\" \"$2\" || exit 1
 sed -n 's/^mark //p' \"$ctl\" >> \"$2\"
 if grep -q '^fail-after' \"$ctl\"; then echo failed >&2; exit 3; fi
@@ -1097,6 +1326,11 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
 
     impl Fixture {
         fn new(limit: f64, timeout_ms: u64, text: bool) -> Self {
+            Self::build(limit, timeout_ms, text, "")
+        }
+
+        /// A fixture whose profile also carries `extra` lines.
+        fn build(limit: f64, timeout_ms: u64, text: bool, extra: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
                 "efterscript-oracle-{}-{}",
                 std::process::id(),
@@ -1112,7 +1346,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 text_line = format!("text = \"sh {} {{in}}\"\n", script("text.sh", TEXT));
             }
             let profile_text = format!(
-                "name = \"fake\"\nversion = \"0\"\nps2pdf = \"sh {} {{in}} {{out}}\"\nrender = \"sh {} {{in}} {{out}} {{dpi}}\"\nrun = \"sh {} {{in}}\"\n{text_line}limit = {limit}\ntimeout_ms = {timeout_ms}\n",
+                "name = \"fake\"\nversion = \"0\"\nps2pdf = \"sh {} {{in}} {{out}}\"\nrender = \"sh {} {{in}} {{out}} {{dpi}}\"\nrun = \"sh {} {{in}}\"\n{text_line}limit = {limit}\ntimeout_ms = {timeout_ms}\n{extra}",
                 script("ps2pdf.sh", PS2PDF),
                 script("render.sh", RENDER),
                 script("run.sh", RUN)
@@ -1486,7 +1720,177 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert!(started.elapsed() < Duration::from_secs(4));
         assert_eq!(report.verdict, Verdict::Fail);
         assert_eq!(report.reasons[0], "reference converter timed out");
-        assert_eq!(report.output, Output::Unavailable);
+        // The reference interpreter runs first, within the same deadline.
+        assert_eq!(report.output, Output::Same);
+        // The converter the shell started went down with it.
+        let pid = std::fs::read_to_string(fixture.dir.join("orphan.pid")).unwrap();
+        let pid = pid.trim();
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", pid])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let until = Instant::now() + Duration::from_secs(3);
+        while alive() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(), "the converter's child {pid} outlived the timeout");
+    }
+
+    /// A Type 3 font whose glyph names the glyph list lacks, so the
+    /// document carries no ToUnicode for it.
+    const UNMAPPED: &str = "%!PS\n/G << /FontType 3 /FontMatrix [1 0 0 1 0 0] \
+        /Encoding 256 array 0 1 255 { 1 index exch /g1 put } for \
+        /BuildGlyph { pop pop 1 0 setcharwidth 0 0 0.5 0.5 rectfill } >> definefont \
+        10 scalefont setfont 100 100 moveto (a) show showpage\n";
+
+    #[test]
+    fn pages_whose_fonts_lack_a_unicode_mapping_are_found() {
+        let none = crate::execute(DRAWING.as_bytes());
+        assert_eq!(pages_without_unicode(none.pdf.as_ref().unwrap()), []);
+        let mapped = crate::execute(
+            b"/Helvetica findfont 10 scalefont setfont 100 100 moveto (a) show showpage",
+        );
+        assert_eq!(pages_without_unicode(mapped.pdf.as_ref().unwrap()), []);
+        let unmapped = crate::execute(UNMAPPED.as_bytes());
+        assert_eq!(
+            pages_without_unicode(unmapped.pdf.as_ref().unwrap()),
+            [(1, vec!["F0".to_string()])]
+        );
+        // A second page with the unmapped font after a page without it.
+        let second = format!(
+            "/Helvetica findfont 10 scalefont setfont 100 100 moveto (a) show showpage\n{}",
+            UNMAPPED.trim_start_matches("%!PS\n")
+        );
+        let two = crate::execute(second.as_bytes());
+        assert_eq!(two.pages.len(), 2);
+        let found = pages_without_unicode(two.pdf.as_ref().unwrap());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, 2);
+        assert_eq!(found[0].1.len(), 1);
+        // The scan reads only what the writer lays out.
+        assert_eq!(pages_without_unicode(b"%PDF-1.7\n"), []);
+        assert_eq!(
+            pages_without_unicode(
+                b"1 0 obj\n<< /Type /Page /Resources << /Font << /F0 9 0 R >> >> >>\nendobj\n2 0 obj\n<< /Type /Pages >>\nendobj\n"
+            ),
+            [(1, vec!["F0".to_string()])]
+        );
+    }
+
+    #[test]
+    fn text_without_a_unicode_mapping_is_not_comparable() {
+        let fixture = Fixture::new(0.005, 20_000, true);
+        let path = fixture.program("unmapped.ps", UNMAPPED);
+        fixture.control("mark %fake-text world\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(
+            report.notes,
+            ["text not comparable: page 1 font /F0 of ours carries no Unicode mapping"]
+        );
+        let out = fixture.dir.join("out").join("external").join("unmapped.ps");
+        assert!(out.join("ours.txt").is_file());
+        // The other checks still count.
+        fixture.control("mark %fake-text world\nmark %fake-extra-pages 1\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(report.reasons, ["pages: ours 1, theirs 2"]);
+        // A mapped font on the same page keeps the comparison.
+        let mapped = fixture.program(
+            "mapped.ps",
+            "%!PS\n/Helvetica findfont 10 scalefont setfont 100 100 moveto (a) show showpage\n",
+        );
+        fixture.control("mark %fake-text world\n");
+        let report = fixture.check(&mapped);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["text differs (ours.txt against theirs.txt)"]
+        );
+        assert!(report.notes.is_empty());
+    }
+
+    #[test]
+    fn an_error_marker_cuts_the_reference_output_and_judges_declared_errors() {
+        let fixture = Fixture::build(0.005, 20_000, false, "error_marker = \"Oops: /\"\n");
+        assert_eq!(fixture.profile.error_marker.as_deref(), Some("Oops: /"));
+        let plain = fixture.program("drawing.ps", DRAWING);
+        // Everything from the marker on is left out of the comparison.
+        fixture.control("output Oops: /undefined in nosuchname\noutput Operand stack:\n");
+        let report = fixture.check(&plain);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.output, Output::Same);
+        assert_eq!(
+            report.notes,
+            ["reference interpreter ended in error; its output is compared up to the marker"]
+        );
+        fixture.control("output extra\noutput Oops: /undefined in nosuchname\n");
+        let report = fixture.check(&plain);
+        assert_eq!(report.output, Output::Differs);
+        fixture.control("");
+        let report = fixture.check(&plain);
+        assert_eq!(report.output, Output::Same);
+        assert!(report.notes.is_empty());
+
+        // On a declared-error file the marker, not the converter's exit
+        // status, is the agreement.
+        let declared = fixture.program(
+            "erring.ps",
+            "%!PS\n% expect-error: undefined\n0 0 10 10 rectfill showpage nosuchname\n",
+        );
+        fixture.control("output Oops: /undefined in nosuchname\n");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.output, Output::Same);
+        assert_eq!(
+            report.notes,
+            [
+                "reference interpreter ended in error; its output is compared up to the marker",
+                "reference interpreter ended in error, as the file declares undefined"
+            ]
+        );
+        fixture.control("fail-after\noutput Oops: /undefined in nosuchname\n");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.pages_theirs, Some(1));
+        assert_eq!(
+            report.notes,
+            [
+                "reference interpreter ended in error; its output is compared up to the marker",
+                "reference converter ended abnormally (exit status: 3)",
+                "reference interpreter ended in error, as the file declares undefined"
+            ]
+        );
+        fixture.control("fail-after\n");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["reference interpreter ended normally where the file declares undefined"]
+        );
+        assert_eq!(
+            report.notes,
+            ["reference converter ended abnormally (exit status: 3)"]
+        );
+        fixture.control("");
+        let report = fixture.check(&declared);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["reference interpreter ended normally where the file declares undefined"]
+        );
+        // An undeclared file still fails on the converter's exit status.
+        fixture.control("fail-after\noutput Oops: /x in y\n");
+        let report = fixture.check(&plain);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert_eq!(
+            report.reasons,
+            ["reference converter failed (exit status: 3)"]
+        );
     }
 
     #[test]
@@ -1653,11 +2057,13 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("job-server-save-level", 1),
                 ("malformed-font-invalidfont", 2),
                 ("pagedevice-records-unknown-keys", 1),
+                ("procedure-nesting-limit", 1),
                 ("radix-without-digits", 1),
-                ("resident-inventory", 7),
+                ("resident-inventory", 9),
                 ("resident-metrics-only", 1),
                 ("resource-size-unknown", 5),
                 ("unspecified-forall-order", 1),
+                ("vertical-default-metrics", 1),
             ]
         );
         for name in [

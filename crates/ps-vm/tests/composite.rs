@@ -170,7 +170,7 @@ fn identity_cmaps_are_predefined_and_loaded_on_first_use() {
     assert_eq!(stack[6].as_bool(), Some(true), "the CodeMap id");
     assert_eq!(stack[7].as_i32(), Some(1));
     assert_eq!(stack[8].as_i32(), Some(1), "Identity-V is vertical");
-    assert_eq!(stack[9].as_i32(), Some(2), "still predefined after loading");
+    assert_eq!(stack[9].as_i32(), Some(1), "loaded after findresource");
     assert_eq!(
         stack[12].as_i32(),
         Some(0),

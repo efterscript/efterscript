@@ -207,6 +207,17 @@ impl ResidentOutlines {
         self.cache.borrow_mut().insert(name.to_vec(), glyph.clone());
         Ok(glyph)
     }
+
+    /// The advance of the asset's `.notdef` glyph in thousandths of the
+    /// em: glyph 0 of a TrueType asset, the charstring of that name in
+    /// a Type 1 one; `None` when the asset has neither.
+    pub fn notdef_advance(&self) -> Option<f32> {
+        let advance = match &*self.program {
+            Program::TrueType(program) => program.glyph_by_index(0).ok()?.advance.0,
+            program => program.glyph(b".notdef").ok()??.advance.0,
+        };
+        Some(advance * self.scale)
+    }
 }
 
 thread_local! {
@@ -244,6 +255,18 @@ impl ResidentFace {
             .and_then(|n| self.width(n))
             .map_or(0.0, f32::from);
         outlines.glyph(name, advance)
+    }
+
+    /// The advance of a code whose encoding name the face lacks, in
+    /// thousandths of the em: the metrics' `.notdef` width, else the
+    /// outline asset's `.notdef` advance, else 0.
+    pub fn notdef_width(self) -> f32 {
+        if let Some(width) = self.width(".notdef") {
+            return f32::from(width);
+        }
+        self.outlines()
+            .and_then(|outlines| outlines.notdef_advance())
+            .unwrap_or(0.0)
     }
 }
 
@@ -283,6 +306,29 @@ mod tests {
         assert_eq!(ResidentFace::Symbol.outline(b"alpha").unwrap(), None);
     }
 
+    #[test]
+    fn notdef_widths_come_from_the_table_then_the_asset_then_nothing() {
+        assert_eq!(ResidentFace::PalatinoRoman.notdef_width(), 500.0);
+        assert_eq!(ResidentFace::BookmanLight.notdef_width(), 280.0);
+        assert_eq!(ResidentFace::Symbol.notdef_width(), 0.0);
+        assert_eq!(ResidentFace::ZapfDingbats.notdef_width(), 0.0);
+        for face in [
+            ResidentFace::Helvetica,
+            ResidentFace::TimesRoman,
+            ResidentFace::Courier,
+        ] {
+            assert_eq!(face.width(".notdef"), None);
+            let width = face.notdef_width();
+            if crate::has_resident_outlines() {
+                let asset = face.outlines().unwrap().notdef_advance().unwrap();
+                assert_eq!(width, asset);
+                assert!(width > 590.0 && width < 780.0, "{width}");
+            } else {
+                assert_eq!(width, 0.0);
+            }
+        }
+    }
+
     #[cfg(feature = "resident-outlines")]
     #[test]
     fn a_synthesised_asset_scales_and_falls_back_through_unicode() {
@@ -319,6 +365,9 @@ mod tests {
         assert_eq!(outlines.glyph(b"nosuchglyph", 0.0).unwrap(), None);
         assert_eq!(outlines.glyph(b"f_i", 0.0).unwrap(), None);
         assert!(Rc::ptr_eq(&outlines.glyph(b"A", 1.0).unwrap().unwrap(), &a));
+        // Glyph 0's advance, in thousandths of the 2048-unit em.
+        let notdef = outlines.notdef_advance().unwrap();
+        assert!((0.0..=1000.0).contains(&notdef), "{notdef}");
 
         let t1 = Type1Font::new("SynOne").glyph("a", 600, &rectangle(50.0, 0.0, 550.0, 500.0));
         let outlines = ResidentOutlines::parse(OutlineAsset::TexGyre("syn"), &t1.pfb()).unwrap();
@@ -328,6 +377,10 @@ mod tests {
         assert_eq!(a.advance, (500.0, 0.0));
         assert_eq!(a.outline.control_box(), Some([50.0, 0.0, 550.0, 500.0]));
         assert_eq!(outlines.glyph(b"b", 0.0).unwrap(), None);
+        assert_eq!(
+            outlines.notdef_advance().is_some(),
+            outlines.program().has_glyph(b".notdef")
+        );
     }
 
     #[cfg(feature = "resident-outlines")]
@@ -357,6 +410,17 @@ mod tests {
         assert_eq!(
             ResidentFace::TimesRoman.outline(b"nosuchglyph").unwrap(),
             None
+        );
+        // The Liberation and TeX Gyre `.notdef` advances, scaled to the
+        // 1000-unit space.
+        let serif = ResidentFace::TimesRoman.outlines().unwrap();
+        assert!((serif.notdef_advance().unwrap() - 777.832).abs() < 0.01);
+        assert_eq!(
+            ResidentFace::PalatinoRoman
+                .outlines()
+                .unwrap()
+                .notdef_advance(),
+            Some(500.0)
         );
     }
 }
