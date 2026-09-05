@@ -3,6 +3,7 @@
 % SPDX-License-Identifier: MIT
 % expect-output: true
 % expect-output: [612 792]
+% divergence: pagedevice-records-unknown-keys
 % Scenario: unknown page-device keys are accepted and recorded.
 % Expect: no error; TraySwitch reads back true; PageSize reads back.
 << /PageSize [612 792] /TraySwitch true >> setpagedevice

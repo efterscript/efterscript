@@ -2,6 +2,7 @@
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
 % expect-error: execstackoverflow
+% oracle: skip no execution-stack limit reached by the reference within the timeout
 % Scenario: a procedure that calls itself without bound exhausts the
 % execution stack; the interpreter reports the error and does not crash.
 % Expect: the job ends with execstackoverflow.

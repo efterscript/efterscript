@@ -13,6 +13,7 @@
 % expect-output: true
 % expect-output: true
 % expect-output: true
+% divergence: radix-without-digits
 % Scenario: tokens that only start like numbers are executable names.
 % Expect: prints "nametype" six times; every token is executable.
 { 123abc - . 1e 16# 37#1 } { type == } forall

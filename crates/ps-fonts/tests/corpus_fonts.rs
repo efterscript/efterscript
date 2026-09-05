@@ -127,6 +127,7 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         header(
             &[],
             "% expect-error: invalidfont\n\
+             % divergence: malformed-font-invalidfont\n\
              % Scenario: a malformed charstring. Glyph b ends after a number,\n\
              % with no operator to consume it; show raises invalidfont when it\n\
              % needs the glyph.\n\
@@ -350,6 +351,7 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
     let mut short_data = font_set_header(
         &[],
         "% expect-error: invalidfont\n\
+         % divergence: malformed-font-invalidfont\n\
          % Scenario: short data. StartData declares more bytes than the file\n\
          % holds after it, so the read ends early and the error is\n\
          % invalidfont, with nothing defined.\n\
@@ -371,7 +373,8 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         "{}{}/Syn-H /CMap resourcestatus = = =\n",
         header(
             &["true", "0", "0"],
-            "% Scenario: an embedded CMap. The CMap program Syn-H, written in the\n\
+            "% divergence: resource-size-unknown\n\
+             % Scenario: an embedded CMap. The CMap program Syn-H, written in the\n\
              % CIDInit operators, maps one-byte codes <20>-<7E> to CIDs from 1 and\n\
              % two-byte codes <8140>-<817E> to CIDs from 200, and defines itself\n\
              % as a CMap resource; resourcestatus finds it with status 0.\n\
@@ -383,7 +386,8 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
     let cid_set = corpus_cid_cff().font_set("SynCIDSet");
     let mut cidfont_fontset = font_set_header(
         &["true", "0", "0", "201"],
-        "% Scenario: a CID-keyed CFF from a FontSet. SynCIDSet holds the\n\
+        "% divergence: resource-size-unknown\n\
+         % Scenario: a CID-keyed CFF from a FontSet. SynCIDSet holds the\n\
          % CID-keyed CFF SynCID, whose CIDs 1 and 2 lie in different font\n\
          % dictionaries; StartData defines it as a CIDFontType 0 resource of\n\
          % the CIDFont category with the program's CIDCount, 201.\n\
@@ -421,7 +425,8 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
     let mut cidfont_type1 = header_with(
         "%!PS-Adobe-3.0 Resource-CIDFont",
         &["true", "0", "0", "5.0", "0.0", "7.0", "0.0", "3.0", "0.0"],
-        "% Scenario: a Type 1 charstring CIDFont. SynCIDT1 is in the CIDInit\n\
+        "% divergence: resource-size-unknown\n\
+         % Scenario: a Type 1 charstring CIDFont. SynCIDT1 is in the CIDInit\n\
          % StartData form: two font dictionaries in FDArray, each with its own\n\
          % lenIV and subroutines, and the CIDMap and charstrings in the\n\
          % binary GlyphData that follows StartData. CID 1 (dictionary 0)\n\

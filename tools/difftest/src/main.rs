@@ -19,6 +19,10 @@
 //!   build without that feature; `resident-outlines` is the one known.
 //! - `% divergence: <slug>` — the file's behaviour is a recorded expected
 //!   divergence; `run` ignores it, `oracle` (see [`oracle`]) resolves it.
+//! - `% oracle: skip <reason>` — the file cannot be compared against a
+//!   reference (a scenario of a build without a backend, a limit the
+//!   reference never reaches); `run` ignores it, `oracle` reports the
+//!   file as skipped with the reason and runs nothing for it.
 //!
 //! Declarations are read from the leading comment block only.
 //!
@@ -62,6 +66,8 @@ pub struct Expectation {
     pub requires: Vec<String>,
     /// The expected-divergence slug the file declares.
     pub divergence: Option<String>,
+    /// Why the oracle tier is to skip the file, when it declares so.
+    pub oracle_skip: Option<String>,
 }
 
 impl Default for Expectation {
@@ -72,6 +78,7 @@ impl Default for Expectation {
             graphics: true,
             requires: Vec::new(),
             divergence: None,
+            oracle_skip: None,
         }
     }
 }
@@ -124,6 +131,7 @@ pub fn expectation(program: &str) -> Expectation {
     let mut graphics = true;
     let mut requires = Vec::new();
     let mut divergence = None;
+    let mut oracle_skip = None;
     for line in program.lines() {
         let line = line.trim_end_matches('\r');
         if line.trim().is_empty() {
@@ -142,6 +150,11 @@ pub fn expectation(program: &str) -> Expectation {
             requires.extend(rest.split_whitespace().map(str::to_string));
         } else if let Some(rest) = line.strip_prefix("% divergence:") {
             divergence = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("% oracle:")
+            && let Some(reason) = rest.trim_start().strip_prefix("skip")
+            && reason.is_empty() | reason.starts_with(char::is_whitespace)
+        {
+            oracle_skip = Some(reason.trim().to_string());
         }
     }
     let mut output = lines.join("\n");
@@ -154,6 +167,7 @@ pub fn expectation(program: &str) -> Expectation {
         graphics,
         requires,
         divergence,
+        oracle_skip,
     }
 }
 
@@ -644,6 +658,18 @@ mod tests {
             Some("font-substitution")
         );
         assert_eq!(expectation("1 =\n% divergence: late\n").divergence, None);
+        let e = expectation("%!PS\n% oracle: skip  build without a graphics backend \n1 =");
+        assert_eq!(
+            e.oracle_skip.as_deref(),
+            Some("build without a graphics backend")
+        );
+        assert_eq!(
+            expectation("% oracle: skip\n").oracle_skip.as_deref(),
+            Some("")
+        );
+        assert_eq!(expectation("% oracle: skipping\n").oracle_skip, None);
+        assert_eq!(expectation("% oracle: later\n").oracle_skip, None);
+        assert_eq!(expectation("1 =\n% oracle: skip late\n").oracle_skip, None);
     }
 
     #[test]

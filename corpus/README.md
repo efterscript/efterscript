@@ -29,7 +29,9 @@ Rules:
 Every `unit/*.ps` file declares its own expectations in its leading
 comment block (`% expect-output:`, `% expect-error:`, `% backend:`,
 `% requires:`); `difftest run` checks them against the interpreter and
-the file's goldens, and that is the whole public tier.
+the file's goldens, and that is the whole public tier. Two further
+headers speak to the oracle tier only and are ignored by `difftest run`:
+`% divergence: <slug>` and `% oracle: skip <reason>`.
 
 `difftest oracle` compares the same files against a reference converter
 described by a profile that lives outside this repository (in the vault,
@@ -42,11 +44,14 @@ Its verdicts per file:
 | `fail` | Something above differs, or the comparison could not be carried out. Only this verdict fails the run. |
 | `expected-divergence` | The file declares `% divergence: <slug>` and something differs — a reviewed decision to behave differently, recorded as a requirement named `<slug>` in the `expected-divergences` specification. |
 | `divergence-closed` | The file declares a divergence but nothing differs any more: the record may be retired. Informational. |
+| `skipped` | The file declares `% oracle: skip <reason>`: nothing is converted or compared, and the reason is reported. Reserved for scenarios that cannot be compared in principle — a build without a graphics backend, a limit the reference never reaches — never for an inconvenient mismatch, which gets a divergence slug or stays a failure. |
 
 The program's standard output is compared separately, after
 normalisation, and shown as `output: same` or `differs` beside the
 verdict. A `% divergence:` slug that names no requirement aborts the run
-before anything is compared. `difftest run` ignores the header.
+before anything is compared; the requirement may live in the living
+`expected-divergences` specification or in the delta of an open change
+that proposes it.
 
 Nothing the reference converter produces ever lives in this repository:
 its documents, renderings, and outputs stay under `target/oracle/`, and

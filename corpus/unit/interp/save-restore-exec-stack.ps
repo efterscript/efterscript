@@ -6,6 +6,7 @@
 % expect-output: 2
 % expect-output: 0
 % expect-output: true
+% divergence: job-server-save-level
 % Scenario: restore from inside a procedure created before the save is
 % fine; a loop whose body was created after the save still references it
 % from the execution stack, so restore is rejected there; vmstatus reports

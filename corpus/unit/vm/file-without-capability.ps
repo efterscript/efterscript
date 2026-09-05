@@ -2,6 +2,7 @@
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
 % expect-output: /undefinedfilename
+% divergence: file-access-policy
 % Scenario: file with no capability configured never reaches the host.
 % Expect: prints "/undefinedfilename"; no host file is opened.
 { (/etc/passwd) (r) file } stopped pop

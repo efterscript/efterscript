@@ -14,9 +14,10 @@
 //! is reported as `expected-divergence` instead of `fail` and as
 //! `divergence-closed` when nothing differs any more; every slug must
 //! name a requirement in the expected-divergences registry, or the run
-//! aborts before comparing anything. The exit status is non-zero only
-//! for `fail`. Everything the commands produce stays under
-//! `target/oracle/<path>/`.
+//! aborts before comparing anything. A file carrying `% oracle: skip
+//! <reason>` is reported as `skipped` with the reason and nothing is run
+//! or compared for it. The exit status is non-zero only for `fail`.
+//! Everything the commands produce stays under `target/oracle/<path>/`.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -33,8 +34,10 @@ use crate::profile::{self, Profile};
 use crate::{Actual, collect, execute_with_stdin, expectation, workspace_root};
 
 /// The names `% divergence:` may declare, read from the
-/// expected-divergences specification: the living spec when it exists,
-/// else the delta of every open change that adds it.
+/// expected-divergences specification: the living spec when it exists
+/// and the delta of every open change that adds to it, so a slug
+/// resolves from the moment its change is proposed until the change is
+/// archived into the living text.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Registry {
     pub sources: Vec<PathBuf>,
@@ -50,26 +53,29 @@ impl Registry {
             .collect()
     }
 
-    /// Where the registry is read from, in lookup order.
+    /// Where the registry is read from: the living specification first,
+    /// then the open changes' deltas in name order; archived changes are
+    /// not read.
     pub fn paths(root: &Path) -> Vec<PathBuf> {
         let relative = Path::new("specs")
             .join("expected-divergences")
             .join("spec.md");
+        let mut paths = Vec::new();
         let living = root.join("openspec").join(&relative);
         if living.is_file() {
-            return vec![living];
+            paths.push(living);
         }
-        let Ok(changes) = std::fs::read_dir(root.join("openspec").join("changes")) else {
-            return Vec::new();
-        };
-        let mut paths: Vec<PathBuf> = changes
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|dir| dir.file_name().is_some_and(|n| n != "archive"))
-            .map(|dir| dir.join(&relative))
-            .filter(|spec| spec.is_file())
-            .collect();
-        paths.sort();
+        if let Ok(changes) = std::fs::read_dir(root.join("openspec").join("changes")) {
+            let mut deltas: Vec<PathBuf> = changes
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|dir| dir.file_name().is_some_and(|n| n != "archive"))
+                .map(|dir| dir.join(&relative))
+                .filter(|spec| spec.is_file())
+                .collect();
+            deltas.sort();
+            paths.extend(deltas);
+        }
         paths
     }
 
@@ -101,6 +107,8 @@ pub enum Verdict {
     Fail,
     ExpectedDivergence,
     DivergenceClosed,
+    /// The file declares `% oracle: skip`; nothing was run or compared.
+    Skipped,
 }
 
 impl Verdict {
@@ -110,6 +118,7 @@ impl Verdict {
             Verdict::Fail => "fail",
             Verdict::ExpectedDivergence => "expected-divergence",
             Verdict::DivergenceClosed => "divergence-closed",
+            Verdict::Skipped => "skipped",
         }
     }
 }
@@ -138,8 +147,11 @@ pub struct FileReport {
     /// The file's path relative to the workspace, or `external/<name>`.
     pub shown: String,
     pub verdict: Verdict,
+    /// Meaningless for a skipped file, which compares nothing.
     pub output: Output,
     pub divergence: Option<String>,
+    /// The declared reason when the verdict is skipped.
+    pub skip: Option<String>,
     pub pages_ours: usize,
     /// Pages the rasteriser produced from the converter's document;
     /// none when the converter produced no document.
@@ -163,7 +175,7 @@ pub struct Settings<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Checked {
     Report(FileReport),
-    /// Not run: the build lacks the named feature.
+    /// Not run and not reported: the build lacks the named feature.
     Skipped(String),
 }
 
@@ -559,6 +571,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         verdict: Verdict::Fail,
         output: Output::Unavailable,
         divergence: None,
+        skip: None,
         pages_ours: 0,
         pages_theirs: None,
         fractions: Vec::new(),
@@ -577,15 +590,20 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         return Checked::Skipped(feature.to_string());
     }
     report.divergence = expected.divergence.clone();
-    let actual = execute_with_stdin(&bytes, expected.graphics);
-    report.pages_ours = actual.pages.len();
     let dir = settings.out_root.join(&shown);
-    let prepared = match std::fs::remove_dir_all(&dir) {
+    let cleared = match std::fs::remove_dir_all(&dir) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
+    };
+    if let Some(reason) = expected.oracle_skip {
+        report.verdict = Verdict::Skipped;
+        report.skip = Some(reason);
+        return Checked::Report(report);
     }
-    .and_then(|()| std::fs::create_dir_all(&dir));
+    let actual = execute_with_stdin(&bytes, expected.graphics);
+    report.pages_ours = actual.pages.len();
+    let prepared = cleared.and_then(|()| std::fs::create_dir_all(&dir));
     if let Err(e) = prepared {
         report
             .reasons
@@ -639,10 +657,12 @@ pub struct Summary {
 }
 
 impl Summary {
-    pub fn of(reports: &[FileReport], skipped: usize) -> Self {
+    /// `unbuilt` counts the files left out for a feature this build
+    /// lacks; they and the skipped verdicts share the `skipped` total.
+    pub fn of(reports: &[FileReport], unbuilt: usize) -> Self {
         let mut summary = Summary {
-            files: reports.len() + skipped,
-            skipped,
+            files: reports.len() + unbuilt,
+            skipped: unbuilt,
             ..Default::default()
         };
         for report in reports {
@@ -651,6 +671,10 @@ impl Summary {
                 Verdict::Fail => summary.fail += 1,
                 Verdict::ExpectedDivergence => summary.expected_divergence += 1,
                 Verdict::DivergenceClosed => summary.divergence_closed += 1,
+                Verdict::Skipped => {
+                    summary.skipped += 1;
+                    continue;
+                }
             }
             match report.output {
                 Output::Same => summary.output_same += 1,
@@ -683,6 +707,15 @@ pub fn run_files(settings: &Settings<'_>, files: &[PathBuf]) -> (Vec<FileReport>
     let mut skipped = 0;
     for path in files {
         match check_file(settings, path) {
+            Checked::Report(report) if report.verdict == Verdict::Skipped => {
+                println!(
+                    "{:<19} {}  skip: {}",
+                    report.verdict.name(),
+                    report.shown,
+                    report.skip.as_deref().unwrap_or_default()
+                );
+                reports.push(report);
+            }
             Checked::Report(report) => {
                 let divergence = report
                     .divergence
@@ -750,6 +783,15 @@ pub fn json_report(profile: &Profile, reports: &[FileReport], summary: &Summary)
             .divergence
             .as_deref()
             .map_or("null".to_string(), json_string);
+        let skip = report
+            .skip
+            .as_deref()
+            .map_or("null".to_string(), json_string);
+        let output = if report.verdict == Verdict::Skipped {
+            "null".to_string()
+        } else {
+            json_string(report.output.name())
+        };
         let theirs = report
             .pages_theirs
             .map_or("null".to_string(), |n| n.to_string());
@@ -757,11 +799,10 @@ pub fn json_report(profile: &Profile, reports: &[FileReport], summary: &Summary)
         let reasons: Vec<String> = report.reasons.iter().map(|r| json_string(r)).collect();
         let notes: Vec<String> = report.notes.iter().map(|n| json_string(n)).collect();
         out.push_str(&format!(
-            "{}\n    {{\"path\": {}, \"verdict\": {}, \"output\": {}, \"divergence\": {divergence}, \"pages\": {{\"ours\": {}, \"theirs\": {theirs}}}, \"fractions\": [{}], \"reasons\": [{}], \"notes\": [{}]}}",
+            "{}\n    {{\"path\": {}, \"verdict\": {}, \"output\": {output}, \"divergence\": {divergence}, \"skip\": {skip}, \"pages\": {{\"ours\": {}, \"theirs\": {theirs}}}, \"fractions\": [{}], \"reasons\": [{}], \"notes\": [{}]}}",
             if index == 0 { "" } else { "," },
             json_string(&report.shown),
             json_string(report.verdict.name()),
-            json_string(report.output.name()),
             report.pages_ours,
             fractions.join(", "),
             reasons.join(", "),
@@ -1376,6 +1417,63 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
     }
 
     #[test]
+    fn a_skipped_scenario_runs_nothing_and_is_counted() {
+        let fixture = Fixture::new(0.005, 20_000, true);
+        let path = fixture.program(
+            "skipped.ps",
+            &DRAWING.replacen(
+                "%!PS\n",
+                "%!PS\n% oracle: skip build without a graphics backend\n",
+                1,
+            ),
+        );
+        // A converter that would refuse, and a stale artefact from an
+        // earlier run: neither is seen by a skipped file.
+        fixture.control("reject\n");
+        let out = fixture.dir.join("out").join("external").join("skipped.ps");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("theirs.pdf"), "stale").unwrap();
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Skipped);
+        assert_eq!(
+            report.skip.as_deref(),
+            Some("build without a graphics backend")
+        );
+        assert!(report.reasons.is_empty());
+        assert_eq!(report.pages_ours, 0);
+        assert!(!out.exists());
+
+        let summary = Summary::of(std::slice::from_ref(&report), 1);
+        assert_eq!(
+            summary,
+            Summary {
+                files: 2,
+                skipped: 2,
+                ..Default::default()
+            }
+        );
+        assert!(summary.line().contains("0 fail, 0 expected-divergence, 0 divergence-closed, 2 skipped; output: 0 same, 0 differs, 0 unavailable"));
+        let json = json_report(&fixture.profile, &[report], &summary);
+        assert!(json.contains("\"verdict\": \"skipped\", \"output\": null, \"divergence\": null, \"skip\": \"build without a graphics backend\""));
+        assert!(json.contains("\"skipped\": 2,"));
+
+        // The skip is a header of the leading block; a divergence beside
+        // it is recorded but not judged.
+        let both = fixture.program(
+            "both.ps",
+            &DRAWING.replacen(
+                "%!PS\n",
+                "%!PS\n% divergence: font-substitution\n% oracle: skip no reference\n",
+                1,
+            ),
+        );
+        let report = fixture.check(&both);
+        assert_eq!(report.verdict, Verdict::Skipped);
+        assert_eq!(report.divergence.as_deref(), Some("font-substitution"));
+        assert_eq!(report.skip.as_deref(), Some("no reference"));
+    }
+
+    #[test]
     fn a_stalled_converter_times_out_and_fails_even_under_a_divergence() {
         let fixture = Fixture::new(0.005, 300, false);
         let path = fixture.program(
@@ -1417,7 +1515,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert!(summary.line().starts_with("2 files, 2 pass, 0 fail,"));
         let json = json_report(&fixture.profile, &reports, &summary);
         assert!(json.contains("\"name\": \"fake\""));
-        assert!(json.contains("\"path\": \"external/a.ps\", \"verdict\": \"pass\", \"output\": \"differs\", \"divergence\": null, \"pages\": {\"ours\": 1, \"theirs\": 1}, \"fractions\": [0], \"reasons\": [], \"notes\": []"));
+        assert!(json.contains("\"path\": \"external/a.ps\", \"verdict\": \"pass\", \"output\": \"differs\", \"divergence\": null, \"skip\": null, \"pages\": {\"ours\": 1, \"theirs\": 1}, \"fractions\": [0], \"reasons\": [], \"notes\": []"));
         assert!(json.contains("\"summary\": {\"files\": 2, \"pass\": 2, \"fail\": 0,"));
         assert_eq!(json_string("a\"b\\c\nd\u{1}"), "\"a\\\"b\\\\c\\nd\\u0001\"");
     }
@@ -1461,31 +1559,128 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
     }
 
     #[test]
+    fn the_registry_is_the_union_of_the_living_spec_and_open_deltas() {
+        let root = workspace_root()
+            .join("target")
+            .join("registry-tests")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&root);
+        let spec = |dir: &Path, slug: &str| {
+            let dir = dir.join("specs").join("expected-divergences");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("spec.md"),
+                format!("# expected-divergences\n\n### Requirement: {slug}\n\ntext\n"),
+            )
+            .unwrap();
+            dir.join("spec.md")
+        };
+        let openspec = root.join("openspec");
+        let living = spec(&openspec, "living");
+        let open = spec(&openspec.join("changes").join("open"), "proposed");
+        spec(
+            &openspec
+                .join("changes")
+                .join("archive")
+                .join("2026-01-01-old"),
+            "archived",
+        );
+        let registry = Registry::load(&root).unwrap();
+        assert_eq!(registry.sources, [living.clone(), open.clone()]);
+        assert!(registry.contains("living"));
+        assert!(registry.contains("proposed"));
+        assert!(!registry.contains("archived"));
+
+        std::fs::remove_file(&living).unwrap();
+        let registry = Registry::load(&root).unwrap();
+        assert_eq!(registry.sources, [open]);
+        assert!(!registry.contains("living"));
+        assert!(registry.contains("proposed"));
+        std::fs::remove_dir_all(&root).unwrap();
+
+        // Every slug an open change proposes resolves in this workspace.
+        let root = workspace_root();
+        let registry = Registry::load(&root).unwrap();
+        let mut deltas = 0;
+        for path in Registry::paths(&root) {
+            if path.starts_with(root.join("openspec").join("changes")) {
+                deltas += 1;
+            }
+            for slug in Registry::slugs_in(&std::fs::read_to_string(&path).unwrap()) {
+                assert!(registry.contains(&slug), "{}: {slug}", path.display());
+            }
+        }
+        assert_eq!(registry.sources.len(), 1 + deltas);
+    }
+
+    #[test]
     fn every_declared_divergence_in_the_corpus_resolves() {
         let root = workspace_root();
         let registry = Registry::load(&root).unwrap();
         let mut files = Vec::new();
         collect(&root.join("corpus").join("unit"), &mut files);
-        let mut declared = Vec::new();
+        let mut declared: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut skipped = Vec::new();
         for path in files {
             let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
-            if let Some(slug) = expectation(&text).divergence {
+            let expected = expectation(&text);
+            if let Some(slug) = expected.divergence {
                 assert!(registry.contains(&slug), "{}: {slug}", path.display());
-                declared.push(shown(&root, &path));
+                declared.entry(slug).or_default().push(shown(&root, &path));
+            }
+            if let Some(reason) = expected.oracle_skip {
+                assert!(
+                    !reason.is_empty(),
+                    "{}: skip without a reason",
+                    path.display()
+                );
+                skipped.push(shown(&root, &path));
             }
         }
+        let counts: Vec<(&str, usize)> = declared
+            .iter()
+            .map(|(slug, files)| (slug.as_str(), files.len()))
+            .collect();
+        assert_eq!(
+            counts,
+            [
+                ("cvrs-negative-unsigned", 1),
+                ("file-access-policy", 1),
+                ("fmaptype-cmap-only", 1),
+                ("font-substitution", 5),
+                ("integer-range", 2),
+                ("job-server-save-level", 1),
+                ("malformed-font-invalidfont", 2),
+                ("pagedevice-records-unknown-keys", 1),
+                ("radix-without-digits", 1),
+                ("resident-inventory", 7),
+                ("resident-metrics-only", 1),
+                ("resource-size-unknown", 5),
+                ("unspecified-forall-order", 1),
+            ]
+        );
         for name in [
             "substitution-aliases",
             "substitution-heuristics",
             "substitution-arial",
             "laserwriter-aliases",
+            "derived-fonts",
         ] {
             assert!(
-                declared.contains(&format!("corpus/unit/text/{name}.ps")),
+                declared["font-substitution"].contains(&format!("corpus/unit/text/{name}.ps")),
                 "{name} declares no divergence"
             );
         }
-        assert_eq!(declared.len(), 4);
+        assert_eq!(
+            skipped,
+            [
+                "corpus/unit/graphics/no-backend-moveto-undefined.ps",
+                "corpus/unit/graphics/no-backend-names-unknown.ps",
+                "corpus/unit/interp/deep-recursion.ps",
+                "corpus/unit/text/no-backend-fonts.ps",
+            ]
+        );
     }
 
     #[test]
