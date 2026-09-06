@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+#
+# Seeds for `cargo xtask fuzz-round --profile graphics`: one `seed count`
+# pair per line; programs are generated under target/psgen/graphics/<seed>/
+# and never committed.
+1 100
+2 100
+3 100
+4 100
+5 100
+6 100
+7 100
+8 100
+9 100
+10 100
+# Regression guard from the first round: this seed once counted
+# userdict through the dictionary enumeration rule, which the
+# save/restore relation observed; the rule now skips userdict.
+50 300

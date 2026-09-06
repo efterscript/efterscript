@@ -57,3 +57,29 @@ Nothing the reference converter produces ever lives in this repository:
 its documents, renderings, and outputs stay under `target/oracle/`, and
 this directory holds only EfterScript's own goldens. The converter is not
 named anywhere here either — the profile is the only place that knows it.
+
+## Generated programs
+
+`generated/<profile>.seeds` lists the seeds of the property-based
+generator `psgen`, one `seed count` pair per line (`#` starts a comment);
+the profiles are `core` (the language without graphics) and `graphics`
+(a page of drawing over a small core). `cargo xtask fuzz-round
+[--profile <p>] [--oracle <name>]` generates every listed pair under
+`target/psgen/<profile>/<seed>/`, runs each program in process against
+the oracle-free properties (no panic, the execution budget, two runs
+agreeing, the distilled document's structure, and the `save`/`restore`,
+`gsave`/`grestore`, translation, and definition-reordering relations),
+and with `--oracle` hands the generated directories to `difftest
+oracle` in the private tier. Bulk output is never committed: the seed
+file is the whole record, and `psgen gen --profile <p> --seed <n>
+--count <k> --out <dir>` reproduces any program byte for byte.
+
+A failure is reduced with `psgen shrink <file> --property <name>` (or
+`--predicate <command>` for an oracle verdict) to the fewest statements
+that still fail; the result carries a `% psgen: shrunk from …` header.
+Promotion to the corpus is by hand only: the minimised program is
+rewritten as an ordinary `unit/` scenario with `% expect-output:` and
+`% expect-error:` declarations and a comment naming the behaviour it
+pins down, and its goldens are generated with `difftest run
+--update-ir --update-pdf`. The generated original, its seed, and the
+`% psgen:` header stay out of the corpus.

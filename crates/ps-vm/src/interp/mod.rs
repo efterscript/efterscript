@@ -52,6 +52,13 @@ pub struct Limits {
     pub operand: usize,
     pub dict: usize,
     pub exec: usize,
+    /// The execution budget: how many objects (loop iterations included)
+    /// a run may execute before `limitcheck` is raised on the one being
+    /// executed. `None` leaves execution unbounded. Once raised, the
+    /// budget grows by a grace of one sixteenth (at least 1000) so an
+    /// error handler can report; the second exceed is raised again and
+    /// every object after it, so a handler that loops ends the job.
+    pub steps: Option<u64>,
 }
 
 impl Default for Limits {
@@ -60,6 +67,7 @@ impl Default for Limits {
             operand: 500,
             dict: 20,
             exec: 250,
+            steps: None,
         }
     }
 }
@@ -236,6 +244,12 @@ pub struct Interp {
     pub(crate) atoms: Atoms,
     dstack_floor: usize,
     exec_count: usize,
+    // Objects executed so far, against `Limits::steps`.
+    steps: u64,
+    // The budget currently in force: the configured one, then once
+    // extended by the grace after the first exceed.
+    steps_limit: Option<u64>,
+    grace_given: bool,
     // Set by `stop` when it unwinds to the run boundary.
     stopped: bool,
     pending_error: Option<ErrorSummary>,
@@ -391,6 +405,9 @@ impl Interp {
             atoms,
             dstack_floor: 3,
             exec_count: 0,
+            steps: 0,
+            steps_limit: limits.steps,
+            grace_given: false,
             stopped: false,
             pending_error: None,
             quit: false,
@@ -918,6 +935,17 @@ impl Interp {
     /// Number of frames counted toward the execution-stack limit.
     pub fn exec_count(&self) -> usize {
         self.exec_count
+    }
+
+    /// Objects executed so far, loop iterations included: what
+    /// `Limits::steps` is measured against.
+    pub fn steps(&self) -> u64 {
+        self.steps
+    }
+
+    /// Whether the execution budget has been exceeded at least once.
+    pub fn budget_exceeded(&self) -> bool {
+        self.grace_given
     }
 
     pub(crate) fn push_frame(&mut self, frame: Frame) -> Result<(), VmError> {

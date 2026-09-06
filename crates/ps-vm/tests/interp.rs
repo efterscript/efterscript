@@ -1479,3 +1479,88 @@ proptest! {
         prop_assert_eq!(interp.max_host_depth(), 1);
     }
 }
+
+// --- the execution budget ------------------------------------------------
+
+#[test]
+fn budget_ends_an_endless_loop_with_limitcheck() {
+    let (mut interp, _, err) = interp_with(Limits {
+        steps: Some(10_000),
+        ..Default::default()
+    });
+    let outcome = run_in(&mut interp, "{ } loop");
+    assert_eq!(error_name(&outcome), Some("limitcheck"));
+    assert!(err.text().contains("OffendingCommand: loop"));
+    assert!(interp.budget_exceeded());
+    assert!(interp.steps() > 10_000);
+    // The budget is per interpreter, not per job: what the grace left is
+    // all a later job gets.
+    assert_eq!(
+        error_name(&run_in(&mut interp, "{ } loop")),
+        Some("limitcheck")
+    );
+    assert!(interp.steps() < 12_000);
+}
+
+#[test]
+fn budget_is_attributed_to_the_object_being_executed() {
+    let (mut interp, _, _) = interp_with(Limits {
+        steps: Some(100),
+        ..Default::default()
+    });
+    let outcome = run_in(&mut interp, "0 { 1 add } loop");
+    let Outcome::Error(summary) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(summary.name, "limitcheck");
+    assert!(
+        ["1", "add", "loop"].contains(&summary.command.as_str()),
+        "{summary:?}"
+    );
+}
+
+#[test]
+fn budget_error_is_catchable_and_a_handler_may_report() {
+    let (mut interp, out, _) = interp_with(Limits {
+        steps: Some(5_000),
+        ..Default::default()
+    });
+    let outcome = run_in(
+        &mut interp,
+        "{ { } loop } stopped { $error /errorname get = } if (after) =",
+    );
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(out.text(), "limitcheck\nafter\n");
+}
+
+#[test]
+fn budget_stops_a_handler_that_loops() {
+    let (mut interp, _, _) = interp_with(Limits {
+        steps: Some(5_000),
+        ..Default::default()
+    });
+    let outcome = run_in(
+        &mut interp,
+        "errordict /limitcheck { pop { } loop } put { } loop (unreached) =",
+    );
+    assert_eq!(error_name(&outcome), Some("limitcheck"));
+    let (mut interp, out, _) = interp_with(Limits {
+        steps: Some(5_000),
+        ..Default::default()
+    });
+    let outcome = run_in(
+        &mut interp,
+        "{ { { } loop } stopped pop { } loop } stopped pop (unreached) =",
+    );
+    assert_eq!(error_name(&outcome), Some("limitcheck"));
+    assert_eq!(out.text(), "");
+}
+
+#[test]
+fn no_budget_leaves_execution_unbounded() {
+    let (mut interp, _, _) = interp_with(Limits::default());
+    let outcome = run_in(&mut interp, "0 1 1 100000 { add } for");
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(interp.steps(), 0);
+    assert!(!interp.budget_exceeded());
+}

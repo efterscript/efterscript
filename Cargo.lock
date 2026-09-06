@@ -202,6 +202,12 @@ dependencies = [
 [[package]]
 name = "psgen"
 version = "0.0.1"
+dependencies = [
+ "ps-fonts",
+ "ps-graphics",
+ "ps-vm",
+ "remelt",
+]
 
 [[package]]
 name = "quick-error"

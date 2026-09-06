@@ -438,14 +438,22 @@ fn extract_text(
     }
 }
 
-/// Whitespace runs collapsed to one space, ends trimmed.
+/// Whitespace runs collapsed to one space, ends trimmed, numbers
+/// canonical — a shown `cvs` rendering differs in digits between
+/// interpreters exactly as a printed one does.
 pub fn normalise_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split_whitespace()
+        .map(canonical_token)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A number token in its shortest form — trailing fraction zeros and a
-/// bare point dropped, negative zero made zero — or `None` when `token`
-/// is not a number.
+/// bare point dropped, negative zero made zero, a decimal fraction
+/// rounded to six significant digits — or `None` when `token` is not a
+/// number. Six digits are what single precision guarantees: interpreters
+/// print the same real with six, eight, or nine, and the digits beyond
+/// the sixth say nothing about the value.
 pub fn canonical_number(token: &str) -> Option<String> {
     let (sign, rest) = match token.strip_prefix('-') {
         Some(rest) => ("-", rest),
@@ -480,8 +488,85 @@ pub fn canonical_number(token: &str) -> Option<String> {
             out.push_str(frac);
         }
     }
-    let zero = out.bytes().all(|b| b == b'0');
-    Some(format!("{}{out}{exponent}", if zero { "" } else { sign }))
+    // A real: a fraction, an exponent, or a whole value of a hundred
+    // million or more, which one interpreter prints as digits and
+    // another in exponent form. Smaller integers compare exactly.
+    let whole_large =
+        frac.is_none() && (int.len() > 18 || int.parse::<i64>().is_ok_and(|v| v >= 100_000_000));
+    if !exponent.is_empty() || whole_large {
+        let value: f64 = format!("{out}{exponent}").parse().ok()?;
+        out = six_significant_digits_exponent(value);
+        return Some(format!("{}{out}", if out == "0" { "" } else { sign }));
+    }
+    if out.contains('.') {
+        out = six_significant_digits(&out);
+    }
+    let zero = out.bytes().all(|b| b == b'0' || b == b'.');
+    Some(format!("{}{out}", if zero { "" } else { sign }))
+}
+
+/// A non-negative value in exponent form with six significant digits,
+/// trailing zeros dropped: `1.73631e10`.
+fn six_significant_digits_exponent(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let text = format!("{value:.5e}");
+    let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
+    let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+    format!("{mantissa}e{exponent}")
+}
+
+/// A non-negative decimal with more than six significant digits, rounded
+/// to six; anything shorter unchanged.
+fn six_significant_digits(decimal: &str) -> String {
+    let significant = decimal
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .skip_while(|&b| b == b'0')
+        .count();
+    let Ok(value) = decimal.parse::<f64>() else {
+        return decimal.to_string();
+    };
+    if significant <= 6 || value == 0.0 {
+        return decimal.to_string();
+    }
+    // Digits before the point count toward the six; below one, the
+    // zeros after the point do not.
+    let magnitude = value.log10().floor() as i32;
+    let places = (5 - magnitude).max(0) as usize;
+    let rounded = format!("{value:.places$}");
+    match rounded.split_once('.') {
+        Some((int, frac)) => {
+            let frac = frac.trim_end_matches('0');
+            if frac.is_empty() {
+                int.to_string()
+            } else {
+                format!("{int}.{frac}")
+            }
+        }
+        None => rounded,
+    }
+}
+
+/// A token with the brackets and parentheses around it kept and the
+/// number inside made canonical: `[1.50]` reads `[1.5]`, `(2.7399902)`
+/// as a `cvs` result reads `(2.73999)`.
+pub fn canonical_token(token: &str) -> String {
+    let open = token.len() - token.trim_start_matches(['[', '(', '{']).len();
+    let close = token.len() - token.trim_end_matches([']', ')', '}']).len();
+    if open + close >= token.len() {
+        return token.to_string();
+    }
+    let core = &token[open..token.len() - close];
+    match canonical_number(core) {
+        Some(number) => format!(
+            "{}{number}{}",
+            &token[..open],
+            &token[token.len() - close..]
+        ),
+        None => token.to_string(),
+    }
 }
 
 /// Program output in comparison form: line endings unified, trailing
@@ -493,7 +578,7 @@ pub fn normalise_output(text: &str) -> String {
         .map(|line| {
             line.trim_end()
                 .split(' ')
-                .map(|token| canonical_number(token).unwrap_or_else(|| token.to_string()))
+                .map(canonical_token)
                 .collect::<Vec<_>>()
                 .join(" ")
         })
@@ -2100,7 +2185,29 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             (".5", "0.5"),
             ("1.", "1"),
             ("1e10", "1e10"),
-            ("-2.50E-3", "-2.5E-3"),
+            ("-2.50E-3", "-2.5e-3"),
+            ("17363068928", "1.73631e10"),
+            ("1.73630689e+10", "1.73631e10"),
+            ("-230401056", "-2.30401e8"),
+            ("-2.30401e+08", "-2.30401e8"),
+            ("99999999", "99999999"),
+            ("100000000", "1e8"),
+            ("2147483648", "2.14748e9"),
+            // Six significant digits: the same single-precision value
+            // printed with eight, nine, or six digits reads the same.
+            ("1.9098268", "1.90983"),
+            ("1.90982676", "1.90983"),
+            ("-1.2018454", "-1.20185"),
+            ("-1.20185", "-1.20185"),
+            ("-128831.22", "-128831"),
+            ("-128831.219", "-128831"),
+            ("0.0026764297", "0.00267643"),
+            ("1234567.5", "1234568"),
+            ("0.5000002", "0.5"),
+            ("0.73138183", "0.731382"),
+            ("0.7313537", "0.731354"),
+            ("12345678", "12345678"),
+            ("0.0000001", "0.0000001"),
         ] {
             assert_eq!(canonical_number(given).as_deref(), Some(want), "{given}");
         }
@@ -2109,11 +2216,20 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         }
         assert_eq!(
             normalise_output("a 1.0  -0 \r\n[1.50 2]\n\n  \n"),
-            "a 1  0\n[1.50 2]"
+            "a 1  0\n[1.5 2]"
         );
+        assert_eq!(canonical_token("[26.662521]"), "[26.6625]");
+        assert_eq!(canonical_token("[26.6625214]"), "[26.6625]");
+        assert_eq!(canonical_token("(2.7399902)"), "(2.73999)");
+        assert_eq!(canonical_token("[-dict-"), "[-dict-");
+        assert_eq!(canonical_token("[]"), "[]");
+        assert_eq!(canonical_token("()"), "()");
+        assert_eq!(canonical_token("(abc)"), "(abc)");
         assert_eq!(normalise_output("x\n"), normalise_output("x"));
         assert_ne!(normalise_output("x\ny"), normalise_output("x\n\ny"));
         assert_eq!(normalise_text("  a \n\tb  c\n"), "a b c");
+        assert_eq!(normalise_text(" 1.4115009 x"), normalise_text("1.4115 x"));
+        assert_ne!(normalise_text("1.4115 x"), normalise_text("1.4116 x"));
     }
 
     #[test]

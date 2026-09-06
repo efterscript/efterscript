@@ -223,6 +223,9 @@ impl Interp {
     // procedure element, where executable arrays and strings are pushed
     // rather than run (PLRM3 §3.5.5).
     fn execute(&mut self, object: Object, direct: bool) {
+        if self.charge(object) {
+            return;
+        }
         let mut object = object;
         let mut direct = direct;
         // The name a procedure was reached through, reported as the
@@ -520,6 +523,10 @@ impl Interp {
                 values,
                 operator,
             } => {
+                let command = self.operator(operator).unwrap_or(Object::null());
+                if self.charge(command) {
+                    return;
+                }
                 for value in values.into_iter().flatten() {
                     if let Err(e) = self.push(value) {
                         let command = self.operator(operator).unwrap_or(Object::null());
@@ -532,6 +539,29 @@ impl Interp {
                 }
             }
         }
+    }
+
+    // --- the execution budget --------------------------------------------------
+
+    /// Counts one executed object against `Limits::steps`. When the
+    /// budget is exceeded, `limitcheck` is raised on `command` and the
+    /// budget is extended once by a grace so a handler can run; a second
+    /// exceed is raised on every object from then on, so no handler can
+    /// keep the job alive. Returns whether an error was raised.
+    fn charge(&mut self, command: Object) -> bool {
+        let Some(limit) = self.steps_limit else {
+            return false;
+        };
+        self.steps += 1;
+        if self.steps <= limit {
+            return false;
+        }
+        if !self.grace_given {
+            self.grace_given = true;
+            self.steps_limit = Some(limit.saturating_add((limit / 16).max(1000)));
+        }
+        self.raise(VmError::LimitCheck, command);
+        true
     }
 
     // --- errors --------------------------------------------------------------
