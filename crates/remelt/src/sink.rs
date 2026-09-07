@@ -8,19 +8,22 @@
 //! and every later page ignored; `finish` reports it. The content stream
 //! is built in memory and the page written through one `add_page` call,
 //! so a page that fails is never half-written by this layer. Embedded
-//! fonts are written at `finish`, once every page has said which glyphs
-//! it uses.
+//! fonts, the outline tree, named destinations, and link annotations
+//! are written at `finish`, once every page has said which glyphs it
+//! uses and every page has an id.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use pdf_out::{Document, Filter, PageTree, write_info};
-use ps_graphics::{Page, PageSink};
+use ps_graphics::{DocMark, Page, PageSink};
 
 use crate::fonts::FontTable;
+use crate::marks::Marks;
 use crate::{Error, Options, content, resources::Objects};
 
-/// Names the project and its version; the only Info entry, since dates
-/// would cost determinism.
+/// Names the project and its version; the only Info entry a job does
+/// not supply, since dates would cost determinism.
 const PRODUCER: &str = concat!("EfterScript ", env!("CARGO_PKG_VERSION"));
 
 pub struct PdfSink<W: Write> {
@@ -31,6 +34,7 @@ pub struct PdfSink<W: Write> {
     error: Option<pdf_out::Error>,
     fonts: FontTable,
     notes: Vec<String>,
+    marks: Marks,
 }
 
 impl<W: Write> PdfSink<W> {
@@ -46,6 +50,7 @@ impl<W: Write> PdfSink<W> {
             error: None,
             fonts: FontTable::default(),
             notes: Vec::new(),
+            marks: Marks::default(),
         })
     }
 
@@ -66,9 +71,20 @@ impl<W: Write> PdfSink<W> {
         &self.notes
     }
 
-    /// Closes the document — the embedded fonts, page tree, catalog,
-    /// Info, cross-reference table — and returns the writer. A failure
-    /// latched while writing a page is returned instead.
+    /// Marks honoured so far: document marks and link annotations.
+    pub fn marks_written(&self) -> usize {
+        self.marks.written
+    }
+
+    /// Marks tolerated and dropped, by kind.
+    pub fn marks_ignored(&self) -> &BTreeMap<String, usize> {
+        &self.marks.ignored
+    }
+
+    /// Closes the document — the embedded fonts, the annotations and
+    /// document objects the marks made, page tree, catalog, Info,
+    /// cross-reference table — and returns the writer. A failure latched
+    /// while writing a page is returned instead.
     pub fn finish(self) -> Result<W, Error> {
         let filter = self.text_filter();
         let PdfSink {
@@ -76,14 +92,17 @@ impl<W: Write> PdfSink<W> {
             tree,
             error,
             fonts,
+            marks,
             ..
         } = self;
         if let Some(e) = error {
             return Err(e.into());
         }
         fonts.embedded.write_all(&mut doc, filter)?;
-        let root = tree.finish(&mut doc)?;
+        let catalog = marks.write(&mut doc, tree.pages())?;
+        let root = tree.finish_with(&mut doc, |d| catalog.entries(d))?;
         let info = write_info(&mut doc, |d| {
+            marks.info(d);
             d.key("Producer").string(PRODUCER.as_bytes());
         })?;
         Ok(doc.finish(root, Some(info))?)
@@ -110,12 +129,33 @@ impl<W: Write> PdfSink<W> {
                 .map(|note| format!("page {number}: {note}")),
         );
         let media_box = page.media_box;
-        self.tree.add_page(
+        let attrs = self.marks.attrs_for(number);
+        let annots = self.marks.defer(&mut self.doc, &page.annots);
+        self.tree.add_page_with(
             &mut self.doc,
             [media_box.llx, media_box.lly, media_box.urx, media_box.ury],
             filter,
             &content.bytes,
             |d| objects.resources(d),
+            |d| {
+                if let Some(b) = attrs.crop_box {
+                    d.key("CropBox").array(|a| {
+                        for coord in [b.llx, b.lly, b.urx, b.ury] {
+                            a.real(coord);
+                        }
+                    });
+                }
+                if let Some(rotate) = attrs.rotate {
+                    d.key("Rotate").int(i64::from(rotate));
+                }
+                if !annots.is_empty() {
+                    d.key("Annots").array(|a| {
+                        for id in &annots {
+                            a.reference(*id);
+                        }
+                    });
+                }
+            },
         )?;
         Ok(())
     }
@@ -130,5 +170,9 @@ impl<W: Write> PageSink for PdfSink<W> {
             Ok(()) => self.pages += 1,
             Err(e) => self.error = Some(e),
         }
+    }
+
+    fn document(&mut self, mark: DocMark) {
+        self.marks.record(mark);
     }
 }

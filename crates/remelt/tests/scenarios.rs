@@ -51,6 +51,8 @@ fn a_stroked_line_distils() {
             pages: 1,
             substitutions: Vec::new(),
             notes: Vec::new(),
+            marks_written: 0,
+            marks_ignored: Default::default(),
         }
     );
     let pdf = check(&run.pdf);
@@ -92,6 +94,8 @@ fn a_job_with_no_pages() {
             pages: 0,
             substitutions: Vec::new(),
             notes: Vec::new(),
+            marks_written: 0,
+            marks_ignored: Default::default(),
         }
     );
     let pdf = check(&run.pdf);
@@ -475,7 +479,7 @@ fn a_type1_subset_round_trips_through_the_interpreter() {
     );
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].ops, original[0].ops);
-    assert!(matches!(&pages[0].ops[0].op, IrOp::Fill { path, .. } if path.len() == 7));
+    assert!(matches!(&pages[0].ops[0].op, IrOp::Fill { path, .. } if path.len() == 6));
 }
 
 // cff-embedded-type1c.ps

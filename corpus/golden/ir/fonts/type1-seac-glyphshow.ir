@@ -7,9 +7,6 @@ resources:
 font 0 embedded type1 Syn glyphs=6 enc=[97 /a 98 /b 101 /e 233 /eacute]
 ops:
 text 0 0.01 0 0 0.01 0 0 (\351) 500 0
-m 0 0
-m 5 0
-m 100 100
 m 100.2 100
 l 104.2 100
 l 104.2 104

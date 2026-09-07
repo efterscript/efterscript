@@ -450,6 +450,88 @@ pub struct FontInfo {
     pub encoding: Vec<Option<Vec<u8>>>,
 }
 
+/// One value of a `pdfmark` entry, as the operator converts the objects
+/// between the mark and the kind: names and strings as bytes, numbers,
+/// booleans, `null`, arrays, and name-keyed dictionaries in insertion
+/// order. Anything else in a mark is `typecheck` in the operator, so a
+/// backend never sees a procedure or an operator.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MarkValue {
+    Name(Vec<u8>),
+    String(Vec<u8>),
+    Int(i32),
+    Real(f32),
+    Bool(bool),
+    Null,
+    Array(Vec<MarkValue>),
+    Dict(Vec<(Vec<u8>, MarkValue)>),
+}
+
+impl MarkValue {
+    pub fn as_name(&self) -> Option<&[u8]> {
+        match self {
+            MarkValue::Name(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<&[u8]> {
+        match self {
+            MarkValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The bytes of a name or a string, which several mark keys accept
+    /// interchangeably.
+    pub fn as_text(&self) -> Option<&[u8]> {
+        match self {
+            MarkValue::Name(b) | MarkValue::String(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i32> {
+        match self {
+            MarkValue::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_number(&self) -> Option<f32> {
+        match self {
+            MarkValue::Int(i) => Some(*i as f32),
+            MarkValue::Real(r) => Some(*r),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            MarkValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[MarkValue]> {
+        match self {
+            MarkValue::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    pub fn as_dict(&self) -> Option<&[(Vec<u8>, MarkValue)]> {
+        match self {
+            MarkValue::Dict(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, MarkValue::Null)
+    }
+}
+
 /// A path segment, in user space, as `clippath` reports the clip.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Seg {
@@ -599,6 +681,17 @@ pub trait GraphicsBackend {
     /// Installs a device that discards marks until the state that
     /// installed it is restored.
     fn nulldevice(&mut self) -> Result<(), VmError>;
+
+    // --- document marks -----------------------------------------------------------
+
+    /// A `pdfmark` of `kind` with the objects between the mark and the
+    /// kind converted to values, in order; pairing keys with values is
+    /// the backend's, since the kinds differ in shape. A backend without
+    /// documents ignores marks.
+    fn pdfmark(&mut self, kind: &[u8], entries: &[MarkValue]) -> Result<(), VmError> {
+        let _ = (kind, entries);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -658,6 +751,28 @@ mod tests {
             dy: 0.0,
         };
         assert_eq!(wide.code_bytes(), vec![0x81, 0x40]);
+    }
+
+    #[test]
+    fn mark_values_answer_by_kind() {
+        let name = MarkValue::Name(b"Title".to_vec());
+        assert_eq!(name.as_name(), Some(&b"Title"[..]));
+        assert_eq!(name.as_text(), Some(&b"Title"[..]));
+        assert_eq!(name.as_string(), None);
+        let s = MarkValue::String(b"x".to_vec());
+        assert_eq!(s.as_string(), Some(&b"x"[..]));
+        assert_eq!(s.as_text(), Some(&b"x"[..]));
+        assert_eq!(MarkValue::Int(3).as_number(), Some(3.0));
+        assert_eq!(MarkValue::Int(3).as_int(), Some(3));
+        assert_eq!(MarkValue::Real(1.5).as_int(), None);
+        assert_eq!(MarkValue::Real(1.5).as_number(), Some(1.5));
+        assert_eq!(MarkValue::Bool(true).as_bool(), Some(true));
+        assert!(MarkValue::Null.is_null());
+        let array = MarkValue::Array(vec![MarkValue::Null]);
+        assert_eq!(array.as_array().map(<[MarkValue]>::len), Some(1));
+        let dict = MarkValue::Dict(vec![(b"k".to_vec(), MarkValue::Int(1))]);
+        assert_eq!(dict.as_dict().map(<[_]>::len), Some(1));
+        assert_eq!(dict.as_array(), None);
     }
 
     #[test]

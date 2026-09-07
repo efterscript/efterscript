@@ -122,6 +122,7 @@ pub mod graphics;
 pub mod image;
 pub mod output;
 pub mod pagedevice;
+pub mod pdfmark;
 pub mod resource;
 pub mod show;
 pub mod stack;
@@ -148,6 +149,7 @@ const MODULES: &[&[OpEntry]] = &[
     resource::OPS,
     fontset::OPS,
     cidinit::OPS,
+    pdfmark::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -237,6 +239,8 @@ mod tests {
         assert!(find("show", Visibility::Graphics).is_some());
         assert!(find("show", Visibility::Public).is_none());
         assert!(find("findresource", Visibility::Public).is_some());
+        assert!(find("pdfmark", Visibility::Graphics).is_some());
+        assert!(find("pdfmark", Visibility::Public).is_none());
     }
 
     #[test]

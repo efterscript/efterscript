@@ -57,8 +57,13 @@ impl Path {
         self.current.ok_or(VmError::NoCurrentPoint)
     }
 
+    /// Starts a subpath; a `Move` with no segment after it is replaced
+    /// rather than left as a one-point subpath (PLRM3 §4.4).
     pub fn move_to(&mut self, p: Point) {
-        self.push(Seg::Move(p));
+        match Rc::make_mut(&mut self.segs).last_mut() {
+            Some(last @ Seg::Move(_)) => *last = Seg::Move(p),
+            _ => self.push(Seg::Move(p)),
+        }
         self.current = Some(p);
         self.start = Some(p);
     }

@@ -29,12 +29,14 @@
 //! A file under `corpus/unit` may have sidecar goldens at the same
 //! relative path under `corpus/golden/ir` (extension `.ir`) and
 //! `corpus/golden/pdf` (extension `.pdf`). The concatenated IR dump of
-//! the pages the file produced must match the first exactly, `#` comment
-//! lines in the golden aside; the distilled document of those pages —
-//! written uncompressed, with provenance comments — must match the second
-//! byte for byte, a mismatch reported as a diff of the text lines.
+//! the pages the file produced, with its document marks after them,
+//! must match the first exactly, `#` comment lines in the golden aside;
+//! the distilled document of those pages and marks — written
+//! uncompressed, with provenance comments — must match the second byte
+//! for byte, a mismatch reported as a diff of the text lines.
 //! `--update-ir` and `--update-pdf` (re)write the goldens of every file
-//! that produced pages; goldens are generated, never hand-edited. When
+//! that produced pages or marks; goldens are generated, never
+//! hand-edited. When
 //! `EFTERSCRIPT_PDF_CHECK` names a program, every distilled document is
 //! written under `target/difftest` and the program run on it; a non-zero
 //! exit fails the file.
@@ -51,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::rc::Rc;
 
-use ps_graphics::{Graphics, Page, PageSink, dump};
+use ps_graphics::{Collected, Graphics};
 use ps_vm::{Config, Interp, Io, Outcome, SliceSource};
 use remelt::{Options, PdfSink};
 
@@ -177,17 +179,19 @@ pub struct Actual {
     pub output: String,
     pub error: Option<String>,
     pub stderr: String,
-    pub pages: Vec<Page>,
-    /// The distilled document of `pages` (see [`distil`]), empty when
-    /// there were none; the message when it could not be written.
+    /// The pages and document marks delivered, in order.
+    pub collected: Collected,
+    /// The distilled document of `collected` (see [`distil`]), empty
+    /// when nothing was delivered; the message when it could not be
+    /// written.
     pub pdf: Result<Vec<u8>, String>,
 }
 
 impl Actual {
-    /// The concatenated dump of the delivered pages; empty when there
-    /// were none.
+    /// The concatenated dump of the delivered pages and marks; empty
+    /// when there were none.
     pub fn ir(&self) -> String {
-        dump::pages(&self.pages)
+        self.collected.dump()
     }
 }
 
@@ -198,20 +202,19 @@ const PDF_GOLDEN_COMMENTS: [&str; 3] = [
     "GENERATED-BY: difftest --update-pdf",
 ];
 
-/// Writes `pages` as a golden document: uncompressed, so the bytes read
-/// as text, with the provenance comments between the header and the
-/// first object. Nothing for no pages.
-pub fn distil(pages: &[Page]) -> Result<Vec<u8>, remelt::Error> {
-    if pages.is_empty() {
+/// Writes what a run delivered as a golden document: uncompressed, so
+/// the bytes read as text, with the provenance comments between the
+/// header and the first object. Nothing for a run that delivered
+/// nothing.
+pub fn distil(collected: &Collected) -> Result<Vec<u8>, remelt::Error> {
+    if collected.is_empty() {
         return Ok(Vec::new());
     }
     let mut sink = PdfSink::new(Vec::new(), Options { compress: false })?;
     for comment in PDF_GOLDEN_COMMENTS {
         sink.comment(comment)?;
     }
-    for page in pages {
-        sink.page(page.clone());
-    }
+    collected.replay(&mut sink);
     sink.finish()
 }
 
@@ -241,13 +244,13 @@ fn execute_in(program: &[u8], graphics: bool, stdin: bool) -> Actual {
         ..Default::default()
     };
     let mut interp = Interp::with_config(config);
-    let pages = Rc::new(RefCell::new(Vec::new()));
+    let collected = Rc::new(RefCell::new(Collected::default()));
     if graphics {
-        interp.set_graphics_backend(Box::new(Graphics::new(pages.clone())));
+        interp.set_graphics_backend(Box::new(Graphics::new(collected.clone())));
     }
     let outcome = interp.run(&mut SliceSource::new(program));
-    let pages = pages.take();
-    let pdf = distil(&pages).map_err(|e| e.to_string());
+    let collected = collected.take();
+    let pdf = distil(&collected).map_err(|e| e.to_string());
     Actual {
         output: out.text(),
         error: match outcome {
@@ -256,7 +259,7 @@ fn execute_in(program: &[u8], graphics: bool, stdin: bool) -> Actual {
             Outcome::Suspended => Some("<suspended>".to_string()),
         },
         stderr: err.text(),
-        pages,
+        collected,
         pdf,
     }
 }
@@ -508,7 +511,7 @@ fn update_goldens(root: &Path, path: &Path, kinds: &[Golden]) -> Result<Vec<Path
         return Ok(Vec::new());
     }
     let actual = execute_with(&bytes, expected.graphics);
-    if actual.pages.is_empty() {
+    if actual.collected.is_empty() {
         return Ok(Vec::new());
     }
     let mut written = Vec::new();
@@ -693,7 +696,7 @@ mod tests {
     fn execution_collects_pages_only_with_a_backend() {
         let drawn = execute(b"0 0 moveto 1 1 lineto stroke showpage showpage");
         assert_eq!(drawn.error, None);
-        assert_eq!(drawn.pages.len(), 2);
+        assert_eq!(drawn.collected.pages.len(), 2);
         assert!(
             drawn
                 .ir()
@@ -702,7 +705,7 @@ mod tests {
         assert!(drawn.ir().contains("\n\nir/1\n"));
         let bare = execute_with(b"0 0 moveto", false);
         assert_eq!(bare.error.as_deref(), Some("undefined"));
-        assert!(bare.pages.is_empty());
+        assert!(bare.collected.is_empty());
         assert_eq!(bare.ir(), "");
     }
 
@@ -719,7 +722,7 @@ mod tests {
         ));
         assert!(text.contains("stream\n2 w\n10 10 m\n100 10 l\nS\n\nendstream"));
         assert!(!text.contains("FlateDecode"));
-        assert_eq!(distil(&drawn.pages).unwrap(), pdf);
+        assert_eq!(distil(&drawn.collected).unwrap(), pdf);
     }
 
     #[test]

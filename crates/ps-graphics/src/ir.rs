@@ -395,11 +395,115 @@ impl From<IrOp> for Op {
     }
 }
 
+/// A destination's view on its page (ISO 32000-1 §12.3.2.2): the three
+/// forms the pdfmark reference's `View` arrays are honoured in. An
+/// absent component is one the mark gave as `null`, which a viewer
+/// keeps at its current value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum View {
+    Fit,
+    FitH(Option<f32>),
+    Xyz {
+        left: Option<f32>,
+        top: Option<f32>,
+        zoom: Option<f32>,
+    },
+}
+
+/// Where a bookmark or the open action leads: a named destination, or a
+/// page by its number (from 1, in delivery order) with a view.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Target {
+    Named(Vec<u8>),
+    Page { index: usize, view: View },
+}
+
+/// Where a link annotation leads: a [`Target`]'s two forms, or a URI.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkTarget {
+    Named(Vec<u8>),
+    Uri(Vec<u8>),
+    Page { index: usize, view: View },
+}
+
+/// A link annotation (ISO 32000-1 §12.5.6.5) on a page. The rectangle is
+/// in default user space, normalised to lower-left and upper-right, as
+/// paths are; the border is the horizontal radius, vertical radius, and
+/// width the mark gave; the colour is the components of a DeviceRGB
+/// colour.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Annot {
+    pub rect: Bounds,
+    pub target: LinkTarget,
+    pub border: Option<[f32; 3]>,
+    pub color: Option<Vec<f32>>,
+    pub contents: Option<Vec<u8>>,
+}
+
+/// The page attributes the marks set: the crop box in default user
+/// space and the rotation in degrees, a multiple of 90.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PageAttrs {
+    pub crop_box: Option<Bounds>,
+    pub rotate: Option<i32>,
+}
+
+impl PageAttrs {
+    /// `self` with every absent attribute taken from `defaults`.
+    pub fn over(&self, defaults: &PageAttrs) -> PageAttrs {
+        PageAttrs {
+            crop_box: self.crop_box.or(defaults.crop_box),
+            rotate: self.rotate.or(defaults.rotate),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.crop_box.is_none() && self.rotate.is_none()
+    }
+}
+
+/// A document-level mark, delivered to the sink as it is made, with the
+/// page it refers to already resolved to a number (from 1, in delivery
+/// order; a mark without a page key names the page under construction).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DocMark {
+    /// A bookmark. `count` is the mark's own: the number of items that
+    /// follow as its children, negative when the item is closed. An item
+    /// whose action leads outside the document has no target.
+    Outline {
+        title: Vec<u8>,
+        count: i32,
+        target: Option<Target>,
+    },
+    /// A named destination.
+    Dest {
+        name: Vec<u8>,
+        page: usize,
+        view: View,
+    },
+    /// Document information entries, in the mark's order.
+    Info(Vec<(Vec<u8>, Vec<u8>)>),
+    /// What a viewer does on opening the document.
+    View {
+        page_mode: Option<Vec<u8>>,
+        page_layout: Option<Vec<u8>>,
+        open: Option<Target>,
+    },
+    /// Attributes every page takes unless it sets its own.
+    PagesDefault(PageAttrs),
+    /// Attributes of one page.
+    PageAttr { page: usize, attrs: PageAttrs },
+    /// A mark of a kind, or an annotation of a subtype (`ANN/<Subtype>`),
+    /// that is not honoured; tolerated and counted.
+    Ignored { kind: Vec<u8> },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Page {
     pub media_box: Bounds,
     pub ops: Vec<Op>,
     pub resources: Resources,
+    pub annots: Vec<Annot>,
 }
 
 impl Page {
@@ -408,6 +512,7 @@ impl Page {
             media_box,
             ops: Vec::new(),
             resources: Resources::default(),
+            annots: Vec::new(),
         }
     }
 
@@ -417,9 +522,16 @@ impl Page {
     }
 }
 
-/// Receives each completed page.
+/// Receives each completed page and every document-level mark, in the
+/// order they are made: a mark reaches the sink before the page it
+/// refers to, and a mark made after the last page follows that page.
 pub trait PageSink {
     fn page(&mut self, page: Page);
+
+    /// A document-level mark; a sink that writes no document ignores it.
+    fn document(&mut self, mark: DocMark) {
+        let _ = mark;
+    }
 }
 
 /// Discards pages: what a run that only needs side effects installs.
@@ -427,10 +539,59 @@ impl PageSink for () {
     fn page(&mut self, _: Page) {}
 }
 
-/// Collects pages in order.
+/// Collects pages in order and drops the marks.
 impl PageSink for Vec<Page> {
     fn page(&mut self, page: Page) {
         self.push(page);
+    }
+}
+
+/// Collects pages and marks, remembering where each mark fell.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Collected {
+    pub pages: Vec<Page>,
+    /// Each mark with the number of pages delivered before it.
+    pub marks: Vec<(usize, DocMark)>,
+}
+
+impl Collected {
+    pub fn is_empty(&self) -> bool {
+        self.pages.is_empty() && self.marks.is_empty()
+    }
+
+    /// The marks in order.
+    pub fn marks(&self) -> impl Iterator<Item = &DocMark> {
+        self.marks.iter().map(|(_, mark)| mark)
+    }
+
+    /// Delivers everything to `sink` in the order it was collected.
+    pub fn replay<S: PageSink>(&self, sink: &mut S) {
+        let mut marks = self.marks.iter().peekable();
+        for (index, page) in self.pages.iter().enumerate() {
+            while let Some((_, mark)) = marks.next_if(|(at, _)| *at <= index) {
+                sink.document(mark.clone());
+            }
+            sink.page(page.clone());
+        }
+        for (_, mark) in marks {
+            sink.document(mark.clone());
+        }
+    }
+
+    /// The canonical text form of the pages and marks; see
+    /// [`crate::dump::document`].
+    pub fn dump(&self) -> String {
+        crate::dump::document(&self.pages, self.marks())
+    }
+}
+
+impl PageSink for Collected {
+    fn page(&mut self, page: Page) {
+        self.pages.push(page);
+    }
+
+    fn document(&mut self, mark: DocMark) {
+        self.marks.push((self.pages.len(), mark));
     }
 }
 
@@ -439,6 +600,10 @@ impl PageSink for Vec<Page> {
 impl<S: PageSink> PageSink for Rc<RefCell<S>> {
     fn page(&mut self, page: Page) {
         self.borrow_mut().page(page);
+    }
+
+    fn document(&mut self, mark: DocMark) {
+        self.borrow_mut().document(mark);
     }
 }
 
@@ -540,7 +705,54 @@ mod tests {
         let shared = Rc::new(RefCell::new(Vec::new()));
         let mut sink = shared.clone();
         sink.page(Page::new(Bounds::new(0.0, 0.0, 1.0, 1.0)));
+        sink.document(DocMark::Info(Vec::new()));
         assert_eq!(shared.borrow().len(), 1);
         ().page(Page::new(Bounds::new(0.0, 0.0, 1.0, 1.0)));
+        ().document(DocMark::Info(Vec::new()));
+    }
+
+    #[test]
+    fn collected_marks_replay_where_they_fell() {
+        let info = DocMark::Info(vec![(b"Title".to_vec(), b"T".to_vec())]);
+        let attr = DocMark::PageAttr {
+            page: 2,
+            attrs: PageAttrs {
+                crop_box: None,
+                rotate: Some(90),
+            },
+        };
+        let mut collected = Collected::default();
+        collected.document(info.clone());
+        collected.page(Page::new(Bounds::new(0.0, 0.0, 1.0, 1.0)));
+        collected.document(attr.clone());
+        collected.page(Page::new(Bounds::new(0.0, 0.0, 2.0, 2.0)));
+        collected.document(DocMark::Ignored {
+            kind: b"X".to_vec(),
+        });
+        assert_eq!(
+            collected
+                .marks
+                .iter()
+                .map(|(at, _)| *at)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert!(!collected.is_empty());
+        let mut replayed = Collected::default();
+        collected.replay(&mut replayed);
+        assert_eq!(replayed, collected);
+        assert_eq!(collected.marks().count(), 3);
+        assert!(attr.clone() != info);
+        assert_eq!(
+            PageAttrs::default().over(&PageAttrs {
+                crop_box: None,
+                rotate: Some(90)
+            }),
+            PageAttrs {
+                crop_box: None,
+                rotate: Some(90)
+            }
+        );
+        assert!(PageAttrs::default().is_empty());
     }
 }

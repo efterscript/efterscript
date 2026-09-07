@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a link with a URI action, a visible border, and a colour.
+% The annotation carries the action dictionary, the border the mark
+% gave, and the colour; the page paints the underline the link sits on.
+[ /Rect [72 700 300 720] /Border [0 0 1] /Color [0 0 1]
+  /Action << /Subtype /URI /URI (https://example.org/) >>
+  /Subtype /Link /ANN pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage

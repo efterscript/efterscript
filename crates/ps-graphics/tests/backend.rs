@@ -62,6 +62,44 @@ fn points_are_transformed_when_added_not_later() {
 }
 
 #[test]
+fn a_move_replaces_a_pending_move_but_not_a_closed_subpath() {
+    let (mut g, _) = backend();
+    g.moveto(p(1.0, 1.0)).unwrap();
+    g.moveto(p(2.0, 2.0)).unwrap();
+    assert_eq!(g.current_point(), Ok(p(2.0, 2.0)));
+    g.lineto(p(3.0, 3.0)).unwrap();
+    g.closepath().unwrap();
+    g.moveto(p(4.0, 4.0)).unwrap();
+    g.moveto(p(5.0, 5.0)).unwrap();
+    g.closepath().unwrap();
+    g.fill().unwrap();
+    assert_eq!(
+        ops(&g),
+        [IrOp::Fill {
+            path: vec![
+                Seg::Move(p(2.0, 2.0)),
+                Seg::Line(p(3.0, 3.0)),
+                Seg::Close,
+                Seg::Move(p(5.0, 5.0)),
+                Seg::Close,
+            ],
+            rule: FillRule::NonZero,
+        }]
+    );
+    let (mut g, _) = backend();
+    g.gsave().unwrap();
+    g.moveto(p(1.0, 1.0)).unwrap();
+    g.gsave().unwrap();
+    g.moveto(p(2.0, 2.0)).unwrap();
+    g.grestore().unwrap();
+    assert_eq!(
+        g.current_point(),
+        Ok(p(1.0, 1.0)),
+        "the saved path is untouched"
+    );
+}
+
+#[test]
 fn current_point_and_bbox_answer_in_user_space() {
     let (mut g, _) = backend();
     g.concat(Matrix::translation(10.0, 20.0)).unwrap();

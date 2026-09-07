@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: crop box and rotation. The document default crop box
+% applies to every page that sets none; page 1 adds a rotation, page 2
+% sets its own crop box and keeps the default rotation, none.
+[ /CropBox [36 36 576 756] /PAGES pdfmark
+[ /Rotate 90 /PAGE pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage
+[ /CropBox [0 0 288 288] /PAGE pdfmark
+72 72 moveto 200 72 lineto stroke
+showpage

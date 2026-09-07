@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: an unknown kind is tolerated. No error is raised, the page
+% is delivered as usual, the .ir golden records the mark as ignored,
+% and the command-line tool reports one ignored pdfmark of kind NOSUCH.
+[ /Foo 1 /NOSUCH pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage

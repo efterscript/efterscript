@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a link with a named destination across pages. Page 1
+% defines the destination top; page 2 carries a link to it whose
+% rectangle is given under a scale of two, so the annotation's
+% rectangle in the document is the scaled one, 20 20 100 40, and its
+% destination resolves through the catalog's named destinations to
+% page 1.
+[ /Dest /top /View [/Fit] /DEST pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage
+2 2 scale
+[ /Rect [10 10 50 20] /Dest /top /Subtype /Link /ANN pdfmark
+10 10 moveto 50 10 lineto stroke
+showpage

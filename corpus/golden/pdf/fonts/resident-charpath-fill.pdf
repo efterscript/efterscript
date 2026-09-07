@@ -4,9 +4,8 @@
 % SPDX-License-Identifier: MIT
 % GENERATED-BY: difftest --update-pdf
 2 0 obj
-<< /Length 1263 >>
+<< /Length 1255 >>
 stream
-72 72 m
 82.8047 73.2422 m
 82.8047 72 l
 72.4688 72 l
@@ -75,13 +74,13 @@ endobj
 xref
 0 6
 0000000000 65535 f
-0000001561 00000 n
+0000001553 00000 n
 0000000140 00000 n
-0000001455 00000 n
-0000001620 00000 n
-0000001669 00000 n
+0000001447 00000 n
+0000001612 00000 n
+0000001661 00000 n
 trailer
 << /Size 6 /Root 4 0 R /Info 5 0 R >>
 startxref
-1720
+1712
 %%EOF

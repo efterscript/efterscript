@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 
-use ps_graphics::{Graphics, dump};
+use ps_graphics::{Collected, Graphics};
 use ps_vm::{Config, Interp, Io, Outcome, SliceSource, Stream, VmError};
 
 struct HostStdout;
@@ -91,19 +91,20 @@ fn run(bytes: &[u8]) -> ExitCode {
 }
 
 /// Runs the program and prints the IR dump of every page it produced,
-/// pages separated by a blank line. Only the dump goes to standard
-/// output; the program's own output joins the error report on standard
-/// error, so the dump can be piped.
+/// pages separated by a blank line, then the document marks after the
+/// pages when there are any. Only the dump goes to standard output; the
+/// program's own output joins the error report on standard error, so
+/// the dump can be piped.
 fn ir(bytes: &[u8]) -> ExitCode {
     let config = Config {
         io: Io::new(HostStderr, HostStderr).with_stdin(HostStdin),
         ..Default::default()
     };
     let mut interp = Interp::with_config(config);
-    let pages = Rc::new(RefCell::new(Vec::new()));
-    interp.set_graphics_backend(Box::new(Graphics::new(pages.clone())));
+    let collected = Rc::new(RefCell::new(Collected::default()));
+    interp.set_graphics_backend(Box::new(Graphics::new(collected.clone())));
     let outcome = interp.run(&mut SliceSource::new(bytes));
-    let text = dump::pages(&pages.borrow());
+    let text = collected.borrow().dump();
     print!("{text}");
     let _ = std::io::stdout().flush();
     exit_code(outcome)
@@ -143,6 +144,18 @@ fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
             }
             for note in &report.notes {
                 eprintln!("efterscript: {note}");
+            }
+            if !report.marks_ignored.is_empty() {
+                let total: usize = report.marks_ignored.values().sum();
+                let kinds: Vec<String> = report
+                    .marks_ignored
+                    .iter()
+                    .map(|(kind, n)| format!("{kind}×{n}"))
+                    .collect();
+                eprintln!(
+                    "efterscript: {total} pdfmark(s) ignored: {}",
+                    kinds.join(", ")
+                );
             }
             exit_code(report.outcome)
         }

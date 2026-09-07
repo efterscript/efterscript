@@ -21,6 +21,24 @@
 //! }
 //! ops:
 //! <op>                                one per line, in page order
+//! annot link <llx> <lly> <urx> <ury> <target> [border=<bx> <by> <w>] [color=<r> <g> <b>] [contents=(<text>)]
+//! ```
+//!
+//! A link's target is `dest=/<name>`, `uri=(<text>)`, or `page=<n>
+//! <view>`, where a view is `fit`, `fith <top>`, or `xyz <left> <top>
+//! <zoom>` with `null` for a component the mark left out. A document
+//! ([`document`]) is its pages separated by blank lines and then, only
+//! when the run made document-level marks, a `doc:` section:
+//!
+//! ```text
+//! doc:
+//! out <count> (<title>) -> dest=/<name>|page=<n> <view>|none
+//! dest /<name> -> page <n> <view>
+//! info /<key> (<value>)               one line per entry
+//! view [mode=/<PageMode>] [layout=/<PageLayout>] [open=<target>]
+//! pages [cropbox <llx> <lly> <urx> <ury>] [rotate <n>]
+//! page <n> [cropbox <llx> <lly> <urx> <ury>] [rotate <n>]
+//! ignored /<kind>
 //! ```
 //!
 //! A resident font lists only the codes whose glyph differs from the
@@ -73,7 +91,10 @@
 use ps_fonts::ProgramKind;
 use ps_vm::{Bounds, Glyph, ImageSpec, Matrix, Seg, SpaceSpec};
 
-use crate::ir::{FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page};
+use crate::ir::{
+    Annot, DocMark, FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget, Op, Page,
+    PageAttrs, Target, View,
+};
 use crate::real::{fmt_real, fmt_reals};
 
 pub const VERSION: &str = "ir/1";
@@ -405,6 +426,120 @@ fn ops(out: &mut String, ops: &[Op]) {
     }
 }
 
+fn optional(value: Option<f32>) -> String {
+    value.map_or_else(|| "null".to_string(), fmt_real)
+}
+
+fn view(view: &View) -> String {
+    match view {
+        View::Fit => "fit".to_string(),
+        View::FitH(top) => format!("fith {}", optional(*top)),
+        View::Xyz { left, top, zoom } => {
+            format!(
+                "xyz {} {} {}",
+                optional(*left),
+                optional(*top),
+                optional(*zoom)
+            )
+        }
+    }
+}
+
+fn target(target: &Target) -> String {
+    match target {
+        Target::Named(name) => format!("dest={}", ps_name(name)),
+        Target::Page { index, view: v } => format!("page={index} {}", view(v)),
+    }
+}
+
+fn annot(out: &mut String, annot: &Annot) {
+    let Bounds { llx, lly, urx, ury } = annot.rect;
+    let where_to = match &annot.target {
+        LinkTarget::Named(name) => format!("dest={}", ps_name(name)),
+        LinkTarget::Uri(uri) => format!("uri={}", ps_string(uri)),
+        LinkTarget::Page { index, view: v } => format!("page={index} {}", view(v)),
+    };
+    out.push_str(&format!(
+        "annot link {} {where_to}",
+        fmt_reals(&[llx, lly, urx, ury])
+    ));
+    if let Some(border) = annot.border {
+        out.push_str(&format!(" border={}", fmt_reals(&border)));
+    }
+    if let Some(color) = &annot.color {
+        out.push_str(&format!(" color={}", fmt_reals(color)));
+    }
+    if let Some(contents) = &annot.contents {
+        out.push_str(&format!(" contents={}", ps_string(contents)));
+    }
+    out.push('\n');
+}
+
+fn attrs(out: &mut String, attrs: &PageAttrs) {
+    if let Some(Bounds { llx, lly, urx, ury }) = attrs.crop_box {
+        out.push_str(&format!(" cropbox {}", fmt_reals(&[llx, lly, urx, ury])));
+    }
+    if let Some(rotate) = attrs.rotate {
+        out.push_str(&format!(" rotate {rotate}"));
+    }
+}
+
+/// One line per mark, several for an information mark.
+fn mark(out: &mut String, mark: &DocMark) {
+    match mark {
+        DocMark::Outline {
+            title,
+            count,
+            target: t,
+        } => {
+            let where_to = t.as_ref().map_or_else(|| "none".to_string(), target);
+            out.push_str(&format!("out {count} {} -> {where_to}\n", ps_string(title)));
+        }
+        DocMark::Dest {
+            name,
+            page,
+            view: v,
+        } => out.push_str(&format!(
+            "dest {} -> page {page} {}\n",
+            ps_name(name),
+            view(v)
+        )),
+        DocMark::Info(entries) => {
+            for (key, value) in entries {
+                out.push_str(&format!("info {} {}\n", ps_name(key), ps_string(value)));
+            }
+        }
+        DocMark::View {
+            page_mode,
+            page_layout,
+            open,
+        } => {
+            out.push_str("view");
+            if let Some(mode) = page_mode {
+                out.push_str(&format!(" mode={}", ps_name(mode)));
+            }
+            if let Some(layout) = page_layout {
+                out.push_str(&format!(" layout={}", ps_name(layout)));
+            }
+            if let Some(open) = open {
+                out.push_str(&format!(" open={}", target(open)));
+            }
+            out.push('\n');
+        }
+        DocMark::PagesDefault(a) => {
+            out.push_str("pages");
+            attrs(out, a);
+            out.push('\n');
+        }
+        DocMark::PageAttr { page, attrs: a } => {
+            out.push_str(&format!("page {page}"));
+            attrs(out, a);
+            out.push('\n');
+        }
+        DocMark::Ignored { kind } => out.push_str(&format!("ignored {}\n", ps_name(kind))),
+    }
+}
+
 /// The dump of one page.
 pub fn page(page: &Page) -> String {
     let Bounds { llx, lly, urx, ury } = page.media_box;
@@ -425,12 +560,45 @@ pub fn page(page: &Page) -> String {
     }
     out.push_str("ops:\n");
     ops(&mut out, &page.ops);
+    for a in &page.annots {
+        annot(&mut out, a);
+    }
     out
 }
 
 /// The dump of a sequence of pages, separated by blank lines.
 pub fn pages(pages: &[Page]) -> String {
     pages.iter().map(Page::dump).collect::<Vec<_>>().join("\n")
+}
+
+/// The `doc:` section for `marks`; empty when there are none.
+pub fn doc<'a>(marks: impl IntoIterator<Item = &'a DocMark>) -> String {
+    let mut out = String::new();
+    for m in marks {
+        mark(&mut out, m);
+    }
+    if out.is_empty() {
+        out
+    } else {
+        format!("doc:\n{out}")
+    }
+}
+
+/// The dump of a run: the pages as [`pages`], then the `doc:` section
+/// after a blank line when there are marks. A run with marks but no
+/// pages dumps as the version line and the section.
+pub fn document<'a>(pages: &[Page], marks: impl IntoIterator<Item = &'a DocMark>) -> String {
+    let mut out = self::pages(pages);
+    let section = doc(marks);
+    if section.is_empty() {
+        return out;
+    }
+    if out.is_empty() {
+        out.push_str(VERSION);
+    }
+    out.push('\n');
+    out.push_str(&section);
+    out
 }
 
 #[cfg(test)]
@@ -470,5 +638,44 @@ mod tests {
             tint_source: Vec::new(),
         };
         assert_eq!(space(&n), "DeviceN (A) (B) alt=DeviceGray tint=0 bytes");
+    }
+
+    #[test]
+    fn views_and_targets_print_absent_components_as_null() {
+        assert_eq!(view(&View::Fit), "fit");
+        assert_eq!(view(&View::FitH(None)), "fith null");
+        assert_eq!(view(&View::FitH(Some(5.0))), "fith 5");
+        assert_eq!(
+            view(&View::Xyz {
+                left: Some(0.0),
+                top: Some(792.0),
+                zoom: None
+            }),
+            "xyz 0 792 null"
+        );
+        assert_eq!(target(&Target::Named(b"a b".to_vec())), "dest=/a\\040b");
+        assert_eq!(
+            target(&Target::Page {
+                index: 2,
+                view: View::Fit
+            }),
+            "page=2 fit"
+        );
+    }
+
+    #[test]
+    fn a_document_without_marks_dumps_as_its_pages() {
+        let page = Page::new(Bounds::new(0.0, 0.0, 10.0, 10.0));
+        let plain = pages(std::slice::from_ref(&page));
+        assert_eq!(document(std::slice::from_ref(&page), []), plain);
+        assert_eq!(doc([]), "");
+        let marks = [DocMark::Ignored {
+            kind: b"X".to_vec(),
+        }];
+        assert_eq!(
+            document(std::slice::from_ref(&page), &marks),
+            format!("{plain}\ndoc:\nignored /X\n")
+        );
+        assert_eq!(document(&[], &marks), "ir/1\ndoc:\nignored /X\n");
     }
 }

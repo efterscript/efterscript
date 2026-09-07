@@ -34,7 +34,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use ps_graphics::{Page, PageSink};
+use ps_graphics::{Collected, DocMark};
 use remelt::{Options, PdfSink};
 
 use crate::pnm;
@@ -251,13 +251,33 @@ fn run_command(
     }
 }
 
-/// Our document for `pages`, uncompressed; a zero-page document for none.
-fn document(pages: &[Page]) -> Result<Vec<u8>, String> {
+/// The rotation page `index` (from 0) is written with: its own mark's
+/// over the document default, counting only marks delivered before it,
+/// as the writer does.
+fn rotation(collected: &Collected, index: usize) -> i32 {
+    let mut default = None;
+    let mut own = None;
+    for (at, mark) in &collected.marks {
+        if *at > index {
+            break;
+        }
+        match mark {
+            DocMark::PagesDefault(attrs) => default = attrs.rotate.or(default),
+            DocMark::PageAttr { page, attrs } if *page == index + 1 => {
+                own = attrs.rotate.or(own);
+            }
+            _ => {}
+        }
+    }
+    own.or(default).unwrap_or(0)
+}
+
+/// Our document for what a run delivered, uncompressed; a zero-page
+/// document for nothing.
+fn document(collected: &Collected) -> Result<Vec<u8>, String> {
     let mut sink =
         PdfSink::new(Vec::new(), Options { compress: false }).map_err(|e| e.to_string())?;
-    for page in pages {
-        sink.page(page.clone());
-    }
+    collected.replay(&mut sink);
     sink.finish().map_err(|e| e.to_string())
 }
 
@@ -620,7 +640,7 @@ fn compare_documents(
         reference_error,
     } = ending;
     let ours_pdf = dir.join("ours.pdf");
-    let ours_document = document(&actual.pages)?;
+    let ours_document = document(&actual.collected)?;
     let unmapped = pages_without_unicode(&ours_document);
     std::fs::write(&ours_pdf, ours_document)
         .map_err(|e| format!("cannot write {}: {e}", ours_pdf.display()))?;
@@ -667,16 +687,16 @@ fn compare_documents(
             .push("reference converter wrote no document".to_string());
         return Ok(());
     }
-    let ours = if actual.pages.is_empty() {
+    let ours = if actual.collected.pages.is_empty() {
         Vec::new()
     } else {
         render(settings, dir, "ours", &ours_pdf, deadline)?
     };
-    if ours.len() != actual.pages.len() {
+    if ours.len() != actual.collected.pages.len() {
         return Err(format!(
             "the rasteriser produced {} pages from ours, which has {}",
             ours.len(),
-            actual.pages.len()
+            actual.collected.pages.len()
         ));
     }
     let mut theirs = render(settings, dir, "theirs", &theirs_pdf, deadline)?;
@@ -728,11 +748,17 @@ fn compare_documents(
             pnm::parse(&bytes).map_err(|e| format!("{}: {e}", file.display()))
         };
         let (a, b) = (read(ours)?, read(theirs)?);
-        let bounds = actual.pages[index].media_box;
+        let bounds = actual.collected.pages[index].media_box;
         let (width, height) = (
             f64::from(bounds.urx - bounds.llx),
             f64::from(bounds.ury - bounds.lly),
         );
+        // A page rotated a quarter turn renders with its sides swapped.
+        let (width, height) = if rotation(&actual.collected, index).rem_euclid(180) == 90 {
+            (height, width)
+        } else {
+            (width, height)
+        };
         let (theirs_width, theirs_height) = (b.width as f64 * scale, b.height as f64 * scale);
         if (theirs_width - width).abs() > tolerance || (theirs_height - height).abs() > tolerance {
             report.reasons.push(format!(
@@ -916,7 +942,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         return Checked::Report(report);
     }
     let actual = execute_with_stdin(&bytes, expected.graphics);
-    report.pages_ours = actual.pages.len();
+    report.pages_ours = actual.collected.pages.len();
     let prepared = cleared.and_then(|()| std::fs::create_dir_all(&dir));
     if let Err(e) = prepared {
         report
@@ -1917,7 +1943,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             UNMAPPED.trim_start_matches("%!PS\n")
         );
         let two = crate::execute(second.as_bytes());
-        assert_eq!(two.pages.len(), 2);
+        assert_eq!(two.collected.pages.len(), 2);
         let found = pages_without_unicode(two.pdf.as_ref().unwrap());
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, 2);
@@ -2169,6 +2195,35 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
     }
 
     #[test]
+    fn a_pages_rotation_comes_from_the_marks_before_it() {
+        use ps_graphics::PageAttrs;
+        let rotate = |r: i32| PageAttrs {
+            crop_box: None,
+            rotate: Some(r),
+        };
+        let collected = Collected {
+            pages: vec![
+                ps_graphics::Page::new(ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
+                ps_graphics::Page::new(ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
+            ],
+            marks: vec![
+                (0, DocMark::PagesDefault(rotate(90))),
+                (
+                    0,
+                    DocMark::PageAttr {
+                        page: 1,
+                        attrs: rotate(180),
+                    },
+                ),
+                (2, DocMark::PagesDefault(rotate(270))),
+            ],
+        };
+        assert_eq!(rotation(&collected, 0), 180, "the page's own wins");
+        assert_eq!(rotation(&collected, 1), 90, "the default before it");
+        assert_eq!(rotation(&Collected::default(), 0), 0);
+    }
+
+    #[test]
     fn every_declared_divergence_in_the_corpus_resolves() {
         let root = workspace_root();
         let registry = Registry::load(&root).unwrap();
@@ -2236,6 +2291,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 "corpus/unit/graphics/no-backend-moveto-undefined.ps",
                 "corpus/unit/graphics/no-backend-names-unknown.ps",
                 "corpus/unit/interp/deep-recursion.ps",
+                "corpus/unit/pdfmark/guarded-idiom-no-backend.ps",
                 "corpus/unit/text/no-backend-fonts.ps",
             ]
         );

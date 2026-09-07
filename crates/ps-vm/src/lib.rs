@@ -30,7 +30,7 @@ pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
     Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    Matrix, Point, Rect, Seg, SpaceSpec,
+    MarkValue, Matrix, Point, Rect, Seg, SpaceSpec,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,

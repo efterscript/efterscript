@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a guarded job. With a backend installed pdfmark is defined
+% and the mark is honoured: the .ir golden ends in a doc section with
+% the document information. guarded-idiom-no-backend.ps runs the same
+% program without a backend, where the guard installs cleartomark.
+% expect-output: done
+/pdfmark where { pop } { userdict /pdfmark /cleartomark load put } ifelse
+[ /Title (Guarded) /DOCINFO pdfmark
+72 72 moveto 300 72 lineto stroke
+(done) =
+showpage

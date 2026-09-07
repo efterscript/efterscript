@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontInfo, FontRef, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, Matrix, Point,
-    Rect, Seg, SpaceSpec, VmError,
+    Bounds, FontInfo, FontRef, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, MarkValue,
+    Matrix, Point, Rect, Seg, SpaceSpec, VmError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +60,7 @@ pub enum Call {
     CopyPage,
     ErasePage,
     NullDevice,
+    PdfMark(Vec<u8>, Vec<MarkValue>),
 }
 
 #[derive(Clone)]
@@ -457,6 +458,11 @@ impl GraphicsBackend for Recording {
 
     fn nulldevice(&mut self) -> Result<(), VmError> {
         self.record(Call::NullDevice);
+        Ok(())
+    }
+
+    fn pdfmark(&mut self, kind: &[u8], entries: &[MarkValue]) -> Result<(), VmError> {
+        self.record(Call::PdfMark(kind.to_vec(), entries.to_vec()));
         Ok(())
     }
 }

@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a guarded job without a backend. pdfmark is undefined, so
+% the guard installs cleartomark in its place and the mark is discarded
+% with nothing else changed; the program's own output is the check.
+% backend: none
+% oracle: skip build without a graphics backend
+% expect-output: 0
+% expect-output: done
+/pdfmark where { pop } { userdict /pdfmark /cleartomark load put } ifelse
+[ /Title (Guarded) /DOCINFO pdfmark
+count =
+(done) =

@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: document information. Every string-valued entry reaches
+% the Info dictionary beside the producer, which stays the writer's
+% own; no dates are given, so none are written and the bytes stay
+% deterministic. The integer-valued key is not an information entry
+% and is left out.
+[ /Title (Report) /Author (Someone) /Subject (pdfmark)
+  /Keywords (bookmarks, links) /Creator (hand written) /Pages 1
+  /DOCINFO pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage

@@ -9,7 +9,9 @@
 //! resolution-independent page IR ([`Page`], [`IrOp`]) that is delivered
 //! to a [`PageSink`] at `showpage`. Colour is a colour-space resource plus
 //! a component vector of the space's arity; nothing is converted. The IR
-//! has one canonical text form ([`dump`]) for golden comparison.
+//! has one canonical text form ([`dump`]) for golden comparison. A
+//! `pdfmark` becomes a link annotation on its page or a document-level
+//! [`DocMark`] the sink receives as it is made.
 //!
 //! Independently useful as a vector-capture layer: the backend needs no
 //! interpreter, only calls.
@@ -18,13 +20,15 @@ mod arc;
 mod backend;
 pub mod dump;
 mod ir;
+mod marks;
 mod real;
 mod state;
 
 pub use backend::Graphics;
 pub use ir::{
-    FillRule, FontIndex, FontSpec, GlyphName, GlyphNames, GlyphProc, Image, ImageRef, IrOp, Op,
-    Page, PageSink, ProgramRef, Resources, SpaceRef, glyph_names,
+    Annot, Collected, DocMark, FillRule, FontIndex, FontSpec, GlyphName, GlyphNames, GlyphProc,
+    Image, ImageRef, IrOp, LinkTarget, Op, Page, PageAttrs, PageSink, ProgramRef, Resources,
+    SpaceRef, Target, View, glyph_names,
 };
 pub use real::{fmt_real, fmt_reals};
 pub use state::{ClipEntry, GState, Path};

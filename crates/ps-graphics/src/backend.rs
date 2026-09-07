@@ -26,14 +26,15 @@ use std::collections::{BTreeMap, HashMap};
 
 use ps_vm::{
     Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    Matrix, Point, Rect, Seg, SpaceSpec, VmError,
+    MarkValue, Matrix, Point, Rect, Seg, SpaceSpec, VmError,
 };
 
 use crate::arc;
 use crate::ir::{
-    FillRule, FontIndex, FontSpec, GlyphNames, GlyphProc, IrOp, Op, Page, PageSink, ProgramRef,
-    glyph_names,
+    Annot, DocMark, FillRule, FontIndex, FontSpec, GlyphNames, GlyphProc, IrOp, Op, Page, PageSink,
+    ProgramRef, glyph_names,
 };
+use crate::marks::{self, Parsed};
 use crate::state::{ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, rect_segments};
 
 /// What the IR last set, tracked per open `Save`.
@@ -157,6 +158,15 @@ pub struct Graphics<S> {
     /// The Type 3 resources of this page by font family (`FID`).
     type3: Vec<(u32, FontIndex)>,
     captures: Vec<Capture>,
+    /// Pages delivered so far; the page under construction is the next
+    /// one, which is what a mark without a page key refers to.
+    delivered: usize,
+    /// Link annotations a mark placed on a page not yet under
+    /// construction, by page number.
+    pending_annots: BTreeMap<usize, Vec<Annot>>,
+    /// Marks tolerated and dropped, by kind (`ANN/<Subtype>` for an
+    /// annotation of another subtype).
+    ignored: BTreeMap<Vec<u8>, usize>,
 }
 
 impl<S: PageSink> Graphics<S> {
@@ -173,6 +183,9 @@ impl<S: PageSink> Graphics<S> {
             page_fonts: HashMap::new(),
             type3: Vec::new(),
             captures: Vec::new(),
+            delivered: 0,
+            pending_annots: BTreeMap::new(),
+            ignored: BTreeMap::new(),
         }
     }
 
@@ -192,6 +205,26 @@ impl<S: PageSink> Graphics<S> {
     /// The operations recorded for the page under construction.
     pub fn ops(&self) -> &[Op] {
         &self.page.ops
+    }
+
+    /// The link annotations of the page under construction.
+    pub fn annots(&self) -> &[Annot] {
+        &self.page.annots
+    }
+
+    /// The number of the page under construction, from 1.
+    pub fn current_page(&self) -> usize {
+        self.delivered + 1
+    }
+
+    /// How many marks of each kind were tolerated and dropped.
+    pub fn ignored_marks(&self) -> &BTreeMap<Vec<u8>, usize> {
+        &self.ignored
+    }
+
+    fn ignore_mark(&mut self, kind: Vec<u8>) {
+        *self.ignored.entry(kind.clone()).or_insert(0) += 1;
+        self.sink.document(DocMark::Ignored { kind });
     }
 
     /// Records an operation where emission currently goes: the page, or
@@ -529,7 +562,13 @@ impl<S: PageSink> Graphics<S> {
         Ok(())
     }
 
-    fn deliver(&mut self, page: Page) {
+    /// Delivers a page, with the annotations marks placed on it ahead of
+    /// time, and counts it.
+    fn deliver(&mut self, mut page: Page) {
+        if let Some(annots) = self.pending_annots.remove(&self.current_page()) {
+            page.annots.extend(annots);
+        }
+        self.delivered += 1;
         self.sink.page(page);
     }
 }
@@ -975,12 +1014,15 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         Ok(())
     }
 
+    /// Erases the marks on the page; annotations are not marks and stay.
     fn erasepage(&mut self) -> Result<(), VmError> {
         self.page_operation()?;
         if self.gstate.null_device {
             return Ok(());
         }
+        let annots = std::mem::take(&mut self.page.annots);
         self.reset_page(self.gstate.media_box);
+        self.page.annots = annots;
         Ok(())
     }
 
@@ -990,6 +1032,23 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         self.gstate.null_device = true;
         self.gstate.ctm = Matrix::IDENTITY;
         self.gstate.clip.clear();
+        Ok(())
+    }
+
+    /// A link lands on its page — the one under construction, or a later
+    /// one it names — and a document mark goes to the sink at once with
+    /// its page resolved; an earlier page can no longer take a link.
+    fn pdfmark(&mut self, kind: &[u8], entries: &[MarkValue]) -> Result<(), VmError> {
+        let current = self.current_page();
+        match marks::parse(kind, entries, self.gstate.ctm, current) {
+            Parsed::Annot { page, annot } if page == current => self.page.annots.push(annot),
+            Parsed::Annot { page, annot } if page > current => {
+                self.pending_annots.entry(page).or_default().push(annot);
+            }
+            Parsed::Annot { .. } => self.ignore_mark(kind.to_vec()),
+            Parsed::Doc(mark) => self.sink.document(mark),
+            Parsed::Ignored(key) => self.ignore_mark(key),
+        }
         Ok(())
     }
 }

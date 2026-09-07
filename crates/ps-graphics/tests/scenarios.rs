@@ -548,13 +548,13 @@ fn filling_a_charpath_records_one_fill_and_no_text() {
     let fills = fills(page);
     assert_eq!(fills.len(), 1);
     assert_eq!(page.ops.len(), 1);
-    // The program's moveto, the square at (100, 100) scaled by 0.01, and
-    // the trailing point charpath leaves at the advance.
+    // The square at (100, 100) scaled by 0.01 — the program's moveto is
+    // replaced by the outline's own — and the trailing point charpath
+    // leaves at the advance.
     assert!(
         path_near(
             &fills[0],
             &[
-                Seg::Move(p(100.0, 100.0)),
                 Seg::Move(p(100.5, 100.0)),
                 Seg::Line(p(105.5, 100.0)),
                 Seg::Line(p(105.5, 105.0)),
@@ -585,7 +585,7 @@ fn a_seac_glyph_shows_with_the_composite_advance_and_outlines_both_components() 
     assert_eq!(fills.len(), 1);
     // The base e at its sidebearing, then the accent displaced by
     // (sbx - asb + adx, ady) = (140, 20) glyph units.
-    let outline: Vec<Seg> = fills[0][3..].to_vec();
+    let outline: Vec<Seg> = fills[0].clone();
     assert!(
         path_near(
             &outline,
@@ -614,7 +614,7 @@ fn a_type42_charpath_box_is_the_cubic_control_box() {
         corpus_truetype().type42("SynTT", &[(97, "a"), (111, "o")])
     ));
     assert_eq!(run.outcome, Outcome::Ok);
-    assert_eq!(run.output, "0.0\n-3.372\n11.719\n3.138\n");
+    assert_eq!(run.output, "0.977\n-3.372\n11.719\n3.138\n");
     let page = &run.pages[0];
     let fills = fills(page);
     assert_eq!(fills.len(), 1);
@@ -624,7 +624,7 @@ fn a_type42_charpath_box_is_the_cubic_control_box() {
         .count();
     assert_eq!(curves, 2);
     let scale = 20.0 / 2048.0;
-    let ys: Vec<f32> = fills[0][1..fills[0].len() - 1]
+    let ys: Vec<f32> = fills[0][..fills[0].len() - 1]
         .iter()
         .flat_map(|s| match s {
             Seg::Move(a) | Seg::Line(a) => vec![a.y],
@@ -783,7 +783,6 @@ fn charpath_through_a_composite_font_fills_the_outline() {
         path_near(
             &fills[0],
             &[
-                Seg::Move(p(100.0, 100.0)),
                 Seg::Move(p(100.5, 100.0)),
                 Seg::Line(p(104.5, 100.0)),
                 Seg::Line(p(104.5, 104.0)),

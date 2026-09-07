@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: two moves. A moveto right after another replaces the
+% subpath start, so the stroked path is Move(20,20) Line(30,30) with no
+% one-point subpath at (10,10) before it.
+10 10 moveto 20 20 moveto 30 30 lineto stroke
+showpage

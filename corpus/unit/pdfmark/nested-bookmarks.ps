@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: nested bookmarks. A chapter with a count of two is followed
+% by its two children, all pointing at the page under construction,
+% page 1. The .ir golden lists the three outline entries; the .pdf
+% golden holds the outline tree with the chapter open, its children
+% linked as siblings, and every item's destination the first page.
+[ /Title (Chapter) /Count 2 /OUT pdfmark
+[ /Title (First) /Count 0 /OUT pdfmark
+[ /Title (Second) /Count 0 /OUT pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage

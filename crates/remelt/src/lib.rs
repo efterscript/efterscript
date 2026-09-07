@@ -6,8 +6,8 @@
 //! Drives the VM, consumes the vector IR, and writes PDF. Vector-preserving
 //! and colour-preserving: nothing is rasterised, nothing is converted.
 //! Policies (image recompression, font-embedding rules, colour strategy,
-//! `setdistillerparams` compatibility), text, and `pdfmark` are later
-//! layers on the two pieces here.
+//! `setdistillerparams` compatibility) are later layers on the two pieces
+//! here; text and the document structure `pdfmark` builds are in.
 //!
 //! [`PdfSink`] is a [`PageSink`] that writes each delivered page into a
 //! `pdf-out` document as it arrives, so a page is on disk when `showpage`
@@ -20,17 +20,19 @@
 //! type: old type in, clean type out.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::rc::Rc;
 use std::{error, fmt};
 
-use ps_graphics::{Graphics, Page, PageSink};
+use ps_graphics::{DocMark, Graphics, Page, PageSink};
 use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
 
 mod composite;
 mod content;
 mod embedded;
 mod fonts;
+mod marks;
 mod resources;
 mod sink;
 
@@ -65,6 +67,11 @@ pub struct Report {
     /// What the document could not carry as it was recorded, one line
     /// each, prefixed with the page it concerns.
     pub notes: Vec<String>,
+    /// `pdfmark`s honoured: document marks and link annotations.
+    pub marks_written: usize,
+    /// `pdfmark`s tolerated and dropped, by kind (`ANN/<Subtype>` for an
+    /// annotation of another subtype).
+    pub marks_ignored: BTreeMap<String, usize>,
 }
 
 /// Why a document could not be written. The interpreter's own failures
@@ -108,6 +115,12 @@ impl<W: Write> PageSink for Shared<W> {
             sink.page(page);
         }
     }
+
+    fn document(&mut self, mark: DocMark) {
+        if let Some(sink) = self.0.borrow_mut().as_mut() {
+            sink.document(mark);
+        }
+    }
 }
 
 /// Runs `program` in an interpreter configured by `config`, writing every
@@ -133,6 +146,8 @@ pub fn distill<W: Write + 'static>(
         .expect("the interpreter has been dropped and with it the only other handle");
     let pages = sink.pages();
     let notes = sink.notes().to_vec();
+    let marks_written = sink.marks_written();
+    let marks_ignored = sink.marks_ignored().clone();
     let out = sink.finish()?;
     Ok((
         Report {
@@ -140,6 +155,8 @@ pub fn distill<W: Write + 'static>(
             pages,
             substitutions,
             notes,
+            marks_written,
+            marks_ignored,
         },
         out,
     ))

@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a closed branch and a second level. A part whose count is
+% negative is closed: its two children are nested under it but hidden,
+% so the outline root counts only the two top-level items, and the
+% part's own count in the document is the negative of what opening it
+% would show. One child has a view of its own; the appendix names
+% page 2.
+[ /Title (Part) /Count -2 /OUT pdfmark
+[ /Title (One) /View [/FitH 700] /OUT pdfmark
+[ /Title (Two) /Count 0 /OUT pdfmark
+[ /Title (Appendix) /Page 2 /View [/XYZ 0 792 1] /OUT pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage
+72 600 moveto 300 600 lineto stroke
+showpage

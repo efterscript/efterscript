@@ -1,0 +1,11 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+ops:
+m 72 700
+l 300 700
+S
+annot link 72 700 300 720 uri=(https://example.org/) border=0 0 1 color=0 0 1

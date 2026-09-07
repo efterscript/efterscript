@@ -1,7 +1,7 @@
 %!PS
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
-% expect-output: 0.0
+% expect-output: 0.977
 % expect-output: -3.372
 % expect-output: 11.719
 % expect-output: 3.138
@@ -11,10 +11,11 @@
 % quadratic control, so the path's extent in y is 166.67 to 833.33
 % units, within the quadratic box: at 20/2048 per unit, shifted down
 % by 5 so the run's start and end points lie inside, -3.372 to 3.138.
-% In x the box spans the run, from the start point to the trailing
-% point charpath leaves at the advance, since pathbbox counts both;
+% In x the box spans the outline's own start (100 units, 0.977) to the
+% trailing point charpath leaves at the advance: the program's moveto
+% is replaced by the outline's first, so the origin does not count;
 % the .ir golden pins the outline itself.
-% Expect: 0.0, -3.372, 11.719, 3.138.
+% Expect: 0.977, -3.372, 11.719, 3.138.
 % The font program below is synthesised by ps-fonts' corpus
 % generator (tests/corpus_fonts.rs); regenerate rather than edit.
 %!PS-TrueTypeFont

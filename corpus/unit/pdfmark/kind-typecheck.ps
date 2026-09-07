@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: the kind must be a name. The last object before pdfmark is
+% a string here, so the operator raises typecheck and leaves its
+% operands on the stack.
+% expect-error: typecheck
+[ /Title (x) (OUT) pdfmark
+showpage

@@ -1,0 +1,73 @@
+%PDF-1.7
+%åæôò
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% GENERATED-BY: difftest --update-pdf
+2 0 obj
+<< /Length 21 >>
+stream
+72 700 m
+300 700 l
+S
+
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 21 >>
+stream
+72 600 m
+300 600 l
+S
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Type /Outlines /First 7 0 R /Last 10 0 R /Count 2 >>
+endobj
+7 0 obj
+<< /Title (Part) /Parent 6 0 R /Next 10 0 R /First 8 0 R /Last 9 0 R /Count -2 /Dest [ 3 0 R /Fit ] >>
+endobj
+8 0 obj
+<< /Title (One) /Parent 7 0 R /Next 9 0 R /Dest [ 3 0 R /FitH 700 ] >>
+endobj
+9 0 obj
+<< /Title (Two) /Parent 7 0 R /Prev 8 0 R /Dest [ 3 0 R /Fit ] >>
+endobj
+10 0 obj
+<< /Title (Appendix) /Parent 6 0 R /Prev 7 0 R /Dest [ 5 0 R /XYZ 0 792 1 ] >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 3 0 R 5 0 R ] /Count 2 >>
+endobj
+11 0 obj
+<< /Type /Catalog /Pages 1 0 R /Outlines 6 0 R >>
+endobj
+12 0 obj
+<< /Producer (EfterScript 0.0.1) >>
+endobj
+xref
+0 13
+0000000000 65535 f
+0000000946 00000 n
+0000000140 00000 n
+0000000211 00000 n
+0000000317 00000 n
+0000000388 00000 n
+0000000494 00000 n
+0000000566 00000 n
+0000000684 00000 n
+0000000770 00000 n
+0000000851 00000 n
+0000001011 00000 n
+0000001077 00000 n
+trailer
+<< /Size 13 /Root 11 0 R /Info 12 0 R >>
+startxref
+1129
+%%EOF

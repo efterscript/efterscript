@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: view settings. The catalog opens the document with its
+% bookmarks shown, one column, on page 2 at the viewer's current
+% position and zoom; the bookmark gives the outline panel something
+% to show.
+[ /PageMode /UseOutlines /PageLayout /OneColumn
+  /Page 2 /View [/XYZ null null null] /DOCVIEW pdfmark
+[ /Title (Second page) /Page 2 /OUT pdfmark
+72 700 moveto 300 700 lineto stroke
+showpage
+72 600 moveto 300 600 lineto stroke
+showpage
