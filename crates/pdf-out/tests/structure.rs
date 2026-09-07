@@ -177,7 +177,7 @@ fn flate_stream_round_trips() {
     let flate = pdf.resolve(5);
     assert_eq!(flate.get("Filter").unwrap().as_name(), b"FlateDecode");
     assert_eq!(
-        common::inflate_stored(flate.stream_data()),
+        common::inflate(flate.stream_data()),
         b"compressible? stored, but valid."
     );
     // And a stream long enough to split into two stored blocks.
@@ -195,10 +195,7 @@ fn flate_stream_round_trips() {
         .unwrap();
     let bytes = doc.finish(catalog, None).unwrap();
     let pdf = common::check(&bytes);
-    assert_eq!(
-        common::inflate_stored(pdf.resolve(2).stream_data()),
-        long_data
-    );
+    assert_eq!(common::inflate(pdf.resolve(2).stream_data()), long_data);
 }
 
 #[test]
@@ -213,6 +210,51 @@ fn stream_length_is_exact() {
             stream.stream_data().len()
         );
     }
+}
+
+fn catalog_only<W: std::io::Write>(mut doc: Document<W>) -> W {
+    let catalog = doc.alloc();
+    doc.write_obj(catalog, |v| {
+        v.dict(|d| {
+            d.key("Type").name("Catalog");
+        });
+    })
+    .unwrap();
+    doc.finish(catalog, None).unwrap()
+}
+
+#[test]
+fn the_version_is_patched_at_finish_on_a_seekable_sink() {
+    let mut doc = Document::new_seekable(std::io::Cursor::new(Vec::new())).unwrap();
+    assert!(doc.version_patchable());
+    doc.set_version(1, 4).unwrap();
+    let bytes = catalog_only(doc).into_inner();
+    assert!(bytes.starts_with(b"%PDF-1.4\n%"));
+    let pdf = common::check(&bytes);
+    assert_eq!(pdf.objects.len(), 1);
+
+    // Setting it back to 1.7 leaves the header as written.
+    let mut doc = Document::new_seekable(std::io::Cursor::new(Vec::new())).unwrap();
+    doc.set_version(1, 4).unwrap();
+    doc.set_version(1, 7).unwrap();
+    assert!(catalog_only(doc).into_inner().starts_with(b"%PDF-1.7\n"));
+}
+
+#[test]
+fn a_non_seekable_sink_keeps_the_written_version() {
+    let mut doc = Document::new(Vec::new()).unwrap();
+    assert!(!doc.version_patchable());
+    doc.set_version(1, 4).unwrap();
+    assert!(catalog_only(doc).starts_with(b"%PDF-1.7\n"));
+}
+
+#[test]
+fn version_digits_are_checked() {
+    let mut doc = Document::new_seekable(std::io::Cursor::new(Vec::new())).unwrap();
+    assert!(matches!(doc.set_version(1, 10), Err(Error::InvalidVersion)));
+    assert!(matches!(doc.set_version(10, 0), Err(Error::InvalidVersion)));
+    doc.set_version(2, 0).unwrap();
+    assert!(catalog_only(doc).into_inner().starts_with(b"%PDF-2.0\n"));
 }
 
 #[test]
@@ -239,7 +281,7 @@ proptest! {
         doc.write_stream(r, Filter::Flate, &data, |_| {}).unwrap();
         let bytes = doc.finish(catalog, None).unwrap();
         let pdf = common::check(&bytes);
-        prop_assert_eq!(common::inflate_stored(pdf.resolve(2).stream_data()), data);
+        prop_assert_eq!(common::inflate(pdf.resolve(2).stream_data()), data);
     }
 
     #[test]

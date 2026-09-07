@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: distiller-params-unknown-keys
+% expect-output: false
+% expect-output: 1
+% Scenario: a parameter request reads back. setdistillerparams merges
+% the request into the current parameters, a recognised key and an
+% unknown one alike, and currentdistillerparams returns them.
+% Expect: false, then 1.
+<< /CompressPages false /Foo 1 >> setdistillerparams
+currentdistillerparams /CompressPages get =
+currentdistillerparams /Foo get =

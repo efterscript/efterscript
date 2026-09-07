@@ -113,6 +113,7 @@ pub mod array;
 pub mod cidinit;
 pub mod control;
 pub mod dict;
+pub mod distiller;
 pub mod embedded;
 pub mod errors;
 pub mod file;
@@ -150,6 +151,7 @@ const MODULES: &[&[OpEntry]] = &[
     fontset::OPS,
     cidinit::OPS,
     pdfmark::OPS,
+    distiller::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -241,6 +243,8 @@ mod tests {
         assert!(find("findresource", Visibility::Public).is_some());
         assert!(find("pdfmark", Visibility::Graphics).is_some());
         assert!(find("pdfmark", Visibility::Public).is_none());
+        assert!(find("setdistillerparams", Visibility::Public).is_some());
+        assert!(find("currentdistillerparams", Visibility::Public).is_some());
     }
 
     #[test]

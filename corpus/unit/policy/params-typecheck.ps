@@ -1,0 +1,23 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: distiller-params-typecheck
+% expect-output: typecheck
+% expect-output: typecheck
+% expect-output: typecheck
+% expect-output: true
+% Scenario: ill-typed recognised keys. setdistillerparams checks the
+% type of the keys it recognises before changing anything: an integer
+% for CompressPages, a name for ColorImageResolution, and a string for
+% ColorImageDownsampleType are each a typecheck, and the request that
+% failed left the parameters as they were. A real is accepted where
+% an integer is documented.
+% Expect: typecheck three times, then true.
+{ << /CompressPages 3 /SubsetFonts false >> setdistillerparams } stopped pop
+$error /errorname get =
+{ << /ColorImageResolution /High >> setdistillerparams } stopped pop
+$error /errorname get =
+{ << /ColorImageDownsampleType (Average) >> setdistillerparams } stopped pop
+$error /errorname get =
+<< /GrayImageResolution 100.0 >> setdistillerparams
+currentdistillerparams /SubsetFonts get =

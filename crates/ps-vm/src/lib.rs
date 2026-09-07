@@ -43,6 +43,7 @@ pub use memory::{
 };
 pub use names::{Atom, MAX_NAME_LEN, NameTable, NameTooLong};
 pub use object::{Access, CompositeRef, Handle, Object, Space, Type};
+pub use ops::distiller::default_distiller_params;
 pub use ops::{Num, OpEntry, OpFn, Sig, Visibility};
 pub use scanner::{
     DscObserver, MAX_PROC_DEPTH, MAX_STRING_LEN, Resolver, Scan, ScanError, ScanErrorKind, Scanner,

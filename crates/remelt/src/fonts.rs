@@ -19,7 +19,9 @@
 //! values of the colour spaces, images, and fonts its glyphs name —
 //! reuses the object. Embedded fonts are the exception: their objects
 //! are allocated here and written when the document ends (see
-//! `embedded`), since their subset depends on every page.
+//! `embedded`), since their subset depends on every page. With
+//! `EmbedAllFonts` in force a resident face with an outline asset joins
+//! them, to be embedded from the asset at the end (see `embed_all`).
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -111,6 +113,9 @@ impl Key {
 pub(crate) struct FontTable {
     written: Vec<(Key, Ref)>,
     pub(crate) embedded: EmbeddedTable,
+    /// Resident faces written unembedded as pages arrived, in order of
+    /// first use: what `EmbedAllFonts` could not reach.
+    pub(crate) unembedded: Vec<ResidentFace>,
 }
 
 impl FontTable {
@@ -123,11 +128,15 @@ impl FontTable {
 /// returns one reference per font resource, in index order, with the
 /// one-byte codes of every composite font the document writes as a
 /// Type 3 fallback. `objects` holds the page's colour spaces and
-/// images, already written, for the `Resources` of a Type 3 font.
+/// images, already written, for the `Resources` of a Type 3 font. With
+/// `embed_all` a resident face that has outlines in this build is
+/// deferred to the end of the document like an embedded font.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_fonts<W: Write>(
     doc: &mut Document<W>,
     page: &Page,
     filter: Filter,
+    embed_all: bool,
     table: &mut FontTable,
     objects: &Objects,
     notes: &mut Vec<String>,
@@ -137,7 +146,12 @@ pub(crate) fn write_fonts<W: Write>(
     let mut pending = Vec::new();
     let mut recode = Recode::new();
     for (index, spec) in resources.fonts.iter().enumerate() {
-        if matches!(spec, FontSpec::Embedded { .. } | FontSpec::Composite { .. }) {
+        let deferred = match spec {
+            FontSpec::Embedded { .. } | FontSpec::Composite { .. } => true,
+            FontSpec::Resident { base, .. } => embed_all && base.has_outlines(),
+            FontSpec::Type3 { .. } => false,
+        };
+        if deferred {
             refs.push(
                 table
                     .embedded
@@ -162,6 +176,9 @@ pub(crate) fn write_fonts<W: Write>(
     for (spec, r) in pending {
         match spec {
             FontSpec::Resident { base, encoding } => {
+                if !table.unembedded.contains(base) {
+                    table.unembedded.push(*base);
+                }
                 write_resident(doc, r, *base, encoding, filter)?;
             }
             FontSpec::Type3 {
@@ -380,7 +397,9 @@ fn write_descriptor<W: Write>(
     Ok(r)
 }
 
-fn write_resident<W: Write>(
+/// The unembedded form of a resident face: the standard name, widths
+/// from the metrics, differences from the built-in encoding.
+pub(crate) fn write_resident<W: Write>(
     doc: &mut Document<W>,
     r: Ref,
     base: ResidentFace,

@@ -23,7 +23,7 @@ use support::{Pdf, Value, array, check, kids, number, page, producer};
 const LETTER: Bounds = Bounds::new(0.0, 0.0, 612.0, 792.0);
 
 fn uncompressed() -> Options {
-    Options { compress: false }
+    Options::compress(false)
 }
 
 fn blank() -> Page {

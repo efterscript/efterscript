@@ -110,7 +110,7 @@ pub fn execute(program: &str, budget: u64) -> Run {
 /// Distils `program` to an uncompressed document in memory.
 pub fn distill(program: &str, budget: u64) -> Result<Vec<u8>, String> {
     let (config, _, _) = config(budget);
-    let options = Options { compress: false };
+    let options = Options::compress(false).lock("CompressPages");
     let result = catch_unwind(AssertUnwindSafe(move || {
         remelt::distill(program.as_bytes(), config, &options, Vec::new())
     }));

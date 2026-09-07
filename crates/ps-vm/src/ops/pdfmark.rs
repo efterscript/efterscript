@@ -44,7 +44,7 @@ fn pdfmark(i: &mut Interp) -> Result<(), VmError> {
 
 /// The value of one object in a mark; procedures and every type without
 /// a PDF counterpart are `typecheck`.
-fn value(i: &Interp, object: Object, depth: usize) -> Result<MarkValue, VmError> {
+pub(crate) fn value(i: &Interp, object: Object, depth: usize) -> Result<MarkValue, VmError> {
     if depth > MAX_DEPTH {
         return Err(VmError::LimitCheck);
     }

@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use ps_graphics::{Collected, Graphics};
 use ps_vm::{Config, Interp, Io, Outcome, SliceSource, Stream, VmError};
+use remelt::{MarkValue, NotHonoured, Options, PdfSink};
 
 struct HostStdout;
 
@@ -63,8 +64,14 @@ impl Stream for HostStdin {
 fn usage() -> ExitCode {
     eprintln!("usage: efterscript run <file.ps>");
     eprintln!("       efterscript ir <file.ps>");
-    eprintln!("       efterscript pdf <file.ps> [<out.pdf> | -]");
+    eprintln!("       efterscript pdf [options] <file.ps> [<out.pdf> | -]");
     eprintln!("       efterscript --version");
+    eprintln!("pdf options:");
+    eprintln!("       --param <Key>=<Value>   a distillation parameter (repeatable)");
+    eprintln!("       --no-compress           CompressPages false");
+    eprintln!("       --embed-all             EmbedAllFonts true");
+    eprintln!("       --no-subset             SubsetFonts false");
+    eprintln!("       --lock <Key>            the job may not change <Key> (repeatable)");
     ExitCode::from(2)
 }
 
@@ -110,19 +117,91 @@ fn ir(bytes: &[u8]) -> ExitCode {
     exit_code(outcome)
 }
 
-/// Distils the program into `out`. The exit code follows the job's
-/// outcome once the document is written, so a partially distilled job is
-/// still inspectable; 2 means the document itself could not be written.
-fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
-    let config = Config {
-        io,
-        ..Default::default()
+/// What the `pdf` command was asked for.
+struct PdfArgs {
+    input: String,
+    target: PathBuf,
+    options: Options,
+    /// Command-line parameters the writer does not honour.
+    refused: Vec<NotHonoured>,
+}
+
+/// A `--param` value: a boolean, an integer, a real, else a name (with
+/// or without its slash).
+fn param_value(text: &str) -> MarkValue {
+    match text {
+        "true" => MarkValue::Bool(true),
+        "false" => MarkValue::Bool(false),
+        _ => {
+            if let Ok(i) = text.parse::<i32>() {
+                MarkValue::Int(i)
+            } else if let Ok(r) = text.parse::<f32>() {
+                MarkValue::Real(r)
+            } else {
+                MarkValue::Name(text.trim_start_matches('/').as_bytes().to_vec())
+            }
+        }
+    }
+}
+
+/// Parses the `pdf` command's arguments. Locks apply after every
+/// parameter, so their order on the line does not matter.
+fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
+    let mut options = Options::default();
+    let mut refused = Vec::new();
+    let mut locks = Vec::new();
+    let mut positional = Vec::new();
+    let mut at = 0;
+    while at < args.len() {
+        let arg = args[at];
+        at += 1;
+        let mut value = || {
+            let value = args.get(at).ok_or_else(|| format!("{arg} needs a value"))?;
+            at += 1;
+            Ok::<&str, String>(value)
+        };
+        match arg {
+            "--param" => {
+                let pair = value()?;
+                let (key, text) = pair
+                    .split_once('=')
+                    .ok_or_else(|| format!("--param wants Key=Value, got {pair}"))?;
+                let entry = (key.as_bytes().to_vec(), param_value(text));
+                refused.extend(options.params.merge(&[entry]));
+            }
+            "--no-compress" => options.params.compress_pages = false,
+            "--embed-all" => options.params.embed_all_fonts = true,
+            "--no-subset" => options.params.subset_fonts = false,
+            "--lock" => locks.push(value()?.to_string()),
+            _ if arg.starts_with("--") => return Err(format!("unknown option {arg}")),
+            _ => positional.push(arg),
+        }
+    }
+    for key in locks {
+        options = options.lock(&key);
+    }
+    let (input, target) = match positional.as_slice() {
+        [input] => (*input, Path::new(input).with_extension("pdf")),
+        [input, target] => (*input, PathBuf::from(target)),
+        _ => return Err("pdf takes an input and at most one output".to_string()),
     };
-    let options = remelt::Options::default();
-    let result = remelt::distill(bytes, config, &options, BufWriter::new(out));
+    Ok(PdfArgs {
+        input: input.to_string(),
+        target,
+        options,
+        refused,
+    })
+}
+
+/// Prints the report's lines and returns the job's exit code, or 2 when
+/// the document itself could not be written.
+fn conclude(
+    result: Result<(remelt::Report, ()), remelt::Error>,
+    refused: Vec<NotHonoured>,
+) -> ExitCode {
     let _ = std::io::stdout().flush();
     match result {
-        Ok((report, _)) => {
+        Ok((report, ())) => {
             if !report.substitutions.is_empty() {
                 let pairs: Vec<String> = report
                     .substitutions
@@ -157,6 +236,18 @@ fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
                     kinds.join(", ")
                 );
             }
+            let refused: Vec<String> = refused
+                .iter()
+                .chain(&report.not_honoured)
+                .map(|(key, text)| format!("{key}={text}"))
+                .collect();
+            if !refused.is_empty() {
+                eprintln!(
+                    "efterscript: {} parameter(s) not honoured: {}",
+                    refused.len(),
+                    refused.join(", ")
+                );
+            }
             exit_code(report.outcome)
         }
         Err(e) => {
@@ -166,18 +257,51 @@ fn distill_to<W: Write + 'static>(bytes: &[u8], io: Io, out: W) -> ExitCode {
     }
 }
 
-/// Writes the PDF to `target`, or to standard output for `-`, in which
+/// Distils the program into `sink`. The exit code follows the job's
+/// outcome once the document is written, so a partially distilled job is
+/// still inspectable.
+fn distill_to<W: Write + 'static>(
+    bytes: &[u8],
+    io: Io,
+    sink: PdfSink<W>,
+    refused: Vec<NotHonoured>,
+) -> ExitCode {
+    let config = Config {
+        io,
+        ..Default::default()
+    };
+    let result = remelt::distill_into(bytes, config, sink).map(|(report, out)| {
+        drop(out);
+        (report, ())
+    });
+    conclude(result, refused)
+}
+
+/// Writes the PDF to the target, or to standard output for `-`, in which
 /// case the program's own output moves to standard error so the PDF can
-/// be piped.
-fn pdf(bytes: &[u8], target: &Path) -> ExitCode {
+/// be piped. A file can seek, so its header names the compatibility
+/// level; standard output cannot, so a level below 1.7 is reported.
+fn pdf(bytes: &[u8], args: PdfArgs) -> ExitCode {
+    let PdfArgs {
+        target,
+        options,
+        refused,
+        ..
+    } = args;
     if target == Path::new("-") {
         let io = Io::new(HostStderr, HostStderr).with_stdin(HostStdin);
-        return distill_to(bytes, io, std::io::stdout());
+        return match PdfSink::new(BufWriter::new(std::io::stdout()), options) {
+            Ok(sink) => distill_to(bytes, io, sink, refused),
+            Err(e) => conclude(Err(e), refused),
+        };
     }
-    match std::fs::File::create(target) {
+    match std::fs::File::create(&target) {
         Ok(file) => {
             let io = Io::new(HostStdout, HostStderr).with_stdin(HostStdin);
-            distill_to(bytes, io, file)
+            match PdfSink::new_seekable(BufWriter::new(file), options) {
+                Ok(sink) => distill_to(bytes, io, sink, refused),
+                Err(e) => conclude(Err(e), refused),
+            }
         }
         Err(e) => {
             eprintln!("efterscript: cannot create {}: {e}", target.display());
@@ -210,16 +334,80 @@ fn main() -> ExitCode {
             Ok(bytes) => ir(&bytes),
             Err(code) => code,
         },
-        ["pdf", input, rest @ ..] if rest.len() <= 1 => {
-            let target = rest
-                .first()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| Path::new(input).with_extension("pdf"));
-            match read_program(input) {
-                Ok(bytes) => pdf(&bytes, &target),
+        ["pdf", rest @ ..] => match pdf_args(rest) {
+            Ok(parsed) => match read_program(&parsed.input) {
+                Ok(bytes) => pdf(&bytes, parsed),
                 Err(code) => code,
+            },
+            Err(message) => {
+                eprintln!("efterscript: {message}");
+                usage()
             }
-        }
+        },
         _ => usage(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn values_parse_by_shape() {
+        assert_eq!(param_value("true"), MarkValue::Bool(true));
+        assert_eq!(param_value("false"), MarkValue::Bool(false));
+        assert_eq!(param_value("72"), MarkValue::Int(72));
+        assert_eq!(param_value("1.4"), MarkValue::Real(1.4));
+        assert_eq!(
+            param_value("/Average"),
+            MarkValue::Name(b"Average".to_vec())
+        );
+        assert_eq!(param_value("All"), MarkValue::Name(b"All".to_vec()));
+    }
+
+    #[test]
+    fn flags_shape_the_options_and_locks_apply_last() {
+        let parsed = pdf_args(&[
+            "--lock",
+            "CompressPages",
+            "--param",
+            "CompressPages=false",
+            "--no-subset",
+            "--embed-all",
+            "in.ps",
+            "--param",
+            "AutoRotatePages=/All",
+            "--param",
+            "GrayImageResolution=5",
+        ])
+        .unwrap();
+        assert_eq!(parsed.input, "in.ps");
+        assert_eq!(parsed.target, PathBuf::from("in.pdf"));
+        assert!(!parsed.options.params.compress_pages);
+        assert!(!parsed.options.params.subset_fonts);
+        assert!(parsed.options.params.embed_all_fonts);
+        assert!(parsed.options.params.locked.contains("CompressPages"));
+        assert_eq!(
+            parsed.refused,
+            vec![
+                ("AutoRotatePages".to_string(), "/All".to_string()),
+                (
+                    "GrayImageResolution".to_string(),
+                    "5 (9 to 2400)".to_string()
+                ),
+            ]
+        );
+        let parsed = pdf_args(&["--no-compress", "a.ps", "-"]).unwrap();
+        assert_eq!(parsed.target, PathBuf::from("-"));
+        assert!(!parsed.options.params.compress_pages);
+    }
+
+    #[test]
+    fn malformed_lines_are_refused() {
+        assert!(pdf_args(&["a.ps", "b.pdf", "c"]).is_err());
+        assert!(pdf_args(&[]).is_err());
+        assert!(pdf_args(&["--param", "NoEquals", "a.ps"]).is_err());
+        assert!(pdf_args(&["--lock"]).is_err());
+        assert!(pdf_args(&["--bogus", "a.ps"]).is_err());
     }
 }

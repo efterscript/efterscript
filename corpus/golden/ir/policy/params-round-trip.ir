@@ -1,0 +1,7 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+doc:
+param /CompressPages false
+param /Foo 1

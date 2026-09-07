@@ -39,6 +39,7 @@
 //! pages [cropbox <llx> <lly> <urx> <ury>] [rotate <n>]
 //! page <n> [cropbox <llx> <lly> <urx> <ury>] [rotate <n>]
 //! ignored /<kind>
+//! param /<key> <value>              one line per entry, PostScript syntax
 //! ```
 //!
 //! A resident font lists only the codes whose glyph differs from the
@@ -89,7 +90,7 @@
 //! its value.
 
 use ps_fonts::ProgramKind;
-use ps_vm::{Bounds, Glyph, ImageSpec, Matrix, Seg, SpaceSpec};
+use ps_vm::{Bounds, Glyph, ImageSpec, MarkValue, Matrix, Seg, SpaceSpec};
 
 use crate::ir::{
     Annot, DocMark, FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget, Op, Page,
@@ -537,6 +538,35 @@ fn mark(out: &mut String, mark: &DocMark) {
             out.push('\n');
         }
         DocMark::Ignored { kind } => out.push_str(&format!("ignored {}\n", ps_name(kind))),
+        DocMark::Params(entries) => {
+            for (key, value) in entries {
+                out.push_str(&format!("param {} {}\n", ps_name(key), mark_value(value)));
+            }
+        }
+    }
+}
+
+/// A parameter value in PostScript syntax: names as `/name`, strings in
+/// parentheses, arrays and dictionaries with their delimiters.
+pub fn mark_value(value: &MarkValue) -> String {
+    match value {
+        MarkValue::Name(name) => ps_name(name),
+        MarkValue::String(bytes) => ps_string(bytes),
+        MarkValue::Int(v) => v.to_string(),
+        MarkValue::Real(v) => fmt_real(*v),
+        MarkValue::Bool(v) => v.to_string(),
+        MarkValue::Null => "null".to_string(),
+        MarkValue::Array(items) => {
+            let inner: Vec<String> = items.iter().map(mark_value).collect();
+            format!("[ {} ]", inner.join(" "))
+        }
+        MarkValue::Dict(entries) => {
+            let inner: Vec<String> = entries
+                .iter()
+                .map(|(k, v)| format!("{} {}", ps_name(k), mark_value(v)))
+                .collect();
+            format!("<< {} >>", inner.join(" "))
+        }
     }
 }
 
@@ -677,5 +707,22 @@ mod tests {
             format!("{plain}\ndoc:\nignored /X\n")
         );
         assert_eq!(document(&[], &marks), "ir/1\ndoc:\nignored /X\n");
+        let params = [DocMark::Params(vec![
+            (b"CompressPages".to_vec(), MarkValue::Bool(false)),
+            (b"CompatibilityLevel".to_vec(), MarkValue::Real(1.4)),
+            (b"Type".to_vec(), MarkValue::Name(b"Average".to_vec())),
+            (
+                b"Never".to_vec(),
+                MarkValue::Array(vec![MarkValue::String(b"a".to_vec()), MarkValue::Null]),
+            ),
+            (
+                b"D".to_vec(),
+                MarkValue::Dict(vec![(b"k".to_vec(), MarkValue::Int(2))]),
+            ),
+        ])];
+        assert_eq!(
+            doc(&params),
+            "doc:\nparam /CompressPages false\nparam /CompatibilityLevel 1.4\nparam /Type /Average\nparam /Never [ (a) null ]\nparam /D << /k 2 >>\n"
+        );
     }
 }

@@ -69,6 +69,9 @@ image recompression with a lossy codec, PDF/A) plugs into.
 - `remelt`: ADDED requirements for embed-all and downsampling, and for
   the compatibility header.
 - `pdf-out`: ADDED requirement for real Flate compression.
+- `expected-divergences`: ADDED requirements for the parameter
+  operators' tolerance of unknown keys and their type checking, which
+  the reference converter does differently.
 
 ## Impact
 

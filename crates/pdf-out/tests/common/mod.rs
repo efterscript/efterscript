@@ -7,7 +7,12 @@
 
 #![allow(dead_code)] // Each integration-test target uses a subset.
 
+pub mod inflate;
+
 use std::collections::BTreeMap;
+
+#[allow(unused_imports)] // Each integration-test target uses a subset.
+pub use inflate::inflate;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -380,8 +385,12 @@ impl Pdf {
 /// binary marker, every xref offset at its `N 0 obj`, exact stream lengths,
 /// every reference resolvable, trailer `Root` and `Size` correct, `%%EOF`.
 pub fn check(bytes: &[u8]) -> Pdf {
-    // Header and binary marker.
-    assert!(bytes.starts_with(b"%PDF-1.7\n"), "missing version header");
+    // Header (any 1.x version) and binary marker.
+    assert!(bytes.starts_with(b"%PDF-1."), "missing version header");
+    assert!(
+        bytes[7].is_ascii_digit() && bytes[8] == b'\n',
+        "version header must be one digit each side of the dot"
+    );
     let marker_end = 9 + bytes[9..]
         .iter()
         .position(|&b| b == b'\n')
@@ -548,44 +557,4 @@ fn assert_references_resolve(value: &Value, pdf: &Pdf) {
         }
         _ => {}
     }
-}
-
-/// Minimal inflater for the writer's own stored-block zlib output; verifies
-/// framing and the Adler-32 checksum, then returns the payload.
-pub fn inflate_stored(z: &[u8]) -> Vec<u8> {
-    assert!(z.len() >= 2 + 5 + 4, "zlib stream too short");
-    assert_eq!(z[0] & 0x0F, 8, "compression method must be deflate");
-    assert_eq!((u32::from(z[0]) * 256 + u32::from(z[1])) % 31, 0, "FCHECK");
-    assert_eq!(z[1] & 0x20, 0, "no preset dictionary");
-    let mut pos = 2;
-    let mut out = Vec::new();
-    loop {
-        let header = z[pos];
-        assert_eq!(header & 0xFE, 0, "expected a stored block (BTYPE 00)");
-        let len = u16::from_le_bytes([z[pos + 1], z[pos + 2]]);
-        let nlen = u16::from_le_bytes([z[pos + 3], z[pos + 4]]);
-        assert_eq!(nlen, !len, "NLEN must be the complement of LEN");
-        pos += 5;
-        out.extend_from_slice(&z[pos..pos + usize::from(len)]);
-        pos += usize::from(len);
-        if header & 1 == 1 {
-            break;
-        }
-    }
-    let stored = u32::from_be_bytes([z[pos], z[pos + 1], z[pos + 2], z[pos + 3]]);
-    assert_eq!(pos + 4, z.len(), "trailing bytes after Adler-32");
-
-    const MOD: u32 = 65_521;
-    let mut a: u32 = 1;
-    let mut b: u32 = 0;
-    for chunk in out.chunks(5552) {
-        for &byte in chunk {
-            a += u32::from(byte);
-            b += a;
-        }
-        a %= MOD;
-        b %= MOD;
-    }
-    assert_eq!(stored, b << 16 | a, "Adler-32 mismatch");
-    out
 }

@@ -61,6 +61,7 @@ pub enum Call {
     ErasePage,
     NullDevice,
     PdfMark(Vec<u8>, Vec<MarkValue>),
+    DistillerParams(Vec<(Vec<u8>, MarkValue)>),
 }
 
 #[derive(Clone)]
@@ -463,6 +464,11 @@ impl GraphicsBackend for Recording {
 
     fn pdfmark(&mut self, kind: &[u8], entries: &[MarkValue]) -> Result<(), VmError> {
         self.record(Call::PdfMark(kind.to_vec(), entries.to_vec()));
+        Ok(())
+    }
+
+    fn set_distiller_params(&mut self, entries: &[(Vec<u8>, MarkValue)]) -> Result<(), VmError> {
+        self.record(Call::DistillerParams(entries.to_vec()));
         Ok(())
     }
 }

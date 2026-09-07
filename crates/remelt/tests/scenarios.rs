@@ -11,7 +11,7 @@ mod support;
 use std::path::Path;
 
 use ps_vm::{Config, Io, Outcome};
-use remelt::{Options, Report};
+use remelt::{Options, Params, Report};
 use support::{
     Value, array, check, color_space, content, decoded, kids, media_box, number, resources, xobject,
 };
@@ -37,7 +37,7 @@ fn distil_with(program: impl AsRef<[u8]>, options: &Options) -> Run {
 }
 
 fn distil(program: &str) -> Run {
-    distil_with(program, &Options { compress: false })
+    distil_with(program, &Options::compress(false))
 }
 
 // stroked-line.ps
@@ -53,6 +53,12 @@ fn a_stroked_line_distils() {
             notes: Vec::new(),
             marks_written: 0,
             marks_ignored: Default::default(),
+            params: Params {
+                compress_pages: false,
+                ..Params::default()
+            },
+            not_honoured: Vec::new(),
+            downsampled: 0,
         }
     );
     let pdf = check(&run.pdf);
@@ -96,6 +102,12 @@ fn a_job_with_no_pages() {
             notes: Vec::new(),
             marks_written: 0,
             marks_ignored: Default::default(),
+            params: Params {
+                compress_pages: false,
+                ..Params::default()
+            },
+            not_honoured: Vec::new(),
+            downsampled: 0,
         }
     );
     let pdf = check(&run.pdf);
@@ -256,7 +268,7 @@ fn two_runs_agree_on_every_corpus_graphics_and_text_file() {
     for path in files {
         // FontSet files carry a binary program after `StartData`.
         let program = std::fs::read(&path).unwrap();
-        for options in [Options { compress: false }, Options { compress: true }] {
+        for options in [Options::compress(false), Options::default()] {
             let first = distil_with(&program[..], &options);
             let second = distil_with(&program[..], &options);
             assert_eq!(first.report, second.report, "{}", path.display());
@@ -492,7 +504,7 @@ fn a_type1c_subset_round_trips_through_the_engine() {
     program.extend_from_slice(
         b"/SynCFF findfont 10 scalefont setfont 100 100 moveto (a) show showpage",
     );
-    let run = distil_with(&program[..], &Options { compress: false });
+    let run = distil_with(&program[..], &Options::compress(false));
     assert_eq!(run.report.outcome, Outcome::Ok);
     let pdf = check(&run.pdf);
     assert_eq!(
@@ -617,7 +629,7 @@ fn with_cid_set(program: &str) -> Vec<u8> {
 }
 
 fn distil_bytes(program: &[u8]) -> Run {
-    distil_with(program, &Options { compress: false })
+    distil_with(program, &Options::compress(false))
 }
 
 /// The Type 0 font `name` of page `index` and its one descendant.

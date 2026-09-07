@@ -112,6 +112,8 @@ impl Marks {
                     .entry(String::from_utf8_lossy(&kind).into_owned())
                     .or_insert(0) += 1;
             }
+            // Parameters are the sink's, not a mark it writes.
+            DocMark::Params(_) => self.written -= 1,
         }
     }
 

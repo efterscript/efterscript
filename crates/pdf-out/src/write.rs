@@ -11,6 +11,12 @@ use std::io::{self, Write};
 /// (per ISO 32000-1 §7.5.2). The four values are `eftr` with the high bit set.
 pub(crate) const HEADER: &[u8] = b"%PDF-1.7\n%\xE5\xE6\xF4\xF2\n";
 
+/// The version the header is written with.
+pub(crate) const DEFAULT_VERSION: (u8, u8) = (1, 7);
+
+/// Where the fixed-width `M.m` version field starts in [`HEADER`].
+pub(crate) const VERSION_OFFSET: u64 = 5;
+
 /// Wraps the output stream and counts bytes, so cross-reference offsets are
 /// exact by construction.
 pub(crate) struct CountingWriter<W: Write> {
@@ -33,6 +39,10 @@ impl<W: Write> CountingWriter<W> {
         Ok(())
     }
 
+    pub(crate) fn inner_mut(&mut self) -> &mut W {
+        &mut self.inner
+    }
+
     pub(crate) fn finish(mut self) -> io::Result<W> {
         self.inner.flush()?;
         Ok(self.inner)
@@ -51,6 +61,9 @@ mod tests {
     fn header_marker_bytes_are_high_bit() {
         assert!(HEADER.starts_with(b"%PDF-1.7\n%"));
         assert!(HEADER.ends_with(b"\n"));
+        let at = VERSION_OFFSET as usize;
+        assert_eq!(&HEADER[at..at + 3], b"1.7");
+        assert_eq!(DEFAULT_VERSION, (1, 7));
         let marker = &HEADER[10..14];
         assert_eq!(marker.len(), 4);
         assert!(marker.iter().all(|&b| b >= 0x80));

@@ -16,7 +16,7 @@ use ps_fonts::{CMap, Program};
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
-use crate::graphics::{FontRef, GraphicsBackend, Matrix};
+use crate::graphics::{FontRef, GraphicsBackend, MarkValue, Matrix};
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, CompositeRef, Handle, Object, Type};
@@ -184,6 +184,8 @@ pub struct Interp {
     // gsave that `save` performed, below which `grestore` must not pop.
     gstate_floors: Vec<usize>,
     page_device: Object,
+    /// The `currentdistillerparams` dictionary, in global VM.
+    distiller_params: Object,
     pub(crate) fonts_config: FontConfig,
     /// `FontDirectory` and `GlobalFontDirectory`.
     pub(crate) font_category: Category,
@@ -298,6 +300,7 @@ impl Interp {
         let globaldict = mem.new_dict(200);
         let statusdict = mem.new_dict(16);
         let page_device = mem.new_dict(32);
+        let distiller_params = mem.new_dict(32);
         let global_font_directory = mem.new_dict(32);
         let global_encodings = mem.new_dict(8);
         let global_procsets = mem.new_dict(8);
@@ -349,6 +352,7 @@ impl Interp {
             graphics: None,
             gstate_floors: Vec::new(),
             page_device,
+            distiller_params,
             fonts_config: fonts,
             font_category: Category {
                 local: font_directory,
@@ -464,6 +468,7 @@ impl Interp {
             .expect("systemdict exists");
 
         ops::pagedevice::seed(self).expect("fresh dictionary");
+        ops::distiller::seed(self).expect("fresh dictionary");
 
         let atoms = self.atoms;
         for (key, value) in [
@@ -529,6 +534,22 @@ impl Interp {
     /// The page-device dictionary `currentpagedevice` returns.
     pub fn page_device(&self) -> Object {
         self.page_device
+    }
+
+    /// The dictionary `currentdistillerparams` copies.
+    pub fn distiller_params(&self) -> Object {
+        self.distiller_params
+    }
+
+    /// Stores `entries` as the current distillation parameters without
+    /// telling the backend: how an embedder whose writer starts from
+    /// other values than the built-in defaults keeps the job's view of
+    /// them in step. A job's own `setdistillerparams` merges over these.
+    pub fn set_distiller_params(
+        &mut self,
+        entries: &[(Vec<u8>, MarkValue)],
+    ) -> Result<(), VmError> {
+        ops::distiller::put_values(self, entries)
     }
 
     /// The depth `grestore` may not pop below: the state the innermost

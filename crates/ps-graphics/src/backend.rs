@@ -1051,6 +1051,11 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         }
         Ok(())
     }
+
+    fn set_distiller_params(&mut self, entries: &[(Vec<u8>, MarkValue)]) -> Result<(), VmError> {
+        self.sink.document(DocMark::Params(entries.to_vec()));
+        Ok(())
+    }
 }
 
 impl<S: PageSink> Graphics<S> {

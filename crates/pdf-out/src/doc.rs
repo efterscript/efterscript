@@ -6,7 +6,7 @@
 //! allocations and then writes the cross-reference section and trailer
 //! (ISO 32000-1 §7.5).
 
-use std::io::{self, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::{error, fmt, mem};
 
 use crate::obj::{DictBuilder, Ref, Val};
@@ -30,6 +30,8 @@ pub enum Error {
     /// A name contained a NUL byte, which no PDF name can carry
     /// (per ISO 32000-1 §7.3.5).
     NulInName,
+    /// The header's version field holds one digit each side of the dot.
+    InvalidVersion,
 }
 
 impl fmt::Display for Error {
@@ -48,6 +50,7 @@ impl fmt::Display for Error {
             Error::InvalidComment => write!(f, "comment must be single-line printable ASCII"),
             Error::FileTooLarge => write!(f, "object offset exceeds ten decimal digits"),
             Error::NulInName => write!(f, "a name contains a NUL byte"),
+            Error::InvalidVersion => write!(f, "version digits must be 0 to 9"),
         }
     }
 }
@@ -67,6 +70,19 @@ impl From<io::Error> for Error {
     }
 }
 
+/// Rewrites bytes at an offset of the sink without moving its end.
+type Patch<W> = fn(&mut W, u64, &[u8]) -> io::Result<()>;
+
+/// Rewrites `bytes` at offset `at` of a seekable sink, leaving the
+/// position at the end of what was written so far.
+fn patch_seekable<W: Write + Seek>(sink: &mut W, at: u64, bytes: &[u8]) -> io::Result<()> {
+    let end = sink.stream_position()?;
+    sink.seek(SeekFrom::Start(at))?;
+    sink.write_all(bytes)?;
+    sink.seek(SeekFrom::Start(end))?;
+    Ok(())
+}
+
 /// Streams a PDF file to `sink` object by object; at most one object body is
 /// buffered at a time, so memory stays bounded regardless of document size.
 pub struct Document<W: Write> {
@@ -74,19 +90,57 @@ pub struct Document<W: Write> {
     table: ObjectTable,
     /// Reused between objects to avoid reallocating per object.
     body: Vec<u8>,
+    /// The version the header names at finish; written as 1.7 up front.
+    version: (u8, u8),
+    /// How to rewrite the header's version field, when the sink allows it.
+    patch: Option<Patch<W>>,
 }
 
 impl<W: Write> Document<W> {
     /// Writes the header immediately; the file on disk is always a prefix of
-    /// a valid PDF plus the not-yet-written tail.
+    /// a valid PDF plus the not-yet-written tail. The header names version
+    /// 1.7 for good: only [`Self::new_seekable`] can revise it.
     pub fn new(sink: W) -> Result<Self, Error> {
+        Self::start(sink, None)
+    }
+
+    /// As [`Self::new`], for a sink that can seek back to the header, so a
+    /// version set through [`Self::set_version`] before `finish` is the
+    /// one the file names.
+    pub fn new_seekable(sink: W) -> Result<Self, Error>
+    where
+        W: Seek,
+    {
+        Self::start(sink, Some(patch_seekable::<W>))
+    }
+
+    fn start(sink: W, patch: Option<Patch<W>>) -> Result<Self, Error> {
         let mut sink = CountingWriter::new(sink);
         sink.write_all(write::HEADER)?;
         Ok(Document {
             sink,
             table: ObjectTable::new(),
             body: Vec::new(),
+            version: write::DEFAULT_VERSION,
+            patch,
         })
+    }
+
+    /// The version the header will name once the document finishes:
+    /// `major.minor`, one digit each. Honoured only for a document made
+    /// with [`Self::new_seekable`]; see [`Self::version_patchable`].
+    pub fn set_version(&mut self, major: u8, minor: u8) -> Result<(), Error> {
+        if major > 9 || minor > 9 {
+            return Err(Error::InvalidVersion);
+        }
+        self.version = (major, minor);
+        Ok(())
+    }
+
+    /// Whether the header can still be revised at finish, which needs a
+    /// seekable sink; otherwise the file names 1.7 whatever was set.
+    pub fn version_patchable(&self) -> bool {
+        self.patch.is_some()
     }
 
     /// Hands out ids 1, 2, 3, … in call order. Every allocated id must be
@@ -176,6 +230,11 @@ impl<W: Write> Document<W> {
         self.sink.write_all(&trailer)?;
         self.sink.write_all(b"\n")?;
         write::write_eof(&mut self.sink, startxref)?;
+        if let (Some(patch), true) = (self.patch, self.version != write::DEFAULT_VERSION) {
+            let (major, minor) = self.version;
+            let field = [b'0' + major, b'.', b'0' + minor];
+            patch(self.sink.inner_mut(), write::VERSION_OFFSET, &field)?;
+        }
         Ok(self.sink.finish()?)
     }
 }

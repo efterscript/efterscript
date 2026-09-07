@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: compression off. CompressPages false before the page
+% leaves its content stream unfiltered; the request reaches the
+% document marks before the page it governs.
+<< /CompressPages false >> setdistillerparams
+72 700 moveto 300 700 lineto stroke
+showpage

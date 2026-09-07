@@ -19,7 +19,7 @@ use support::{
 const LETTER: Bounds = Bounds::new(0.0, 0.0, 612.0, 792.0);
 
 fn uncompressed() -> Options {
-    Options { compress: false }
+    Options::compress(false)
 }
 
 fn page_with(ops: Vec<IrOp>) -> Page {
@@ -433,7 +433,7 @@ fn a_document_with_no_pages_is_well_formed() {
 
 #[test]
 fn compression_wraps_text_streams_and_the_option_defaults_on() {
-    assert_eq!(Options::default(), Options { compress: true });
+    assert!(Options::default().params.compress_pages);
     let mut page = stroked_line();
     let spot = page.resources.intern_space(&spot());
     page.ops.insert(0, IrOp::SetColorSpace(spot).into());
@@ -1406,4 +1406,327 @@ fn a_vertical_type3_fallback_draws_from_the_vertical_origin_with_zero_widths() {
         cid2,
         "0 0 -350 -880 250 -280 d1\n-350 -880 m\n250 -880 l\n250 -280 l\n-350 -280 l\nh\nf\n"
     );
+}
+
+// --- embed-all and downsampling ---------------------------------------------------------
+
+use ps_graphics::DocMark;
+use ps_vm::MarkValue;
+
+fn builtin(face: ResidentFace) -> ps_graphics::GlyphNames {
+    let names: Vec<Option<Vec<u8>>> = face
+        .builtin_encoding()
+        .iter()
+        .map(|n| n.map(|n| n.as_bytes().to_vec()))
+        .collect();
+    glyph_names(&names)
+}
+
+fn resident(face: ResidentFace) -> FontSpec {
+    FontSpec::Resident {
+        base: face,
+        encoding: builtin(face),
+    }
+}
+
+fn embed_all() -> Options {
+    let mut options = uncompressed();
+    options.params.embed_all_fonts = true;
+    options
+}
+
+const TEXT_AT_24: Matrix = Matrix([0.024, 0.0, 0.0, 0.024, 72.0, 700.0]);
+
+/// The `FontFile2` stream behind a font dictionary, when it embeds one.
+fn font_file2<'a>(pdf: &'a support::Pdf, font: &Value) -> Option<&'a Value> {
+    let descriptor = pdf.resolve(font.get("FontDescriptor")?.as_reference());
+    Some(pdf.resolve(descriptor.get("FontFile2")?.as_reference()))
+}
+
+fn refused(key: &str, text: &str) -> (String, String) {
+    (key.to_string(), text.to_string())
+}
+
+// embed-all-helvetica.ps
+#[test]
+fn embed_all_writes_a_resident_face_from_its_asset_with_the_metrics_widths() {
+    let page = text_page(
+        helvetica(),
+        TEXT_AT_24,
+        vec![glyph(72, 722.0, 0.0), glyph(105, 222.0, 0.0)],
+    );
+    let mut sink = PdfSink::new(Vec::new(), embed_all()).unwrap();
+    sink.page(page);
+    let not_honoured = sink.not_honoured();
+    let pdf = check(&sink.finish().unwrap());
+    assert_eq!(
+        content(&pdf, 0),
+        "BT\n/F0 1 Tf\n24 0 0 24 72 700 Tm\n(Hi) Tj\nET\n"
+    );
+    let font = font(&pdf, 0, "F0");
+    if !ps_fonts::has_resident_outlines() {
+        assert_eq!(font.get("BaseFont").unwrap().as_name(), b"Helvetica");
+        assert!(font_file2(&pdf, font).is_none());
+        assert_eq!(
+            not_honoured,
+            vec![refused(
+                "EmbedAllFonts",
+                "true (Helvetica: outline assets absent from this build)"
+            )]
+        );
+        return;
+    }
+    assert!(not_honoured.is_empty(), "{not_honoured:?}");
+    assert_eq!(font.get("Subtype").unwrap().as_name(), b"TrueType");
+    let base_font = font.get("BaseFont").unwrap().as_name();
+    assert!(
+        base_font.ends_with(b"+LiberationSans-Regular"),
+        "{}",
+        String::from_utf8_lossy(base_font)
+    );
+    assert_eq!(base_font.len(), "ABCDEF+LiberationSans-Regular".len());
+    assert!(
+        font.get("Encoding").is_none(),
+        "symbolic: the cmap maps the codes"
+    );
+    assert_eq!(font.get("FirstChar").unwrap().as_int(), 72);
+    assert_eq!(font.get("LastChar").unwrap().as_int(), 105);
+    let widths = numbers(font.get("Widths").unwrap());
+    assert_eq!(widths.len(), 34);
+    assert_eq!((widths[0], widths[33]), (722.0, 222.0), "the AFM's H and i");
+    let descriptor = pdf.resolve(font.get("FontDescriptor").unwrap().as_reference());
+    assert_eq!(descriptor.get("Flags").unwrap().as_int(), 4);
+    assert_eq!(descriptor.get("FontName").unwrap().as_name(), base_font);
+    assert_eq!(number(descriptor.get("CapHeight").unwrap()), 718.0);
+    assert_eq!(number(descriptor.get("StemV").unwrap()), 88.0);
+    let font_file = font_file2(&pdf, font).unwrap();
+    let data = decoded(font_file);
+    assert_eq!(
+        font_file.get("Length1").unwrap().as_int() as usize,
+        data.len()
+    );
+    let subset = TrueTypeProgram::parse(data).unwrap();
+    assert_eq!(subset.num_glyphs(), 3, "notdef, H, i");
+    let cmap = subset.cmap(3, 0).unwrap().unwrap();
+    let (h, i) = (cmap[&72u32], cmap[&105u32]);
+    assert!(h != 0 && i != 0 && h != i, "{cmap:?}");
+    assert_eq!(cmap.get(&0xF048), Some(&h));
+    // The asset is metric-compatible: its advances agree with the AFM.
+    let em = f64::from(subset.units_per_em());
+    let advance = |gid: u16| (f64::from(subset.advance(gid).unwrap()) * 1000.0 / em).round();
+    assert_eq!((advance(h), advance(i)), (722.0, 222.0));
+    let to_unicode = String::from_utf8(decoded(
+        pdf.resolve(font.get("ToUnicode").unwrap().as_reference()),
+    ))
+    .unwrap();
+    assert!(to_unicode.contains("<48> <0048>\n"), "{to_unicode}");
+    assert!(to_unicode.contains("<69> <0069>\n"));
+}
+
+#[test]
+fn embed_all_reports_faces_without_an_asset_and_faces_written_before_the_request() {
+    let mut sink = PdfSink::new(Vec::new(), uncompressed()).unwrap();
+    sink.page(text_page(
+        helvetica(),
+        TEXT_AT_24,
+        vec![glyph(72, 722.0, 0.0)],
+    ));
+    sink.document(DocMark::Params(vec![(
+        b"EmbedAllFonts".to_vec(),
+        MarkValue::Bool(true),
+    )]));
+    let mut page = Page::new(LETTER);
+    let symbol = page.resources.add_font(resident(ResidentFace::Symbol));
+    let again = page.resources.add_font(helvetica());
+    page.ops = vec![
+        IrOp::Text {
+            font: symbol,
+            matrix: TEXT_AT_24,
+            glyphs: vec![glyph(97, 631.0, 0.0)],
+            wmode: 0,
+        },
+        IrOp::Text {
+            font: again,
+            matrix: TEXT_AT_24,
+            glyphs: vec![glyph(105, 222.0, 0.0)],
+            wmode: 0,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    sink.page(page);
+    assert!(sink.params().embed_all_fonts);
+    let not_honoured = sink.not_honoured();
+    let pdf = check(&sink.finish().unwrap());
+    let first = font(&pdf, 0, "F0");
+    assert_eq!(first.get("BaseFont").unwrap().as_name(), b"Helvetica");
+    assert!(font_file2(&pdf, first).is_none());
+    let symbol = font(&pdf, 1, "F0");
+    assert_eq!(symbol.get("BaseFont").unwrap().as_name(), b"Symbol");
+    assert!(font_file2(&pdf, symbol).is_none());
+    let second = font(&pdf, 1, "F1");
+    if ps_fonts::has_resident_outlines() {
+        assert_eq!(second.get("Subtype").unwrap().as_name(), b"TrueType");
+        assert!(font_file2(&pdf, second).is_some());
+        assert_ne!(font_ref(&pdf, 0, "F0"), font_ref(&pdf, 1, "F1"));
+        assert_eq!(
+            not_honoured,
+            vec![
+                refused(
+                    "EmbedAllFonts",
+                    "true (Helvetica: written before the request)"
+                ),
+                refused("EmbedAllFonts", "true (Symbol: no outline asset)"),
+            ]
+        );
+    } else {
+        assert_eq!(
+            font_ref(&pdf, 0, "F0"),
+            font_ref(&pdf, 1, "F1"),
+            "one unembedded object serves both pages"
+        );
+        assert_eq!(
+            not_honoured,
+            vec![
+                refused(
+                    "EmbedAllFonts",
+                    "true (Helvetica: outline assets absent from this build)"
+                ),
+                refused("EmbedAllFonts", "true (Symbol: no outline asset)"),
+            ]
+        );
+    }
+}
+
+#[test]
+fn subset_fonts_off_embeds_the_whole_asset_under_its_own_name() {
+    if !ps_fonts::has_resident_outlines() {
+        return;
+    }
+    let mut options = embed_all();
+    options.params.subset_fonts = false;
+    let page = text_page(helvetica(), TEXT_AT_24, vec![glyph(72, 722.0, 0.0)]);
+    let pdf = check(&distil_pages(vec![page], options));
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(
+        font.get("BaseFont").unwrap().as_name(),
+        b"LiberationSans-Regular"
+    );
+    let whole = TrueTypeProgram::parse(decoded(font_file2(&pdf, font).unwrap())).unwrap();
+    let asset = ResidentFace::Helvetica.outlines().unwrap();
+    let ps_fonts::Program::TrueType(program) = &**asset.program() else {
+        panic!("a TrueType asset")
+    };
+    assert_eq!(whole.num_glyphs(), program.num_glyphs());
+    assert_eq!(
+        whole.cmap(3, 0).unwrap().unwrap().len(),
+        2,
+        "the used code, bare and in the F0 range"
+    );
+}
+
+#[test]
+fn embed_all_finds_glyphs_by_unicode_when_the_post_table_lacks_the_name() {
+    if !ps_fonts::has_resident_outlines() {
+        return;
+    }
+    let mut names = standard();
+    names[128] = Some(b"Euro".to_vec());
+    names[129] = Some(b"nosuchglyph".to_vec());
+    let spec = FontSpec::Resident {
+        base: ResidentFace::Helvetica,
+        encoding: names,
+    };
+    let page = text_page(
+        spec,
+        TEXT_AT_24,
+        vec![glyph(128, 556.0, 0.0), glyph(129, 0.0, 0.0)],
+    );
+    let pdf = check(&distil_pages(vec![page], embed_all()));
+    let font = font(&pdf, 0, "F0");
+    assert_eq!(numbers(font.get("Widths").unwrap()), [556.0, 0.0]);
+    let subset = TrueTypeProgram::parse(decoded(font_file2(&pdf, font).unwrap())).unwrap();
+    assert_eq!(subset.num_glyphs(), 2, "notdef and Euro");
+    let cmap = subset.cmap(3, 0).unwrap().unwrap();
+    assert_eq!(cmap.get(&128), Some(&1));
+    assert_eq!(
+        cmap.get(&129),
+        None,
+        "a missing glyph draws notdef, unmapped"
+    );
+}
+
+#[test]
+fn colour_images_are_averaged_per_component_and_masks_are_subsampled() {
+    let mut page = Page::new(LETTER);
+    let mut rgb = image_spec(
+        Some(SpaceSpec::DeviceRGB),
+        8,
+        vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+    );
+    (rgb.width, rgb.height) = (4, 2);
+    let rgb_data: Vec<u8> = (0..24).collect();
+    let colour = page.resources.add_image(&rgb, &rgb_data);
+    let mut bits = image_spec(None, 1, vec![0.0, 1.0]);
+    (bits.width, bits.height) = (4, 2);
+    let mask = page.resources.add_image(&bits, &[0b1010_0000, 0b0101_0000]);
+    let indexed = SpaceSpec::Indexed {
+        base: Box::new(SpaceSpec::DeviceRGB),
+        hival: 1,
+        lookup: vec![0; 6],
+    };
+    let mut table = image_spec(Some(indexed), 8, vec![0.0, 255.0]);
+    (table.width, table.height) = (4, 2);
+    let lookup = page.resources.add_image(&table, &[0; 8]);
+    let gray = page.resources.add_image(
+        &image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0]),
+        &[1, 2, 3, 4],
+    );
+    // Four samples across two points and two down one: 144 per inch.
+    let at = Matrix([2.0, 0.0, 0.0, 1.0, 100.0, 100.0]);
+    page.ops = [colour, mask, lookup, gray]
+        .into_iter()
+        .map(|image| Op::from(IrOp::Image { image, matrix: at }))
+        .collect();
+    let mut options = uncompressed();
+    options.params.downsample_color_images = true;
+    options.params.color_image_resolution = 72;
+    options.params.downsample_mono_images = true;
+    options.params.mono_image_resolution = 72;
+    let mut sink = PdfSink::new(Vec::new(), options).unwrap();
+    sink.page(page);
+    assert_eq!(sink.downsampled(), 2);
+    assert_eq!(
+        sink.notes(),
+        ["page 1: image 2 (Indexed) is not downsampled"]
+    );
+    assert_eq!(
+        sink.not_honoured(),
+        vec![refused(
+            "MonoImageDownsampleType",
+            "/Average (one-bit images are subsampled)"
+        )]
+    );
+    let pdf = check(&sink.finish().unwrap());
+    assert!(
+        content(&pdf, 0).starts_with("q 2 0 0 1 100 100 cm /Im0 Do Q\n"),
+        "the matrix maps the unit square and stays"
+    );
+    let size = |name: &str| {
+        let x = xobject(&pdf, 0, name);
+        (
+            x.get("Width").unwrap().as_int(),
+            x.get("Height").unwrap().as_int(),
+        )
+    };
+    assert_eq!(size("Im0"), (2, 1));
+    assert_eq!(decoded(xobject(&pdf, 0, "Im0")), [8, 9, 10, 14, 15, 16]);
+    assert_eq!(size("Im1"), (2, 1));
+    let mask = xobject(&pdf, 0, "Im1");
+    assert_eq!(mask.get("ImageMask"), Some(&Value::Bool(true)));
+    assert_eq!(decoded(mask), [0b1100_0000]);
+    assert_eq!(size("Im2"), (4, 2), "Indexed stays");
+    assert_eq!(size("Im3"), (2, 2), "gray downsampling is off");
+    assert_eq!(decoded(xobject(&pdf, 0, "Im3")), [1, 2, 3, 4]);
 }

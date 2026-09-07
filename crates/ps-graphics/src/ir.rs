@@ -16,7 +16,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use ps_fonts::{Program, ProgramKind, ResidentFace};
-use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, Matrix, Seg, SpaceSpec, Span};
+use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, MarkValue, Matrix, Seg, SpaceSpec, Span};
 
 pub use crate::state::FillRule;
 
@@ -496,6 +496,9 @@ pub enum DocMark {
     /// A mark of a kind, or an annotation of a subtype (`ANN/<Subtype>`),
     /// that is not honoured; tolerated and counted.
     Ignored { kind: Vec<u8> },
+    /// A `setdistillerparams` request as values, in the request's order,
+    /// delivered as it is made; the writer merges what it honours.
+    Params(Vec<(Vec<u8>, MarkValue)>),
 }
 
 #[derive(Clone, Debug, PartialEq)]

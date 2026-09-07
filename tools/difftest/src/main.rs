@@ -202,20 +202,21 @@ const PDF_GOLDEN_COMMENTS: [&str; 3] = [
     "GENERATED-BY: difftest --update-pdf",
 ];
 
-/// Writes what a run delivered as a golden document: uncompressed, so
-/// the bytes read as text, with the provenance comments between the
-/// header and the first object. Nothing for a run that delivered
-/// nothing.
+/// Writes what a run delivered as a golden document: uncompressed
+/// whatever the job asked (the key is locked), so the bytes read as
+/// text, with the provenance comments between the header and the first
+/// object. Nothing for a run that delivered nothing.
 pub fn distil(collected: &Collected) -> Result<Vec<u8>, remelt::Error> {
     if collected.is_empty() {
         return Ok(Vec::new());
     }
-    let mut sink = PdfSink::new(Vec::new(), Options { compress: false })?;
+    let options = Options::compress(false).lock("CompressPages");
+    let mut sink = PdfSink::new_seekable(std::io::Cursor::new(Vec::new()), options)?;
     for comment in PDF_GOLDEN_COMMENTS {
         sink.comment(comment)?;
     }
     collected.replay(&mut sink);
-    sink.finish()
+    Ok(sink.finish()?.into_inner())
 }
 
 /// Runs `program` with the graphics backend installed.

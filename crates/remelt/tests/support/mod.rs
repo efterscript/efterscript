@@ -10,7 +10,7 @@
 #[path = "../../../pdf-out/tests/common/mod.rs"]
 pub mod reader;
 
-pub use reader::{Pdf, Value, check, inflate_stored};
+pub use reader::{Pdf, Value, check, inflate};
 
 use ps_graphics::{Page, PageSink};
 use remelt::{Options, PdfSink};
@@ -63,7 +63,7 @@ pub fn decoded(stream: &Value) -> Vec<u8> {
     let data = stream.stream_data();
     match stream.get("Filter") {
         None => data.to_vec(),
-        Some(Value::Name(name)) if name == b"FlateDecode" => inflate_stored(data),
+        Some(Value::Name(name)) if name == b"FlateDecode" => inflate(data),
         Some(other) => panic!("unexpected filter {other:?}"),
     }
 }

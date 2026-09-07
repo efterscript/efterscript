@@ -170,8 +170,12 @@ impl ResidentOutlines {
     }
 
     /// The glyph index a TrueType asset draws for `name`: its `post`
-    /// name, else the name's single Unicode value through the cmap.
-    fn truetype_gid(&self, program: &TrueTypeProgram, name: &[u8]) -> Option<u16> {
+    /// name, else the name's single Unicode value through the cmap;
+    /// `None` for a name the asset lacks and for a Type 1 asset.
+    pub fn glyph_index(&self, name: &[u8]) -> Option<u16> {
+        let Program::TrueType(program) = &*self.program else {
+            return None;
+        };
         if let Some(gid) = program.gid(name) {
             return Some(gid);
         }
@@ -192,7 +196,7 @@ impl ResidentOutlines {
             Program::Type1(program) => program.glyph(name)?.map(|g| g.outline.clone()),
             Program::Cff(program) => program.glyph(name)?.map(|g| g.outline.clone()),
             Program::Type1Cid(_) => None,
-            Program::TrueType(program) => match self.truetype_gid(program, name) {
+            Program::TrueType(program) => match self.glyph_index(name) {
                 Some(gid) => Some(program.outline(gid)?),
                 None => None,
             },
@@ -364,6 +368,9 @@ mod tests {
         assert_eq!(euro.outline.control_box(), Some([0.0, 0.0, 500.0, 500.0]));
         assert_eq!(outlines.glyph(b"nosuchglyph", 0.0).unwrap(), None);
         assert_eq!(outlines.glyph(b"f_i", 0.0).unwrap(), None);
+        assert_eq!(outlines.glyph_index(b"A"), Some(1));
+        assert_eq!(outlines.glyph_index(b"Euro"), Some(2));
+        assert_eq!(outlines.glyph_index(b"nosuchglyph"), None);
         assert!(Rc::ptr_eq(&outlines.glyph(b"A", 1.0).unwrap().unwrap(), &a));
         // Glyph 0's advance, in thousandths of the 2048-unit em.
         let notdef = outlines.notdef_advance().unwrap();
@@ -377,6 +384,11 @@ mod tests {
         assert_eq!(a.advance, (500.0, 0.0));
         assert_eq!(a.outline.control_box(), Some([50.0, 0.0, 550.0, 500.0]));
         assert_eq!(outlines.glyph(b"b", 0.0).unwrap(), None);
+        assert_eq!(
+            outlines.glyph_index(b"a"),
+            None,
+            "a Type 1 asset has no glyph indices"
+        );
         assert_eq!(
             outlines.notdef_advance().is_some(),
             outlines.program().has_glyph(b".notdef")

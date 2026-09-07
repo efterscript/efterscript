@@ -5,9 +5,11 @@
 //!
 //! Drives the VM, consumes the vector IR, and writes PDF. Vector-preserving
 //! and colour-preserving: nothing is rasterised, nothing is converted.
-//! Policies (image recompression, font-embedding rules, colour strategy,
-//! `setdistillerparams` compatibility) are later layers on the two pieces
-//! here; text and the document structure `pdfmark` builds are in.
+//! Policies reach the writer as [`Params`]: the embedder's options first,
+//! then the job's own `setdistillerparams` requests, merged as they arrive
+//! (see [`params`]). Text, the document structure `pdfmark` builds,
+//! embed-all, and image downsampling are in; image recompression and
+//! colour strategies are later layers.
 //!
 //! [`PdfSink`] is a [`PageSink`] that writes each delivered page into a
 //! `pdf-out` document as it arrives, so a page is on disk when `showpage`
@@ -21,7 +23,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Seek, Write};
 use std::rc::Rc;
 use std::{error, fmt};
 
@@ -30,33 +32,48 @@ use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
 
 mod composite;
 mod content;
+mod downsample;
+mod embed_all;
 mod embedded;
 mod fonts;
 mod marks;
+pub mod params;
 mod resources;
 mod sink;
 
+pub use params::{Downsample, MarkValue, NotHonoured, Params};
 pub use sink::PdfSink;
 
-/// How the PDF is written. Defaults to compressed streams; goldens and
-/// anything meant to be read as text turn compression off.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// How the PDF is written: the parameters in force before the job says
+/// anything. The default compresses; goldens and anything meant to be
+/// read as text turn compression off.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Options {
-    /// Content and function streams go through the Flate container when
-    /// set; image data always does.
-    pub compress: bool,
+    pub params: Params,
 }
 
-impl Default for Options {
-    fn default() -> Self {
-        Options { compress: true }
+impl Options {
+    /// The defaults with `CompressPages` set as given.
+    pub fn compress(enabled: bool) -> Self {
+        Options {
+            params: Params {
+                compress_pages: enabled,
+                ..Params::default()
+            },
+        }
+    }
+
+    /// `self` with `key` locked against the job's requests.
+    pub fn lock(mut self, key: &str) -> Self {
+        self.params = self.params.lock(key);
+        self
     }
 }
 
 /// What a distillation run produced besides the file: the interpreter's
 /// outcome is data here, not an error, since a job that failed still
 /// leaves a finished document.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Report {
     pub outcome: Outcome,
     /// Pages written to the document.
@@ -72,6 +89,13 @@ pub struct Report {
     /// `pdfmark`s tolerated and dropped, by kind (`ANN/<Subtype>` for an
     /// annotation of another subtype).
     pub marks_ignored: BTreeMap<String, usize>,
+    /// The parameters in effect when the document finished.
+    pub params: Params,
+    /// Parameter entries not applied, in order: unknown keys with their
+    /// value, honoured keys with the value and the reason.
+    pub not_honoured: Vec<NotHonoured>,
+    /// Images reduced by downsampling.
+    pub downsampled: usize,
 }
 
 /// Why a document could not be written. The interpreter's own failures
@@ -126,16 +150,46 @@ impl<W: Write> PageSink for Shared<W> {
 /// Runs `program` in an interpreter configured by `config`, writing every
 /// page it shows into `out` as it arrives, and closes the document. The
 /// writer comes back with the report so a caller writing to memory keeps
-/// its bytes and one writing to a file can close it.
+/// its bytes and one writing to a file can close it. The header names
+/// 1.7 whatever `CompatibilityLevel` says, since `out` need not seek;
+/// see [`distill_seekable`].
 pub fn distill<W: Write + 'static>(
     program: &[u8],
     config: Config,
     options: &Options,
     out: W,
 ) -> Result<(Report, W), Error> {
-    let sink = PdfSink::new(out, options.clone())?;
+    distill_into(program, config, PdfSink::new(out, options.clone())?)
+}
+
+/// As [`distill`], for a sink the header can be revised on, so the file
+/// names the `CompatibilityLevel` in effect at the end.
+pub fn distill_seekable<W: Write + Seek + 'static>(
+    program: &[u8],
+    config: Config,
+    options: &Options,
+    out: W,
+) -> Result<(Report, W), Error> {
+    distill_into(
+        program,
+        config,
+        PdfSink::new_seekable(out, options.clone())?,
+    )
+}
+
+/// Runs `program` against a sink already started, so the caller chooses
+/// how the document was opened.
+pub fn distill_into<W: Write + 'static>(
+    program: &[u8],
+    config: Config,
+    sink: PdfSink<W>,
+) -> Result<(Report, W), Error> {
+    let entries = sink.params().entries();
     let shared = Rc::new(RefCell::new(Some(sink)));
     let mut interp = Interp::with_config(config);
+    // A value the VM cannot hold (a name too long, nesting too deep) is
+    // left out of the job's view of the parameters; the writer keeps it.
+    let _ = interp.set_distiller_params(&entries);
     interp.set_graphics_backend(Box::new(Graphics::new(Shared(shared.clone()))));
     let outcome = interp.run(&mut SliceSource::new(program));
     let substitutions = interp.font_substitutions().to_vec();
@@ -148,6 +202,9 @@ pub fn distill<W: Write + 'static>(
     let notes = sink.notes().to_vec();
     let marks_written = sink.marks_written();
     let marks_ignored = sink.marks_ignored().clone();
+    let params = sink.params().clone();
+    let not_honoured = sink.not_honoured();
+    let downsampled = sink.downsampled();
     let out = sink.finish()?;
     Ok((
         Report {
@@ -157,6 +214,9 @@ pub fn distill<W: Write + 'static>(
             notes,
             marks_written,
             marks_ignored,
+            params,
+            not_honoured,
+            downsampled,
         },
         out,
     ))

@@ -1,0 +1,14 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 DeviceGray
+img 0 300x300 bpc=8 cs=0 decode=[0 1] 90000 bytes
+ops:
+Do img 0 72 0 0 72 72 648
+
+doc:
+param /DownsampleGrayImages true
+param /GrayImageResolution 72

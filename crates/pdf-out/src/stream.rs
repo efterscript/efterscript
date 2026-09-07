@@ -10,9 +10,8 @@ use std::borrow::Cow;
 
 use crate::obj::DictBuilder;
 
-/// Stream encoding. `Flate` emits a valid zlib container (stored blocks —
-/// framing without compression); the variant set is the stable API surface,
-/// real compression is a drop-in follow-up.
+/// Stream encoding. `Flate` emits a zlib container holding a real DEFLATE
+/// stream (see [`crate::flate`]); the variant set is the stable API surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
     None,
@@ -41,7 +40,7 @@ pub(crate) fn put_stream(
     let mut bad_name = false;
     let encoded: Cow<'_, [u8]> = match filter {
         Filter::None => Cow::Borrowed(data),
-        Filter::Flate => Cow::Owned(crate::flate::compress_stored(data)),
+        Filter::Flate => Cow::Owned(crate::flate::compress(data)),
     };
     body.extend_from_slice(b"<<");
     {
@@ -75,7 +74,7 @@ mod tests {
         assert!(put_stream(&mut body, Filter::Flate, b"xy", |d| {
             d.key("Type").name("XObject");
         }));
-        let encoded = crate::flate::compress_stored(b"xy");
+        let encoded = crate::flate::compress(b"xy");
         let head = format!(
             "<< /Length {} /Filter /FlateDecode /Type /XObject >>\nstream\n",
             encoded.len()

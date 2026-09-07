@@ -692,6 +692,14 @@ pub trait GraphicsBackend {
         let _ = (kind, entries);
         Ok(())
     }
+
+    /// A `setdistillerparams` request, every entry as a value, in the
+    /// request's order; the writer merges what it honours. A backend
+    /// without documents ignores it.
+    fn set_distiller_params(&mut self, entries: &[(Vec<u8>, MarkValue)]) -> Result<(), VmError> {
+        let _ = entries;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

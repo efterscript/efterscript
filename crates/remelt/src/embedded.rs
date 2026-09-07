@@ -19,7 +19,8 @@
 //! matrix and a Type 42 program with its unit-em glyph space both come
 //! out right. Subset names carry a six-letter tag derived from the font
 //! name and the glyph set, so the output stays deterministic. Composite
-//! fonts share the table and its timing and are written by `composite`.
+//! fonts share the table and its timing and are written by `composite`;
+//! resident faces deferred for `EmbedAllFonts` by `embed_all`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -42,14 +43,17 @@ pub(crate) const DEFAULT_STEM_V: f32 = 80.0;
 
 /// Font descriptor flags (ISO 32000-1 Table 123).
 pub(crate) const FIXED_PITCH: i64 = 1;
+pub(crate) const SERIF: i64 = 1 << 1;
 pub(crate) const SYMBOLIC: i64 = 1 << 2;
 const NONSYMBOLIC: i64 = 1 << 5;
 const ITALIC: i64 = 1 << 6;
 
-struct EmbeddedFont {
-    spec: FontSpec,
-    font: Ref,
-    codes: BTreeSet<u8>,
+/// A font written at the end: its resource, its object, and the codes
+/// shown in it over every page.
+pub(crate) struct EmbeddedFont {
+    pub(crate) spec: FontSpec,
+    pub(crate) font: Ref,
+    pub(crate) codes: BTreeSet<u8>,
 }
 
 /// The embedded fonts used so far, one per snapshot and encoding, and
@@ -140,14 +144,25 @@ impl EmbeddedTable {
     }
 
     /// Writes every font used: dictionary, descriptor, program stream,
-    /// and ToUnicode CMap.
+    /// and ToUnicode CMap. Without `subset` a simple font's program is
+    /// embedded whole under its own name; composite fonts are always
+    /// subset, as the parameters reference has it for CID fonts. A
+    /// resident face deferred here is embedded from its asset when
+    /// `embed_all` still holds, else written unembedded as usual.
     pub(crate) fn write_all<W: Write>(
         self,
         doc: &mut Document<W>,
         filter: Filter,
+        subset: bool,
+        embed_all: bool,
     ) -> Result<(), pdf_out::Error> {
         for font in self.fonts {
-            write_font(doc, &font, filter)?;
+            match &font.spec {
+                FontSpec::Resident { .. } => {
+                    crate::embed_all::write(doc, &font, filter, subset, embed_all)?;
+                }
+                _ => write_font(doc, &font, filter, subset)?,
+            }
         }
         for font in self.composites {
             crate::composite::write_font(doc, &font, filter)?;
@@ -273,10 +288,43 @@ fn used_names<'a>(spec: &'a FontSpec, codes: &BTreeSet<u8>) -> Vec<&'a [u8]> {
         .collect()
 }
 
-fn write_font<W: Write>(
+/// The font's name in the document: tagged for a subset, its own for a
+/// whole program.
+pub(crate) fn embedded_name(subset: bool, font_name: &[u8], keep: &BTreeSet<Vec<u8>>) -> Vec<u8> {
+    if subset {
+        tagged(&subset_tag(font_name, keep), font_name)
+    } else {
+        font_name.to_vec()
+    }
+}
+
+/// A TrueType program as a `FontFile2` stream with its `Length1`.
+pub(crate) fn write_truetype_stream<W: Write>(
+    doc: &mut Document<W>,
+    bytes: &[u8],
+    filter: Filter,
+) -> Result<Ref, pdf_out::Error> {
+    let stream = doc.alloc();
+    doc.write_stream(stream, filter, bytes, |d| {
+        d.key("Length1").int(bytes.len() as i64);
+    })?;
+    Ok(stream)
+}
+
+/// A TrueType program's `head` box in thousandths of the em, rounded to
+/// a thousandth.
+pub(crate) fn truetype_bbox(program: &TrueTypeProgram) -> [f32; 4] {
+    let em = f64::from(program.units_per_em());
+    program
+        .bbox()
+        .map(|v| ((f64::from(v) * 1000.0 / em) * 1000.0).round() as f32 / 1000.0)
+}
+
+pub(crate) fn write_font<W: Write>(
     doc: &mut Document<W>,
     font: &EmbeddedFont,
     filter: Filter,
+    subset: bool,
 ) -> Result<(), pdf_out::Error> {
     let FontSpec::Embedded {
         kind,
@@ -296,8 +344,12 @@ fn write_font<W: Write>(
     });
     let (base_font, descriptor) = match &*program.0 {
         Program::Type1(type1) => {
-            let keep = subset_names(type1, used_names(&font.spec, &font.codes));
-            let name = tagged(&subset_tag(font_name, &keep), font_name);
+            let keep = if subset {
+                subset_names(type1, used_names(&font.spec, &font.codes))
+            } else {
+                type1.charstrings().keys().cloned().collect()
+            };
+            let name = embedded_name(subset, font_name, &keep);
             let stream =
                 write_type1_program(doc, type1, &name, *font_matrix, encoding, &keep, filter)?;
             let dict = type1.dict();
@@ -321,17 +373,15 @@ fn write_font<W: Write>(
             (name, descriptor)
         }
         Program::TrueType(truetype) => {
-            let (gids, cmap) = truetype_glyphs(&font.spec, truetype, &font.codes);
+            let (mut gids, cmap) = truetype_glyphs(&font.spec, truetype, &font.codes);
+            if !subset {
+                gids = (0..truetype.num_glyphs()).collect();
+            }
             let keep: BTreeSet<Vec<u8>> = gids.iter().map(|g| g.to_be_bytes().to_vec()).collect();
-            let name = tagged(&subset_tag(font_name, &keep), font_name);
+            let name = embedded_name(subset, font_name, &keep);
             let bytes = ps_fonts::truetype::write::subset(truetype, &gids, &cmap)
                 .unwrap_or_else(|_| truetype.bytes().to_vec());
-            let stream = doc.alloc();
-            doc.write_stream(stream, filter, &bytes, |d| {
-                d.key("Length1").int(bytes.len() as i64);
-            })?;
-            let em = f32::from(truetype.units_per_em());
-            let bbox = truetype.bbox().map(|v| f32::from(v) * 1000.0 / em);
+            let stream = write_truetype_stream(doc, &bytes, filter)?;
             let descriptor = Descriptor {
                 flags: SYMBOLIC
                     | if truetype.is_fixed_pitch() {
@@ -339,7 +389,7 @@ fn write_font<W: Write>(
                     } else {
                         0
                     },
-                bbox: bbox.map(|v| (f64::from(v) * 1000.0).round() as f32 / 1000.0),
+                bbox: truetype_bbox(truetype),
                 italic_angle: truetype.italic_angle(),
                 cap_height: None,
                 stem_v: DEFAULT_STEM_V,
@@ -349,8 +399,12 @@ fn write_font<W: Write>(
             (name, descriptor)
         }
         Program::Cff(cff) => {
-            let keep = cff::write::subset_names(cff, used_names(&font.spec, &font.codes));
-            let name = tagged(&subset_tag(font_name, &keep), font_name);
+            let keep = if subset {
+                cff::write::subset_names(cff, used_names(&font.spec, &font.codes))
+            } else {
+                cff.glyph_names().into_iter().map(<[u8]>::to_vec).collect()
+            };
+            let name = embedded_name(subset, font_name, &keep);
             // Only a CID-keyed program cannot be subset, and the VM
             // defines no font over one; it would be described unembedded.
             let stream = match cff::write::subset(cff, &name, &keep) {
@@ -385,7 +439,7 @@ fn write_font<W: Write>(
         // and the VM defines no simple font over one; the composite
         // change writes it through its own path.
         Program::Type1Cid(_) => {
-            let name = tagged(&subset_tag(font_name, &BTreeSet::new()), font_name);
+            let name = embedded_name(subset, font_name, &BTreeSet::new());
             let descriptor = Descriptor {
                 flags: SYMBOLIC,
                 bbox: [0.0; 4],
@@ -433,15 +487,48 @@ fn write_font<W: Write>(
             .collect(),
         ProgramKind::TrueType => Vec::new(),
     };
-    doc.write_obj(font.font, |v| {
-        v.dict(|d| {
-            d.key("Type").name("Font");
-            d.key("Subtype").name(match kind {
+    write_simple_font(
+        doc,
+        font.font,
+        &SimpleFont {
+            subtype: match kind {
                 ProgramKind::Type1 | ProgramKind::Cff | ProgramKind::Type1Cid => "Type1",
                 ProgramKind::TrueType => "TrueType",
-            });
-            d.key("BaseFont").name_bytes(&base_font);
-            let (first, last, values) = metrics.clone().unwrap_or((0, 0, vec![0.0]));
+            },
+            base_font,
+            metrics,
+            differing,
+            descriptor,
+            to_unicode,
+        },
+    )
+}
+
+/// The parts of a simple font dictionary (ISO 32000-1 §9.6.2) once its
+/// descriptor and streams are written.
+pub(crate) struct SimpleFont<'a> {
+    pub subtype: &'static str,
+    pub base_font: Vec<u8>,
+    /// First code, last code, and the widths between; none when no code
+    /// has one.
+    pub metrics: Option<(u8, u8, Vec<f32>)>,
+    /// `Differences` entries; none leaves the encoding out.
+    pub differing: Vec<(u8, &'a [u8])>,
+    pub descriptor: Ref,
+    pub to_unicode: Option<Ref>,
+}
+
+pub(crate) fn write_simple_font<W: Write>(
+    doc: &mut Document<W>,
+    r: Ref,
+    font: &SimpleFont<'_>,
+) -> Result<(), pdf_out::Error> {
+    doc.write_obj(r, |v| {
+        v.dict(|d| {
+            d.key("Type").name("Font");
+            d.key("Subtype").name(font.subtype);
+            d.key("BaseFont").name_bytes(&font.base_font);
+            let (first, last, values) = font.metrics.clone().unwrap_or((0, 0, vec![0.0]));
             d.key("FirstChar").int(i64::from(first));
             d.key("LastChar").int(i64::from(last));
             d.key("Widths").array(|a| {
@@ -449,23 +536,23 @@ fn write_font<W: Write>(
                     a.real(w);
                 }
             });
-            if !differing.is_empty() {
+            if !font.differing.is_empty() {
                 d.key("Encoding").dict(|e| {
                     e.key("Type").name("Encoding");
                     e.key("Differences")
-                        .array(|a| differences(a, differing.iter().copied()));
+                        .array(|a| differences(a, font.differing.iter().copied()));
                 });
             }
-            d.key("FontDescriptor").reference(descriptor);
-            if let Some(to_unicode) = to_unicode {
+            d.key("FontDescriptor").reference(font.descriptor);
+            if let Some(to_unicode) = font.to_unicode {
                 d.key("ToUnicode").reference(to_unicode);
             }
         });
     })
 }
 
-/// The encoding's name for `code`, `.notdef` for a code without one.
-fn spec_name(spec: &FontSpec, code: u8) -> Option<&[u8]> {
+/// The encoding's name for `code`, none for a code without one.
+pub(crate) fn spec_name(spec: &FontSpec, code: u8) -> Option<&[u8]> {
     spec.glyph_name(code).map(Vec::as_slice)
 }
 

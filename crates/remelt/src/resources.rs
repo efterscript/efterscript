@@ -7,7 +7,8 @@
 //! transform is a Type 4 function stream (ISO 32000-1 §7.10.5) whose body
 //! is the captured PostScript source verbatim, unchecked against the
 //! calculator subset. Images are image XObjects `/Imn` (§8.9.5) with their
-//! samples in the Flate container.
+//! samples in the Flate container, reduced first when the downsampling
+//! parameters say so (see `downsample`).
 //!
 //! The objects a page needs are written before the page itself, so a
 //! `Resources` dictionary only ever refers to objects already in the file.
@@ -21,7 +22,9 @@ use ps_graphics::{FontIndex, Image, ImageRef, Page, SpaceRef};
 use ps_vm::{ImageSpec, SpaceSpec};
 
 use crate::content::Recode;
+use crate::downsample::{self, Outcome, Tally};
 use crate::fonts::{FontTable, Refs, write_fonts};
+use crate::params::Params;
 
 pub(crate) fn space_name(space: SpaceRef) -> String {
     format!("CS{}", space.0)
@@ -242,21 +245,43 @@ impl Objects {
     /// Writes the function streams, image XObjects, and font objects
     /// `page` needs (fonts the document already has are reused through
     /// `fonts`); `filter` applies to the text streams (image data is
-    /// always Flate). Text the fonts could not carry is noted in `notes`.
+    /// always Flate). Images are downsampled as `params` asks, counted
+    /// in `tally`; text the fonts could not carry and images left as
+    /// they are for a reason are noted in `notes`.
     pub(crate) fn write<W: Write>(
         doc: &mut Document<W>,
         page: &Page,
         filter: Filter,
+        params: &Params,
         fonts: &mut FontTable,
         notes: &mut Vec<String>,
+        tally: &mut Tally,
     ) -> Result<Self, pdf_out::Error> {
         let mut spaces = Vec::with_capacity(page.resources.color_spaces.len());
         for spec in &page.resources.color_spaces {
             spaces.push(write_space(doc, spec, filter)?);
         }
+        let painted = downsample::painted(page);
         let mut images = Vec::with_capacity(page.resources.images.len());
-        for image in &page.resources.images {
+        for (index, image) in page.resources.images.iter().enumerate() {
             let space = image.color_space.map(|r| &spaces[r.0]);
+            let reduced;
+            let image = match downsample::reduce(image, &painted[index], params) {
+                Outcome::Unchanged => image,
+                Outcome::Reduced {
+                    image: smaller,
+                    mono_subsampled,
+                } => {
+                    tally.images += 1;
+                    tally.mono_subsampled |= mono_subsampled;
+                    reduced = smaller;
+                    &reduced
+                }
+                Outcome::Unsupported(why) => {
+                    notes.push(format!("image {index} ({why}) is not downsampled"));
+                    image
+                }
+            };
             images.push(write_image(doc, image, space)?);
         }
         let mut objects = Objects {
@@ -265,7 +290,15 @@ impl Objects {
             fonts: Vec::new(),
             recode: Recode::new(),
         };
-        (objects.fonts, objects.recode) = write_fonts(doc, page, filter, fonts, &objects, notes)?;
+        (objects.fonts, objects.recode) = write_fonts(
+            doc,
+            page,
+            filter,
+            params.embed_all_fonts,
+            fonts,
+            &objects,
+            notes,
+        )?;
         Ok(objects)
     }
 

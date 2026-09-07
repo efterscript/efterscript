@@ -275,8 +275,8 @@ fn rotation(collected: &Collected, index: usize) -> i32 {
 /// Our document for what a run delivered, uncompressed; a zero-page
 /// document for nothing.
 fn document(collected: &Collected) -> Result<Vec<u8>, String> {
-    let mut sink =
-        PdfSink::new(Vec::new(), Options { compress: false }).map_err(|e| e.to_string())?;
+    let options = Options::compress(false).lock("CompressPages");
+    let mut sink = PdfSink::new(Vec::new(), options).map_err(|e| e.to_string())?;
     collected.replay(&mut sink);
     sink.finish().map_err(|e| e.to_string())
 }
@@ -2257,6 +2257,8 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             [
                 ("bitshift-zero-fill", 1),
                 ("cvrs-negative-unsigned", 1),
+                ("distiller-params-typecheck", 1),
+                ("distiller-params-unknown-keys", 1),
                 ("file-access-policy", 1),
                 ("fmaptype-cmap-only", 1),
                 ("font-substitution", 5),

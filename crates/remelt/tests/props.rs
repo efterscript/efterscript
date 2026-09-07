@@ -78,7 +78,7 @@ proptest! {
     ) {
         let pdf = check(&distil_pages(
             vec![stroke_page(&user, ctm)],
-            Options { compress: false },
+            Options::compress(false),
         ));
         let text = content(&pdf, 0);
         prop_assert!(text.starts_with("q\n"), "{text}");
@@ -98,7 +98,7 @@ proptest! {
         for ctm in [Matrix::IDENTITY, Matrix::scaling(scale, 0.0), Matrix([1.0, 2.0, 2.0, 4.0, 3.0, 3.0])] {
             let pdf = check(&distil_pages(
                 vec![stroke_page(&user, ctm)],
-                Options { compress: false },
+                Options::compress(false),
             ));
             let text = content(&pdf, 0);
             prop_assert!(!text.contains(" cm\n"), "{text}");

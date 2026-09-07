@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a 300 dpi gray image at 72. A 300x300-sample 8-bit gray
+% gradient (each row the same ramp from 0 to 255) drawn one inch square
+% is 300 samples per inch; with DownsampleGrayImages true and
+% GrayImageResolution 72 the written image is 75x75 samples, each the
+% rounded average of a 4x4 block, and the page renders the same within
+% tolerance.
+<< /DownsampleGrayImages true /GrayImageResolution 72 >> setdistillerparams
+/row 300 string def
+0 1 299 { dup 255 mul 299 idiv row 3 1 roll put } for
+72 648 translate
+72 72 scale
+300 300 8 [300 0 0 -300 0 300] { row } image
+showpage

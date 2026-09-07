@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% requires: resident-outlines
+% Scenario: Helvetica embedded. With EmbedAllFonts true the Helvetica
+% text becomes a TrueType font dictionary whose descriptor embeds a
+% subset of the face's outline asset, named by the asset's own name
+% with a subset tag and carrying the widths of the metrics; the page's
+% text extracts unchanged.
+<< /EmbedAllFonts true >> setdistillerparams
+/Helvetica findfont 24 scalefont setfont
+72 700 moveto (Hi) show
+showpage
