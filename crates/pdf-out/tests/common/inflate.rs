@@ -14,6 +14,29 @@ const MAX_BITS: usize = 15;
 
 /// Inflates a complete zlib stream, verifying framing and checksum.
 pub fn inflate(z: &[u8]) -> Vec<u8> {
+    inflate_with_kinds(z).0
+}
+
+/// The block type of every block in `z`, in order: 0 stored, 1 fixed,
+/// 2 dynamic. The stream is fully inflated and verified on the way.
+pub fn block_kinds(z: &[u8]) -> Vec<u8> {
+    inflate_with_kinds(z).1
+}
+
+/// Reads `count` symbols of the canonical code for `lengths` from the
+/// start of `bytes`, exactly as a coded block would read them.
+pub fn decode_symbols(lengths: &[u8], bytes: &[u8], count: usize) -> Vec<u16> {
+    let table = Table::from_lengths(lengths);
+    let mut reader = BitReader {
+        bytes,
+        pos: 0,
+        acc: 0,
+        nbits: 0,
+    };
+    (0..count).map(|_| reader.symbol(&table)).collect()
+}
+
+fn inflate_with_kinds(z: &[u8]) -> (Vec<u8>, Vec<u8>) {
     assert!(z.len() >= 2 + 4, "zlib stream too short");
     assert_eq!(z[0] & 0x0F, 8, "compression method must be deflate");
     assert!((z[0] >> 4) <= 7, "window size above 32K");
@@ -26,9 +49,12 @@ pub fn inflate(z: &[u8]) -> Vec<u8> {
         nbits: 0,
     };
     let mut out = Vec::new();
+    let mut kinds = Vec::new();
     loop {
         let last = reader.bits(1) == 1;
-        match reader.bits(2) {
+        let kind = reader.bits(2);
+        kinds.push(kind as u8);
+        match kind {
             0 => stored(&mut reader, &mut out),
             1 => {
                 let (lit, dist) = fixed_tables();
@@ -49,7 +75,7 @@ pub fn inflate(z: &[u8]) -> Vec<u8> {
     assert_eq!(trailer + 4, z.len(), "trailing bytes after Adler-32");
     let stored = u32::from_be_bytes([z[trailer], z[trailer + 1], z[trailer + 2], z[trailer + 3]]);
     assert_eq!(stored, adler32(&out), "Adler-32 mismatch");
-    out
+    (out, kinds)
 }
 
 fn adler32(data: &[u8]) -> u32 {
