@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a red stroke. The program has one current colour and PDF
+% has two, so the content stream sets the stroking colour (`RG`) along
+% with the non-stroking one before the stroke, and the rendered line is
+% red rather than PDF's initial black.
+1 0 0 setrgbcolor 4 setlinewidth 100 100 moveto 300 300 lineto stroke
+showpage

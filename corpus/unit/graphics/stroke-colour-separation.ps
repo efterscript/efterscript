@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a Separation stroke. The stroking colour space and colour
+% are set from the same page resource as the non-stroking ones (`CS`
+% and `SCN` beside `cs` and `scn`), so the stroke carries the tint.
+[/Separation /Spot /DeviceCMYK {0 0 0 4 -1 roll}] setcolorspace
+0.6 setcolor
+6 setlinewidth 100 100 moveto 300 100 lineto stroke
+showpage

@@ -173,12 +173,30 @@ fn atan(i: &mut Interp) -> Result<(), VmError> {
     })
 }
 
+/// Sine and cosine of an angle in degrees, reduced modulo 360 in double
+/// precision before the conversion to radians so a large angle keeps
+/// single precision's digits, and exact at the quarter turns.
+fn sin_cos_degrees(degrees: f32) -> (f64, f64) {
+    let turn = f64::from(degrees).rem_euclid(360.0);
+    if turn == 0.0 {
+        (0.0, 1.0)
+    } else if turn == 90.0 {
+        (1.0, 0.0)
+    } else if turn == 180.0 {
+        (0.0, -1.0)
+    } else if turn == 270.0 {
+        (-1.0, 0.0)
+    } else {
+        turn.to_radians().sin_cos()
+    }
+}
+
 fn cos(i: &mut Interp) -> Result<(), VmError> {
-    real_unary(i, |v| Ok(v.to_radians().cos()))
+    real_unary(i, |v| Ok(sin_cos_degrees(v).1 as f32))
 }
 
 fn sin(i: &mut Interp) -> Result<(), VmError> {
-    real_unary(i, |v| Ok(v.to_radians().sin()))
+    real_unary(i, |v| Ok(sin_cos_degrees(v).0 as f32))
 }
 
 fn exp(i: &mut Interp) -> Result<(), VmError> {
@@ -370,4 +388,25 @@ fn bitshift(i: &mut Interp) -> Result<(), VmError> {
         }
         _ => Err(VmError::TypeCheck),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn angles_are_reduced_before_conversion() {
+        // A million degrees is 280 degrees; the true cosine is
+        // 0.173648178, and the narrowed result must be its nearest
+        // single-precision value.
+        let (sin, cos) = sin_cos_degrees(1_000_000.0);
+        assert_eq!(cos as f32, 0.173_648_18);
+        assert_eq!(sin as f32, -0.984_807_753_f64 as f32);
+        assert_eq!(sin_cos_degrees(-168_437.0), sin_cos_degrees(43.0));
+        assert_eq!(sin_cos_degrees(90.0), (1.0, 0.0));
+        assert_eq!(sin_cos_degrees(-90.0), (-1.0, 0.0));
+        assert_eq!(sin_cos_degrees(180.0), (0.0, -1.0));
+        assert_eq!(sin_cos_degrees(720.0), (0.0, 1.0));
+        assert_eq!(sin_cos_degrees(45.0).0 as f32, 0.707_106_77);
+    }
 }

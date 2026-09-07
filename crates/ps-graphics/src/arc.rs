@@ -5,6 +5,8 @@
 //! most a quarter turn, each approximated by one cubic whose control
 //! points sit at `4/3·tan(θ/4)` radii along the tangents; the error of
 //! that construction is far below the precision of an `f32` coordinate.
+//! The geometry is computed in double precision and narrowed only at
+//! the points handed out.
 
 use ps_vm::Point;
 
@@ -15,8 +17,8 @@ pub type Curve = (Point, Point, Point);
 /// clockwise, with the end angle brought to the correct side of the start
 /// angle the way `arc` and `arcn` do it. The result is signed: positive
 /// for a counter-clockwise sweep.
-pub fn sweep(start: f32, end: f32, ccw: bool) -> f64 {
-    let (start, mut end) = (f64::from(start), f64::from(end));
+pub fn sweep(start: f64, end: f64, ccw: bool) -> f64 {
+    let mut end = end;
     if ccw {
         while end < start {
             end += 360.0;
@@ -47,29 +49,36 @@ fn sin_cos_deg(degrees: f64) -> (f64, f64) {
     }
 }
 
+/// A circle centre in double precision.
+pub type Center = (f64, f64);
+
+pub fn center_of(p: Point) -> Center {
+    (f64::from(p.x), f64::from(p.y))
+}
+
 /// The point at `degrees` on the circle.
-pub fn point_at(center: Point, radius: f32, degrees: f64) -> Point {
+pub fn point_at(center: Center, radius: f64, degrees: f64) -> Point {
     let (sin, cos) = sin_cos_deg(degrees);
-    let r = f64::from(radius);
     Point::new(
-        (f64::from(center.x) + r * cos) as f32,
-        (f64::from(center.y) + r * sin) as f32,
+        (center.0 + radius * cos) as f32,
+        (center.1 + radius * sin) as f32,
     )
 }
 
 /// The Bézier pieces of the arc from `start` degrees sweeping `sweep`
 /// degrees (signed, as [`sweep`] returns it). An empty sweep yields no
-/// pieces.
-pub fn curves(center: Point, radius: f32, start: f32, sweep: f64) -> Vec<Curve> {
+/// pieces. A sweep within rounding above a multiple of a quarter turn
+/// takes as many pieces as the exact multiple.
+pub fn curves(center: Center, radius: f64, start: f64, sweep: f64) -> Vec<Curve> {
     if sweep == 0.0 || !sweep.is_finite() {
         return Vec::new();
     }
-    let pieces = (sweep.abs() / 90.0).ceil().max(1.0) as usize;
+    let pieces = (sweep.abs() / 90.0 - 1e-9).ceil().max(1.0) as usize;
     let step = sweep / pieces as f64;
     let kappa = 4.0 / 3.0 * (step.to_radians() / 4.0).tan();
-    let (cx, cy, r) = (f64::from(center.x), f64::from(center.y), f64::from(radius));
+    let (cx, cy, r) = (center.0, center.1, radius);
     let mut out = Vec::with_capacity(pieces);
-    let mut angle = f64::from(start);
+    let mut angle = start;
     for _ in 0..pieces {
         let next = angle + step;
         let (s0, c0) = sin_cos_deg(angle);
@@ -93,8 +102,8 @@ pub fn curves(center: Point, radius: f32, start: f32, sweep: f64) -> Vec<Curve> 
 pub struct Tangent {
     pub t1: Point,
     pub t2: Point,
-    pub center: Point,
-    pub start: f32,
+    pub center: Center,
+    pub start: f64,
     pub sweep: f64,
 }
 
@@ -120,27 +129,22 @@ pub fn tangent(p0: Point, p1: Point, p2: Point, radius: f32) -> Option<Tangent> 
     let cos_theta = (ux * vx + uy * vy).clamp(-1.0, 1.0);
     let half = cos_theta.acos() / 2.0;
     let d = r / half.tan();
-    let t1 = Point::new((x1 + ux * d) as f32, (y1 + uy * d) as f32);
-    let t2 = Point::new((x1 + vx * d) as f32, (y1 + vy * d) as f32);
+    let (t1x, t1y) = (x1 + ux * d, y1 + uy * d);
+    let (t2x, t2y) = (x1 + vx * d, y1 + vy * d);
     let (bx, by) = (ux + vx, uy + vy);
     let lb = (bx * bx + by * by).sqrt();
     let h = r / half.sin();
     let (cx, cy) = (x1 + bx / lb * h, y1 + by / lb * h);
-    let center = Point::new(cx as f32, cy as f32);
-    let start = (f64::from(t1.y) - cy)
-        .atan2(f64::from(t1.x) - cx)
-        .to_degrees();
-    let end = (f64::from(t2.y) - cy)
-        .atan2(f64::from(t2.x) - cx)
-        .to_degrees();
+    let start = (t1y - cy).atan2(t1x - cx).to_degrees();
+    let end = (t2y - cy).atan2(t2x - cx).to_degrees();
     // A left turn is a counter-clockwise arc; `u` points back along the
     // incoming edge, so a left turn has a negative cross product.
-    let sweep = sweep(start as f32, end as f32, cross < 0.0);
+    let sweep = sweep(start, end, cross < 0.0);
     Some(Tangent {
-        t1,
-        t2,
-        center,
-        start: start as f32,
+        t1: Point::new(t1x as f32, t1y as f32),
+        t2: Point::new(t2x as f32, t2y as f32),
+        center: (cx, cy),
+        start,
         sweep,
     })
 }
@@ -165,23 +169,37 @@ mod tests {
 
     #[test]
     fn full_circle_is_four_pieces_ending_at_the_start() {
-        let c = curves(Point::new(0.0, 0.0), 10.0, 0.0, 360.0);
+        let c = curves((0.0, 0.0), 10.0, 0.0, 360.0);
         assert_eq!(c.len(), 4);
         // Quarter-turn points are exact, not within rounding.
         assert_eq!(c[3].2, Point::new(10.0, 0.0));
         assert_eq!(c[0].2, Point::new(0.0, 10.0));
         assert_eq!(c[1].2, Point::new(-10.0, 0.0));
-        assert_eq!(
-            point_at(Point::new(1.0, 1.0), 2.0, -90.0),
-            Point::new(1.0, -1.0)
-        );
-        assert!(curves(Point::new(0.0, 0.0), 10.0, 0.0, 0.0).is_empty());
-        assert_eq!(curves(Point::new(0.0, 0.0), 10.0, 0.0, 91.0).len(), 2);
+        assert_eq!(point_at((1.0, 1.0), 2.0, -90.0), Point::new(1.0, -1.0));
+        assert!(curves((0.0, 0.0), 10.0, 0.0, 0.0).is_empty());
+        assert_eq!(curves((0.0, 0.0), 10.0, 0.0, 91.0).len(), 2);
+    }
+
+    #[test]
+    fn a_quarter_turn_from_rounding_is_one_piece() {
+        let exact = curves((0.0, 0.0), 10.0, 0.0, 90.0);
+        let above = curves((0.0, 0.0), 10.0, 0.0, 90.0 + 90.0 * f64::EPSILON);
+        assert_eq!(above.len(), 1);
+        for (a, b) in [
+            (above[0].0, exact[0].0),
+            (above[0].1, exact[0].1),
+            (above[0].2, exact[0].2),
+        ] {
+            assert!(close(a, b), "{a:?} {b:?}");
+        }
+        assert_eq!(curves((0.0, 0.0), 10.0, 0.0, -(180.0 + 1e-10)).len(), 2);
+        assert_eq!(curves((0.0, 0.0), 10.0, 0.0, 360.0 + 1e-10).len(), 4);
+        assert_eq!(curves((0.0, 0.0), 10.0, 0.0, 90.001).len(), 2);
     }
 
     #[test]
     fn quarter_arc_control_points_use_the_standard_kappa() {
-        let pieces = curves(Point::new(0.0, 0.0), 1.0, 0.0, 90.0);
+        let pieces = curves((0.0, 0.0), 1.0, 0.0, 90.0);
         let [(c1, c2, p)] = pieces.as_slice() else {
             panic!("one piece");
         };
@@ -196,8 +214,8 @@ mod tests {
         let center = Point::new(3.0, -2.0);
         let radius = 50.0;
         for (start, sweep) in [(0.0, 90.0), (30.0, -75.0), (180.0, 360.0), (10.0, 200.0)] {
-            let mut from = point_at(center, radius, f64::from(start));
-            for (c1, c2, p) in curves(center, radius, start, sweep) {
+            let mut from = point_at(center_of(center), f64::from(radius), start);
+            for (c1, c2, p) in curves(center_of(center), f64::from(radius), start, sweep) {
                 for k in 1..8 {
                     let t = k as f32 / 8.0;
                     let u = 1.0 - t;
@@ -211,7 +229,7 @@ mod tests {
                 }
                 from = p;
             }
-            let end = point_at(center, radius, f64::from(start) + sweep);
+            let end = point_at(center_of(center), f64::from(radius), start + sweep);
             assert!(close(from, end), "{start} {sweep}");
         }
     }
@@ -227,7 +245,7 @@ mod tests {
         .unwrap();
         assert!(close(t.t1, Point::new(90.0, 0.0)));
         assert!(close(t.t2, Point::new(100.0, 10.0)));
-        assert!(close(t.center, Point::new(90.0, 10.0)));
+        assert!((t.center.0 - 90.0).abs() < 1e-9 && (t.center.1 - 10.0).abs() < 1e-9);
         assert!((t.sweep - 90.0).abs() < 1e-3);
         // The mirror image turns right, so the arc runs clockwise.
         let t = tangent(

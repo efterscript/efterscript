@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: invisible text. Text shown outside the media box is
+% recorded in the IR and written to the page like any other run; the
+% rendered page is blank, and a text extractor that drops invisible
+% text reports nothing for it, which the oracle harness notes rather
+% than counts against the file.
+/Helvetica findfont 12 scalefont setfont
+-200 -200 moveto (off the page) show
+showpage

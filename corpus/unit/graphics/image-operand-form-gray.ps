@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a gray image after a CMYK colour. The five-operand `image`
+% records DeviceGray samples, one component each, whatever the current
+% colour space (PLRM3 section 4.10.5); only the dictionary form takes
+% the current space.
+0 0 0 1 setcmykcolor
+100 100 translate
+50 50 scale
+2 2 8 [2 0 0 -2 0 2] <0055AAFF> image
+showpage

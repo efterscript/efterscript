@@ -494,7 +494,7 @@ impl<S: PageSink> Graphics<S> {
 
     /// Appends the pieces of an arc in user space; the caller has placed
     /// the current point at the arc's start.
-    fn append_arc(&mut self, center: Point, radius: f32, start: f32, sweep: f64) {
+    fn append_arc(&mut self, center: arc::Center, radius: f64, start: f64, sweep: f64) {
         for (c1, c2, p) in arc::curves(center, radius, start, sweep) {
             let (c1, c2, p) = (self.device(c1), self.device(c2), self.device(p));
             self.gstate
@@ -517,7 +517,9 @@ impl<S: PageSink> Graphics<S> {
         if !radius.is_finite() {
             return Err(VmError::RangeCheck);
         }
-        let first = self.device(arc::point_at(center, radius, f64::from(start)));
+        let (center, radius) = (arc::center_of(center), f64::from(radius));
+        let (start, end) = (f64::from(start), f64::from(end));
+        let first = self.device(arc::point_at(center, radius, start));
         if self.gstate.path.current.is_some() {
             self.gstate.path.line_to(first)?;
         } else {
@@ -715,7 +717,12 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         };
         let t1 = self.device(tangent.t1);
         self.gstate.path.line_to(t1)?;
-        self.append_arc(tangent.center, radius, tangent.start, tangent.sweep);
+        self.append_arc(
+            tangent.center,
+            f64::from(radius),
+            tangent.start,
+            tangent.sweep,
+        );
         Ok((tangent.t1, tangent.t2))
     }
 

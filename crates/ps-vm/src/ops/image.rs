@@ -177,9 +177,18 @@ fn decode_array(i: &Interp, object: Object, components: usize) -> Result<Vec<f32
 }
 
 /// The space an `image` paints in: the current colour space.
-fn sample_space(i: &mut Interp, is_mask: bool) -> Result<Option<SpaceSpec>, VmError> {
+/// The space the samples are in: none for a mask, DeviceGray for the
+/// operand form (PLRM3 §4.10.5), the current colour space for the
+/// dictionary form.
+fn sample_space(
+    i: &mut Interp,
+    is_mask: bool,
+    from_operands: bool,
+) -> Result<Option<SpaceSpec>, VmError> {
     if is_mask {
         Ok(None)
+    } else if from_operands {
+        Ok(Some(SpaceSpec::DeviceGray))
     } else {
         Ok(Some(i.backend()?.current_color_space()))
     }
@@ -193,7 +202,7 @@ fn from_operands(i: &mut Interp, is_mask: bool) -> Result<(ImageSpec, Object), V
     let third = i.peek(2)?;
     let height = dimension(i.peek(3)?)?;
     let width = dimension(i.peek(4)?)?;
-    let color_space = sample_space(i, is_mask)?;
+    let color_space = sample_space(i, is_mask, true)?;
     let components = color_space.as_ref().map_or(1, SpaceSpec::components);
     let (bits_per_component, decode) = if is_mask {
         let polarity = third.as_bool().ok_or(VmError::TypeCheck)?;
@@ -256,7 +265,7 @@ fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<(ImageSpec, 
         Some(flag) => flag.as_bool().ok_or(VmError::TypeCheck)?,
         None => false,
     };
-    let color_space = sample_space(i, is_mask)?;
+    let color_space = sample_space(i, is_mask, false)?;
     let components = color_space.as_ref().map_or(1, SpaceSpec::components);
     let decode = match entry(i, dict, "Decode")? {
         Some(array) => decode_array(i, array, components)?,

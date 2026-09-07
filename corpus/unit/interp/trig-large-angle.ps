@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.7313537
+% expect-output: -0.6819984
+% expect-output: 0.17364818
+% Scenario: a large angle. `sin` and `cos` reduce their argument modulo
+% 360 degrees in double precision before the conversion to radians, so
+% -168437 degrees is 43, 168437 is 317, and a million is 280, each with
+% single precision's digits; converting first would lose the third
+% digit at a million degrees.
+389 -433 mul cos =
+168437 sin =
+1000000 cos =

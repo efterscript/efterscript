@@ -202,7 +202,7 @@ fn device_colour_uses_the_direct_operators_and_no_resource() {
     let pdf = check(&distil_pages(vec![page], uncompressed()));
     assert_eq!(
         content(&pdf, 0),
-        "/DeviceRGB cs\n0.2 0.4 0.6 rg\n/DeviceCMYK cs\n0 0 0 1 k\n/DeviceGray cs\n0.5 g\n10 10 m\n100 10 l\nf\n"
+        "/DeviceRGB cs\n/DeviceRGB CS\n0.2 0.4 0.6 rg\n0.2 0.4 0.6 RG\n/DeviceCMYK cs\n/DeviceCMYK CS\n0 0 0 1 k\n0 0 0 1 K\n/DeviceGray cs\n/DeviceGray CS\n0.5 g\n0.5 G\n10 10 m\n100 10 l\nf\n"
     );
     assert!(resources(&pdf, 0).get("ColorSpace").is_none());
 }
@@ -223,7 +223,10 @@ fn a_separation_becomes_a_resource_with_a_calculator_function() {
     .map(Op::from)
     .collect();
     let pdf = check(&distil_pages(vec![page], uncompressed()));
-    assert_eq!(content(&pdf, 0), "/CS0 cs\n0.6 scn\n10 10 m\n100 10 l\nf\n");
+    assert_eq!(
+        content(&pdf, 0),
+        "/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\n10 10 m\n100 10 l\nf\n"
+    );
     let space = array(color_space(&pdf, 0, "CS0"));
     assert_eq!(space.len(), 4);
     assert_eq!(space[0].as_name(), b"Separation");
@@ -275,7 +278,7 @@ fn devicen_and_indexed_spaces_are_written_by_arity_and_inline() {
     let pdf = check(&bytes);
     assert_eq!(
         content(&pdf, 0),
-        "/CS0 cs\n0.25 0.75 scn\n/CS1 cs\n1 scn\n10 10 m\n100 10 l\nf\n"
+        "/CS0 cs\n/CS0 CS\n0.25 0.75 scn\n0.25 0.75 SCN\n/CS1 cs\n/CS1 CS\n1 scn\n1 SCN\n10 10 m\n100 10 l\nf\n"
     );
 
     let duo = array(color_space(&pdf, 0, "CS0"));
@@ -353,7 +356,7 @@ fn an_image_mask_has_the_flag_and_no_colour_space() {
     let pdf = check(&distil_pages(vec![page], uncompressed()));
     assert_eq!(
         content(&pdf, 0),
-        "/CS0 cs\n0.6 scn\nq 1 0 0 -1 0 1 cm /Im0 Do Q\n"
+        "/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\nq 1 0 0 -1 0 1 cm /Im0 Do Q\n"
     );
     let xobject = xobject(&pdf, 0, "Im0");
     assert_eq!(xobject.get("ImageMask"), Some(&Value::Bool(true)));
@@ -437,7 +440,10 @@ fn compression_wraps_text_streams_and_the_option_defaults_on() {
     let pdf = check(&distil_pages(vec![page], Options::default()));
     let contents = pdf.resolve(page_contents(&pdf));
     assert_eq!(contents.get("Filter").unwrap().as_name(), b"FlateDecode");
-    assert_eq!(content(&pdf, 0), "/CS0 cs\n2 w\n10 10 m\n100 10 l\nS\n");
+    assert_eq!(
+        content(&pdf, 0),
+        "/CS0 cs\n/CS0 CS\n2 w\n10 10 m\n100 10 l\nS\n"
+    );
     let function = pdf.resolve(array(color_space(&pdf, 0, "CS0"))[3].as_reference());
     assert_eq!(function.get("Filter").unwrap().as_name(), b"FlateDecode");
     assert_eq!(decoded(function), b"{0 0 0 4 -1 roll}");
@@ -828,7 +834,7 @@ fn a_charwidth_glyph_opens_with_d0_and_carries_its_resources() {
     );
     assert_eq!(
         String::from_utf8(decoded(charproc)).unwrap(),
-        "600 0 d0\n/CS0 cs\n0.6 scn\n0 0 m\n500 0 l\n500 500 l\n0 500 l\nh\nf\n\
+        "600 0 d0\n/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\n0 0 m\n500 0 l\n500 500 l\n0 500 l\nh\nf\n\
          BT\n/F0 1 Tf\n400 0 0 400 0 0 Tm\n(H) Tj\nET\n"
     );
     let resources = font.get("Resources").unwrap();

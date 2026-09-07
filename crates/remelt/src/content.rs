@@ -5,7 +5,12 @@
 //! syntax (ISO 32000-1 §8.4, §8.5, §8.6, §8.9), one operation per line,
 //! operands before the operator, numbers in the writer's canonical form.
 //! The text mirrors the `ir/1` dump line for line, so an uncompressed
-//! stream diffs the way the dump does.
+//! stream diffs the way the dump does — except that every colour-space
+//! and colour setting is written twice, in its non-stroking and its
+//! stroking form: the program has one current colour, PDF has two.
+//!
+//! A clip with no segments is written as a zero-area rectangle before
+//! `W n`; the clipping operator with no path at all would be ignored.
 //!
 //! Paths arrive in default user space and go out unchanged, except under
 //! a stroke recorded with a CTM: PDF measures line width and dash lengths
@@ -110,6 +115,15 @@ impl ColorOp {
             ColorOp::Rgb => "rg",
             ColorOp::Cmyk => "k",
             ColorOp::Named => "scn",
+        }
+    }
+
+    fn stroking_operator(self) -> &'static str {
+        match self {
+            ColorOp::Gray => "G",
+            ColorOp::Rgb => "RG",
+            ColorOp::Cmyk => "K",
+            ColorOp::Named => "SCN",
         }
     }
 }
@@ -332,10 +346,12 @@ impl Writer<'_> {
     fn set_color_space(&mut self, space: SpaceRef) {
         let spec = &self.resources.color_spaces[space.0];
         let op = ColorOp::of(spec);
-        match op {
-            ColorOp::Named => self.line(&format!("/{} cs", space_name(space))),
-            _ => self.line(&format!("/{} cs", spec.family())),
-        }
+        let name = match op {
+            ColorOp::Named => space_name(space),
+            _ => spec.family().to_string(),
+        };
+        self.line(&format!("/{name} cs"));
+        self.line(&format!("/{name} CS"));
         *self
             .color_ops
             .last_mut()
@@ -364,8 +380,10 @@ impl Writer<'_> {
             IrOp::Flatness(f) => self.line(&format!("{} i", fmt_real(*f))),
             IrOp::SetColorSpace(space) => self.set_color_space(*space),
             IrOp::SetColor(components) => {
-                let operator = self.color_op().operator();
-                self.line(&format!("{} {operator}", reals(components)));
+                let op = self.color_op();
+                let components = reals(components);
+                self.line(&format!("{components} {}", op.operator()));
+                self.line(&format!("{components} {}", op.stroking_operator()));
             }
             IrOp::Fill { path, rule } => {
                 self.segments(path, |p| p);
@@ -395,6 +413,9 @@ impl Writer<'_> {
                 }
             }
             IrOp::Clip { path, rule } => {
+                if path.is_empty() {
+                    self.line("0 0 0 0 re");
+                }
                 self.segments(path, |p| p);
                 self.line(match rule {
                     FillRule::NonZero => "W n",
@@ -513,6 +534,30 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_without_segments_is_a_zero_area_rectangle() {
+        let page = page(vec![
+            IrOp::Save,
+            IrOp::Clip {
+                path: Vec::new(),
+                rule: FillRule::NonZero,
+            },
+            IrOp::Fill {
+                path: vec![Seg::Move(p(0.0, 0.0)), Seg::Line(p(10.0, 0.0)), Seg::Close],
+                rule: FillRule::NonZero,
+            },
+            IrOp::Restore,
+            IrOp::Clip {
+                path: Vec::new(),
+                rule: FillRule::EvenOdd,
+            },
+        ]);
+        assert_eq!(
+            text(&page),
+            "q\n0 0 0 0 re\nW n\n0 0 m\n10 0 l\nh\nf\nQ\n0 0 0 0 re\nW* n\n"
+        );
+    }
+
+    #[test]
     fn strokes_wrap_their_ctm_unless_identity_or_singular() {
         let path = vec![Seg::Move(p(10.0, 10.0)), Seg::Line(p(100.0, 10.0))];
         let plain = page(vec![IrOp::Stroke {
@@ -530,6 +575,39 @@ mod tests {
             ctm: Matrix::scaling(0.0, 2.0),
         }]);
         assert_eq!(text(&singular), "10 10 m\n100 10 l\nS\n");
+    }
+
+    #[test]
+    fn every_colour_setting_is_written_for_both_painting_operations() {
+        let mut page = page(Vec::new());
+        let sep = page.resources.intern_space(&SpaceSpec::Separation {
+            name: b"Spot".to_vec(),
+            alternate: Box::new(SpaceSpec::DeviceCMYK),
+            tint_source: b"{}".to_vec(),
+        });
+        let rgb = page.resources.intern_space(&SpaceSpec::DeviceRGB);
+        let path = vec![Seg::Move(p(100.0, 100.0)), Seg::Line(p(300.0, 300.0))];
+        page.ops = vec![
+            IrOp::SetColorSpace(rgb),
+            IrOp::SetColor(vec![1.0, 0.0, 0.0]),
+            IrOp::Stroke {
+                path: path.clone(),
+                ctm: Matrix::IDENTITY,
+            },
+            IrOp::SetColorSpace(sep),
+            IrOp::SetColor(vec![0.6]),
+            IrOp::Stroke {
+                path,
+                ctm: Matrix::IDENTITY,
+            },
+        ]
+        .into_iter()
+        .map(Op::from)
+        .collect();
+        assert_eq!(
+            text(&page),
+            "/DeviceRGB cs\n/DeviceRGB CS\n1 0 0 rg\n1 0 0 RG\n100 100 m\n300 300 l\nS\n/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\n100 100 m\n300 300 l\nS\n"
+        );
     }
 
     #[test]
@@ -559,7 +637,7 @@ mod tests {
         .collect();
         assert_eq!(
             text(&page),
-            "0.5 g\n/DeviceRGB cs\n0.2 0.4 0.6 rg\nq\n/CS1 cs\n0.6 scn\nQ\n1 1 1 rg\n/DeviceCMYK cs\n0 0 0 1 k\n"
+            "0.5 g\n0.5 G\n/DeviceRGB cs\n/DeviceRGB CS\n0.2 0.4 0.6 rg\n0.2 0.4 0.6 RG\nq\n/CS1 cs\n/CS1 CS\n0.6 scn\n0.6 SCN\nQ\n1 1 1 rg\n1 1 1 RG\n/DeviceCMYK cs\n/DeviceCMYK CS\n0 0 0 1 k\n0 0 0 1 K\n"
         );
     }
 
@@ -591,6 +669,6 @@ mod tests {
     #[test]
     fn an_unbalanced_restore_does_not_panic() {
         let page = page(vec![IrOp::Restore, IrOp::SetColor(vec![1.0])]);
-        assert_eq!(text(&page), "Q\n1 g\n");
+        assert_eq!(text(&page), "Q\n1 g\n1 G\n");
     }
 }

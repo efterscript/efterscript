@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: bitshift-zero-fill
+% expect-output: 33554426
+% expect-output: 2147483647
+% expect-output: -1416
+% Scenario: a negative integer shifted right. `bitshift` moves zeros
+% into the vacated high bits of the 32-bit pattern, as the operator's
+% description prescribes (PLRM3 section 8.2, bitshift), so -663 shifted
+% right by 7 is 2^25 - 6; other interpreters sign-extend and give -6.
+% Left shifts of a negative are the same in both.
+-663 -7 bitshift =
+-1 -1 bitshift =
+-708 1 bitshift =

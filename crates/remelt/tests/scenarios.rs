@@ -154,7 +154,7 @@ fn separation_reaches_the_page_resources() {
     let pdf = check(&run.pdf);
     assert_eq!(
         content(&pdf, 0),
-        "/CS0 cs\n0.6 scn\n0 0 m\n10 0 l\n10 10 l\nh\nf\n"
+        "/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\n0 0 m\n10 0 l\n10 10 l\nh\nf\n"
     );
     let space = array(color_space(&pdf, 0, "CS0"));
     assert_eq!(space[0].as_name(), b"Separation");
@@ -172,7 +172,8 @@ fn device_colour_is_direct() {
     let run = distil("0.2 0.4 0.6 setrgbcolor 0 0 10 10 rectfill showpage");
     let pdf = check(&run.pdf);
     assert!(
-        content(&pdf, 0).starts_with("/DeviceRGB cs\n0.2 0.4 0.6 rg\n"),
+        content(&pdf, 0)
+            .starts_with("/DeviceRGB cs\n/DeviceRGB CS\n0.2 0.4 0.6 rg\n0.2 0.4 0.6 RG\n"),
         "{}",
         content(&pdf, 0)
     );
@@ -208,7 +209,7 @@ fn an_image_mask_paints_the_current_colour() {
     let pdf = check(&run.pdf);
     assert_eq!(
         content(&pdf, 0),
-        "/CS0 cs\n0.6 scn\nq 50 0 0 50 100 100 cm /Im0 Do Q\n"
+        "/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\nq 50 0 0 50 100 100 cm /Im0 Do Q\n"
     );
     let mask = xobject(&pdf, 0, "Im0");
     assert_eq!(mask.get("ImageMask"), Some(&Value::Bool(true)));

@@ -568,7 +568,16 @@ fn image_data_from_a_procedure_stops_at_the_byte_count() {
 
 #[test]
 fn image_data_from_strings_and_files() {
+    // The operand form's samples are gray whatever the current space;
+    // the dictionary form takes the current space.
     let run = exec("/DeviceRGB setcolorspace 2 2 8 [2 0 0 2 0 0] (0123456789ab) image");
+    assert_eq!(run.outcome, Outcome::Ok);
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(spec.components(), 1);
+    assert_eq!(data, b"0123");
+    let run = exec(
+        "/DeviceRGB setcolorspace << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] /DataSource (0123456789ab) >> image",
+    );
     assert_eq!(run.outcome, Outcome::Ok);
     let (spec, data) = &image_calls(&run)[0];
     assert_eq!(spec.components(), 3);

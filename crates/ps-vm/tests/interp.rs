@@ -637,6 +637,13 @@ fn math_operators() {
         reals(&interp),
         [4.0, 0.0, 90.0, 270.0, 1.0, 1.0, 8.0, 0.0, 2.0]
     );
+    // Large angles are reduced in double precision first; quarter turns
+    // are exact.
+    let (interp, _, _, _) = run("1000000 cos 168437 sin 389 -433 mul cos 90 cos 180 sin 270 cos");
+    assert_eq!(
+        reals(&interp),
+        [0.173_648_18, -0.681_998_4, 0.731_353_7, 0.0, 0.0, 0.0]
+    );
     let (interp, _, _, _) = run("2.5 round -2.5 round 2.5 ceiling 2.5 floor -2.5 truncate 3 round");
     let stack = interp.ostack();
     assert_eq!(stack[0].as_f32(), Some(3.0));

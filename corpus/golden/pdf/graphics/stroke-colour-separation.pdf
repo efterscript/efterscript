@@ -10,17 +10,16 @@ stream
 endstream
 endobj
 3 0 obj
-<< /Length 57 >>
+<< /Length 58 >>
 stream
 /CS0 cs
 /CS0 CS
 0.6 scn
 0.6 SCN
-0 0 m
-10 0 l
-10 10 l
-h
-f
+6 w
+100 100 m
+300 100 l
+S
 
 endstream
 endobj
@@ -39,14 +38,14 @@ endobj
 xref
 0 7
 0000000000 65535 f
-0000000542 00000 n
+0000000543 00000 n
 0000000140 00000 n
 0000000266 00000 n
-0000000373 00000 n
-0000000601 00000 n
-0000000650 00000 n
+0000000374 00000 n
+0000000602 00000 n
+0000000651 00000 n
 trailer
 << /Size 7 /Root 5 0 R /Info 6 0 R >>
 startxref
-701
+702
 %%EOF

@@ -718,6 +718,9 @@ fn compare_documents(
     let scale = 72.0 / f64::from(profile.dpi);
     // The converter's media box is known only through whole pixels.
     let tolerance = 0.5 + scale;
+    // Whether every page agreed in size and pixels: with that, text the
+    // reference did not extract is text it dropped as invisible.
+    let mut pixels_agree = ours.len() == theirs.len();
     for (index, (ours, theirs)) in ours.iter().zip(&theirs).enumerate() {
         let page = index + 1;
         let read = |file: &Path| -> Result<pnm::Image, String> {
@@ -736,6 +739,7 @@ fn compare_documents(
                 "page {page}: media box ours {width}x{height}, theirs {theirs_width}x{theirs_height} (from {}x{} pixels at {} dpi)",
                 b.width, b.height, profile.dpi
             ));
+            pixels_agree = false;
         }
         if (a.width, a.height) != (b.width, b.height) {
             report.reasons.push(format!(
@@ -743,11 +747,13 @@ fn compare_documents(
                 a.width, a.height, b.width, b.height
             ));
             report.fractions.push(1.0);
+            pixels_agree = false;
             continue;
         }
         let diff = pnm::compare(&a, &b, profile.threshold)?;
         report.fractions.push(diff.fraction());
         if diff.fraction() > profile.limit {
+            pixels_agree = false;
             report.reasons.push(format!(
                 "page {page}: {:.3}% of pixels differ (limit {:.3}%, largest channel difference {})",
                 diff.fraction() * 100.0,
@@ -764,10 +770,21 @@ fn compare_documents(
             extract_text(settings, dir, "ours", &ours_pdf, deadline)?
         };
         if unmapped.is_empty() {
-            if normalise_text(&ours_text) != normalise_text(&theirs_text) {
-                report
-                    .reasons
-                    .push("text differs (ours.txt against theirs.txt)".to_string());
+            let (ours_text, theirs_text) =
+                (normalise_text(&ours_text), normalise_text(&theirs_text));
+            if ours_text != theirs_text {
+                // The reference drops text it deems invisible — off the
+                // page, under an empty clip — where ours keeps it; the
+                // rasters agreeing is the evidence.
+                if pixels_agree && theirs_text.is_empty() {
+                    report
+                        .notes
+                        .push("text: invisible (reference extracted nothing)".to_string());
+                } else {
+                    report
+                        .reasons
+                        .push("text differs (ours.txt against theirs.txt)".to_string());
+                }
             }
         } else {
             for (page, fonts) in &unmapped {
@@ -1395,9 +1412,11 @@ exit 0
 ";
 
     /// A text extractor: a constant for a document with a page, plus
-    /// whatever `%fake-text` says.
+    /// whatever `%fake-text` says; nothing at all when the document
+    /// carries `%fake-silent`.
     const TEXT: &str = "#!/bin/sh
 export LC_ALL=C
+if grep -a -q '%fake-silent' \"$1\"; then exit 0; fi
 if grep -a -q '/MediaBox' \"$1\"; then printf 'hello '; fi
 printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
 ";
@@ -1684,6 +1703,53 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         let path = plain.program("drawing.ps", DRAWING);
         plain.control("mark %fake-text world\n");
         assert_eq!(plain.check(&path).verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn text_the_reference_did_not_extract_is_invisible_when_the_rasters_agree() {
+        let fixture = Fixture::new(0.005, 20_000, true);
+        let path = fixture.program(
+            "offpage.ps",
+            "%!PS\n/Helvetica findfont 10 scalefont setfont -100 -100 moveto (a) show showpage\n",
+        );
+        fixture.control("mark %fake-silent\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(
+            report.notes,
+            ["text: invisible (reference extracted nothing)"]
+        );
+        // Differing pixels make it a text difference again.
+        fixture.control("mark %fake-silent\nmark %fake-fill 0 1000\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert!(
+            report.reasons[0].contains("of pixels differ"),
+            "{:?}",
+            report.reasons
+        );
+        assert_eq!(
+            report.reasons[1],
+            "text differs (ours.txt against theirs.txt)"
+        );
+        assert!(report.notes.is_empty());
+        // So does a page count that differs, and text on both sides.
+        fixture.control("mark %fake-silent\nmark %fake-extra-pages 1\n");
+        let report = fixture.check(&path);
+        assert_eq!(
+            report.reasons,
+            [
+                "pages: ours 1, theirs 2",
+                "text differs (ours.txt against theirs.txt)"
+            ]
+        );
+        fixture.control("mark %fake-text world\n");
+        let report = fixture.check(&path);
+        assert_eq!(
+            report.reasons,
+            ["text differs (ours.txt against theirs.txt)"]
+        );
+        assert!(report.notes.is_empty());
     }
 
     #[test]
@@ -2134,6 +2200,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert_eq!(
             counts,
             [
+                ("bitshift-zero-fill", 1),
                 ("cvrs-negative-unsigned", 1),
                 ("file-access-policy", 1),
                 ("fmaptype-cmap-only", 1),

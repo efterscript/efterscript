@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a quarter turn from rounding. Under an anisotropic scale
+% this `arcto` sweeps a right angle recomputed from the current point
+% read back through the CTM, which lands within rounding of 90 degrees
+% on either side; the arc is one Bezier piece either way, so the IR
+% carries a single curve after the line to the first tangent point.
+<< /PageSize [300 300] >> setpagedevice
+-45 rotate
+0.80 0.89 scale
+1.50 1.16 scale
+7 8 moveto 23 8 23 57 45 arcto pop pop pop pop
+stroke
+showpage

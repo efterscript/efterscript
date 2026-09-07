@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: nothing paints under an empty clip. `clip` with no current
+% path makes the clip empty: the IR records a clip with no segments,
+% the fill under it stays in the IR, and the first page renders blank.
+% `grestore` (second page) and `initclip` (third) restore painting as
+% they would after any clip.
+newpath clip
+0 0 612 792 rectfill
+showpage
+gsave newpath clip 0 0 612 792 rectfill grestore
+100 100 50 50 rectfill
+showpage
+newpath clip 0 0 612 792 rectfill
+initclip
+200 200 50 50 rectfill
+showpage
