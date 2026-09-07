@@ -41,13 +41,16 @@ differing fraction exceeds the profile's limit. When the profile
 provides a text extractor, extracted text SHALL be compared after
 whitespace normalisation, except that a page whose EfterScript PDF
 carries no Unicode mapping for its fonts SHALL report its text as not
-comparable rather than as a failure. The harness SHALL also run the
-file through the reference interpreter and compare standard output with
-EfterScript's after normalising real-number formatting and trailing
-whitespace; when the profile gives an `error_marker`, the reference's
-output SHALL be cut at the marker's first occurrence and the presence of
-the marker recorded as the reference ending in error. Each file SHALL be
-given the profile's timeout.
+comparable rather than as a failure, and a page whose rasters agree and
+from which the reference extracted no text SHALL report a text
+difference as a note (invisible text) rather than as a failure. The
+harness SHALL also run the file through the reference interpreter and
+compare standard output with EfterScript's after normalising
+real-number formatting and trailing whitespace; when the profile gives
+an `error_marker`, the reference's output SHALL be cut at the marker's
+first occurrence and the presence of the marker recorded as the
+reference ending in error. Each file SHALL be given the profile's
+timeout.
 
 #### Scenario: Identical pages pass
 
@@ -80,6 +83,13 @@ given the profile's timeout.
   file
 - **THEN** the output comparison covers only the text before the marker
   and the reference is recorded as having ended in error
+
+#### Scenario: Invisible text
+
+- **GIVEN** a page showing text outside the media box, with rasters that
+  agree and no text extracted by the reference
+- **THEN** the text difference is reported as a note and the verdict is
+  pass
 
 ### Requirement: Verdicts and divergence headers
 
