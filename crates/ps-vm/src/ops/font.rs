@@ -443,7 +443,7 @@ pub(crate) fn number(value: f32) -> Object {
 }
 
 fn materialise(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
-    let dict = i.mem.new_dict(10);
+    let dict = i.mem.new_dict(12);
     let name = i.intern(font.postscript_name());
     let matrix = i.mem.alloc_array(vec![
         Object::real(0.001),
@@ -453,7 +453,13 @@ fn materialise(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
         Object::integer(0),
         Object::integer(0),
     ])?;
-    let bbox = i.mem.alloc_array(font.bbox().map(number).to_vec())?;
+    // Executable, as a Type 1 program defines it (`/FontBBox {…} readonly
+    // def`), so setup code that executes the name after `begin` gets the
+    // four numbers a real face gives it.
+    let bbox = i
+        .mem
+        .alloc_array(font.bbox().map(number).to_vec())?
+        .as_executable();
     let encoding = if font.is_symbolic() {
         encoding_array(&mut i.mem, font.builtin_encoding())?
     } else {
@@ -461,6 +467,27 @@ fn materialise(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
     };
     let fid = i.allocate_fid();
     let index = i32::try_from(font.index()).expect("thirty-five faces");
+    // A Type 1 dictionary carries CharStrings and Private (PLRM3 §5.2),
+    // and setup code reads them — a glyph's presence, its entry. The
+    // face has no Type 1 program, so each glyph maps to its index in the
+    // metrics table, the way a Type 42 dictionary numbers its glyphs.
+    let glyphs = font.metrics().glyph_names();
+    let charstrings = i
+        .mem
+        .new_dict(u32::try_from(glyphs.len() + 1).map_err(|_| VmError::LimitCheck)?);
+    let notdef = i.intern(".notdef");
+    i.mem.dict_put(charstrings, notdef, Object::integer(0))?;
+    for (at, glyph) in glyphs.iter().enumerate() {
+        let key = i
+            .mem
+            .intern(glyph.as_bytes())
+            .map_err(|_| VmError::LimitCheck)?;
+        let at = i32::try_from(at + 1).map_err(|_| VmError::LimitCheck)?;
+        i.mem.dict_put(charstrings, key, Object::integer(at))?;
+    }
+    i.mem.dict_set_access(charstrings, Access::ReadOnly)?;
+    let private = i.mem.new_dict(1);
+    i.mem.dict_set_access(private, Access::ReadOnly)?;
     let entries = [
         ("FontType", Object::integer(1)),
         ("FontName", name),
@@ -468,6 +495,8 @@ fn materialise(i: &mut Interp, font: ResidentFace) -> Result<Object, VmError> {
         ("FontBBox", bbox),
         ("PaintType", Object::integer(0)),
         ("Encoding", encoding),
+        ("CharStrings", charstrings),
+        ("Private", private),
         ("FID", fid),
         (RESIDENT_KEY, Object::integer(index)),
     ];

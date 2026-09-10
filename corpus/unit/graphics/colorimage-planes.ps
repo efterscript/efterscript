@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: colorimage from one source per component. The three planes,
+% procedures called in rotation, interleave into the same image as the
+% single-source scenario; the sidecar golden is the same but for the
+% resource order.
+100 100 translate
+50 50 scale
+/r <FF0000FF> def /g <00FF00FF> def /b <0000FFFF> def
+2 2 8 [2 0 0 -2 0 2] { r } { g } { b } true 3 colorimage
+showpage

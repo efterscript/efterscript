@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 //! `difftest oracle [--profile <name>] [--dpi <n>] [--json <path>]
-//! [path…]`: the differential comparison against the reference
-//! converter a profile describes (see [`crate::profile`]).
+//! [--prelude <file>] [path…]`: the differential comparison against the
+//! reference converter a profile describes (see [`crate::profile`]).
+//! `--prelude` runs a program before each file on EfterScript's side
+//! only — the identity a host would give the interpreter — and is never
+//! passed to the reference.
 //!
 //! Per corpus file: EfterScript's PDF and the converter's are rendered
 //! by the profile's rasteriser and compared page by page (count, media
@@ -177,6 +180,8 @@ pub struct Settings<'a> {
     pub root: &'a Path,
     pub out_root: PathBuf,
     pub profile: &'a Profile,
+    /// Run before each file on EfterScript's side.
+    pub prelude: Option<Vec<u8>>,
 }
 
 /// What `check_file` decided.
@@ -941,7 +946,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         report.skip = Some(reason);
         return Checked::Report(report);
     }
-    let actual = execute_with_stdin(&bytes, expected.graphics);
+    let actual = execute_with_stdin(&bytes, expected.graphics, settings.prelude.as_deref());
     report.pages_ours = actual.collected.pages.len();
     let prepared = cleared.and_then(|()| std::fs::create_dir_all(&dir));
     if let Err(e) = prepared {
@@ -1230,6 +1235,7 @@ struct Args {
     profile: Option<String>,
     dpi: Option<u32>,
     json: Option<PathBuf>,
+    prelude: Option<PathBuf>,
     paths: Vec<String>,
 }
 
@@ -1238,6 +1244,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         profile: None,
         dpi: None,
         json: None,
+        prelude: None,
         paths: Vec::new(),
     };
     let mut iter = args.iter();
@@ -1259,6 +1266,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                 );
             }
             "--json" => parsed.json = Some(PathBuf::from(value("--json")?)),
+            "--prelude" => parsed.prelude = Some(PathBuf::from(value("--prelude")?)),
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             path => parsed.paths.push(path.to_string()),
         }
@@ -1351,10 +1359,16 @@ pub fn run(args: &[String], env: &Env) -> ExitCode {
         profile.limit,
         profile.timeout_ms
     );
+    let prelude = match args.prelude.as_deref().map(std::fs::read) {
+        Some(Ok(bytes)) => Some(bytes),
+        Some(Err(e)) => return failure(&format!("--prelude: {e}")),
+        None => None,
+    };
     let settings = Settings {
         root: &root,
         out_root: root.join("target").join("oracle"),
         profile: &profile,
+        prelude,
     };
     let (reports, skipped) = run_files(&settings, &files);
     let summary = Summary::of(&reports, skipped);
@@ -1504,6 +1518,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 root: &root,
                 out_root: self.dir.join("out"),
                 profile: &self.profile,
+                prelude: None,
             };
             match check_file(&settings, path) {
                 Checked::Report(report) => report,
@@ -2081,6 +2096,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             root: &root,
             out_root: fixture.dir.join("out"),
             profile: &fixture.profile,
+            prelude: None,
         };
         let (reports, skipped) = run_files(&settings, &[good, bad]);
         let summary = Summary::of(&reports, skipped);
@@ -2256,6 +2272,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             counts,
             [
                 ("bitshift-zero-fill", 1),
+                ("cexec-defined", 1),
                 ("cvrs-negative-unsigned", 1),
                 ("distiller-params-typecheck", 1),
                 ("distiller-params-unknown-keys", 1),
@@ -2271,6 +2288,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("resident-inventory", 9),
                 ("resident-metrics-only", 1),
                 ("resource-size-unknown", 5),
+                ("server-password-default", 1),
                 ("unspecified-forall-order", 1),
                 ("vertical-default-metrics", 1),
             ]
@@ -2366,6 +2384,8 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             "72",
             "--json",
             "target/r.json",
+            "--prelude",
+            "host.ps",
             "a.ps",
             "b",
         ]
@@ -2376,6 +2396,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert_eq!(parsed.profile.as_deref(), Some("p"));
         assert_eq!(parsed.dpi, Some(72));
         assert_eq!(parsed.json.as_deref(), Some(Path::new("target/r.json")));
+        assert_eq!(parsed.prelude.as_deref(), Some(Path::new("host.ps")));
         assert_eq!(parsed.paths, ["a.ps", "b"]);
         let err = |args: &[&str]| {
             parse_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_err()

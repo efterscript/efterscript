@@ -225,26 +225,39 @@ pub fn execute(program: &[u8]) -> Actual {
 }
 
 pub fn execute_with(program: &[u8], graphics: bool) -> Actual {
-    execute_in(program, graphics, false)
+    execute_in(program, graphics, false, None)
 }
 
 /// Runs `program` as `execute_with` does but with an empty, readable
-/// `%stdin`, the way an interpreter run from a shell has one; the oracle
-/// tier uses this so `%stdin` opens on both sides.
-pub fn execute_with_stdin(program: &[u8], graphics: bool) -> Actual {
-    execute_in(program, graphics, true)
+/// `%stdin`, the way an interpreter run from a shell has one, and with
+/// `prelude` run first at the server level when given; the oracle tier
+/// uses this so `%stdin` opens on both sides.
+pub fn execute_with_stdin(program: &[u8], graphics: bool, prelude: Option<&[u8]>) -> Actual {
+    execute_in(program, graphics, true, prelude)
 }
 
-fn execute_in(program: &[u8], graphics: bool, stdin: bool) -> Actual {
+fn execute_in(program: &[u8], graphics: bool, stdin: bool, prelude: Option<&[u8]>) -> Actual {
     let (mut io, out, err) = Io::capture();
     if stdin {
         io = io.with_stdin(ps_vm::Capture::new());
     }
     let config = Config {
         io,
+        prelude: prelude.map(<[u8]>::to_vec),
         ..Default::default()
     };
-    let mut interp = Interp::with_config(config);
+    let mut interp = match Interp::try_with_config(config) {
+        Ok(interp) => interp,
+        Err(e) => {
+            return Actual {
+                output: out.text(),
+                error: Some(e.name),
+                stderr: format!("{}prelude failed in {}\n", err.text(), e.offending),
+                collected: Collected::default(),
+                pdf: Ok(Vec::new()),
+            };
+        }
+    };
     let collected = Rc::new(RefCell::new(Collected::default()));
     if graphics {
         interp.set_graphics_backend(Box::new(Graphics::new(collected.clone())));

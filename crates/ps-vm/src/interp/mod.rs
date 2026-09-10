@@ -10,20 +10,22 @@ mod frame;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::{error, fmt};
 
 use ps_fonts::cmap::CMapBuilder;
 use ps_fonts::{CMap, Program};
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
-use crate::graphics::{FontRef, GraphicsBackend, MarkValue, Matrix};
+use crate::graphics::{FontRef, GraphicsBackend, MarkValue, Matrix, ProcRef, Screen};
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, CompositeRef, Handle, Object, Type};
 use crate::ops::{self, Num, OpEntry, Visibility};
+use crate::source::SliceSource;
 
 pub(crate) use exec::scan_error;
-pub use frame::{Frame, LoopFrame, Marker, SourceFrame, SourceSlot};
+pub use frame::{Frame, LoopFrame, Marker, ResourceKey, SourceFrame, SourceSlot};
 
 // The file-table stream behind the job's source. The loop moves the bytes
 // of the source handed to `run` into this buffer before scanning, so the
@@ -113,7 +115,34 @@ pub struct Config {
     pub capabilities: Capabilities,
     pub quirks: Quirks,
     pub fonts: FontConfig,
+    /// Entries written into `statusdict` at construction, before the
+    /// prelude: the identity the embedder presents, as values (names,
+    /// strings, numbers, booleans, arrays, and dictionaries become the
+    /// corresponding objects).
+    pub identity: Vec<(String, MarkValue)>,
+    /// A program executed once at construction, after seeding, at the
+    /// server level: its definitions persist for the interpreter's life.
+    /// An error in it fails construction.
+    pub prelude: Option<Vec<u8>>,
+    /// The password `exitserver` compares its operand with.
+    pub server_password: i32,
 }
+
+/// Why construction failed: the prelude (or the identity it is seeded
+/// with) raised an error, named as `$error` would report it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreludeError {
+    pub name: String,
+    pub offending: String,
+}
+
+impl fmt::Display for PreludeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "prelude failed: {} in {}", self.name, self.offending)
+    }
+}
+
+impl error::Error for PreludeError {}
 
 /// A resource category's instance dictionaries: one per VM, so
 /// `defineresource` follows the allocation mode and `restore` reverts
@@ -152,6 +181,7 @@ pub struct StandardDicts {
     /// `$error`
     pub error: Object,
     pub statusdict: Object,
+    pub serverdict: Object,
 }
 
 // Literal names the machinery uses on every error.
@@ -219,6 +249,19 @@ pub struct Interp {
     // The current font of a VM without a graphics backend, which has no
     // graphics state to keep it in.
     font_without_backend: Option<FontRef>,
+    // The screens and transfer functions of a VM without a backend,
+    // likewise.
+    screens_without_backend: [Screen; 4],
+    transfers_without_backend: [ProcRef; 4],
+    // The procedures the graphics state refers to by `ProcRef` (spot and
+    // transfer functions); entry 0 is the empty procedure. Append-only,
+    // on the font-instance argument: an entry `restore` invalidated is
+    // never looked up, since the state that referred to it was restored.
+    graphics_procs: Vec<Object>,
+    graphics_proc_index: HashMap<CompositeRef, ProcRef>,
+    server_password: i32,
+    server_level: bool,
+    prelude_ran: bool,
     // Program snapshots by `FID`, built on the first glyph a font needs
     // and never invalidated: a job that alters its font dictionary
     // afterwards is not followed.
@@ -273,13 +316,30 @@ impl Interp {
         Self::with_config(Config::default())
     }
 
+    /// As [`Interp::try_with_config`], for a configuration whose prelude
+    /// cannot fail: without one, construction never does.
+    ///
+    /// # Panics
+    ///
+    /// When the prelude or the identity raises an error; an embedder
+    /// shipping a prelude uses `try_with_config` to report it.
     pub fn with_config(config: Config) -> Self {
+        Self::try_with_config(config).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Builds the interpreter, seeds `statusdict` with the identity, and
+    /// runs the prelude once at the server level; an error in either
+    /// ends construction with the error reported.
+    pub fn try_with_config(config: Config) -> Result<Self, PreludeError> {
         let Config {
             limits,
             io,
             capabilities,
             quirks,
             fonts,
+            identity,
+            prelude,
+            server_password,
         } = config;
         let mut mem = Memory::new();
         mem.set_file_capability(capabilities.file);
@@ -298,7 +358,10 @@ impl Interp {
         mem.set_global(true);
         let systemdict = mem.new_dict(u32::try_from(ops.len()).unwrap_or(u32::MAX));
         let globaldict = mem.new_dict(200);
-        let statusdict = mem.new_dict(16);
+        let identity_proc = mem
+            .alloc_array(Vec::new())
+            .expect("an empty array allocates")
+            .as_executable();
         let page_device = mem.new_dict(32);
         let distiller_params = mem.new_dict(32);
         let global_font_directory = mem.new_dict(32);
@@ -318,6 +381,11 @@ impl Interp {
         let userdict = mem.new_dict(200);
         let errordict = mem.new_dict(32);
         let error = mem.new_dict(16);
+        // Local, like errordict: a job in local allocation mode stores
+        // strings into statusdict (its job name, say), which a global
+        // dictionary would refuse.
+        let statusdict = mem.new_dict(64);
+        let serverdict = mem.new_dict(8);
         let font_directory = mem.new_dict(32);
         let local_encodings = mem.new_dict(8);
         let local_procsets = mem.new_dict(8);
@@ -389,6 +457,13 @@ impl Interp {
             described_fonts: HashSet::new(),
             defined_matrices: HashMap::new(),
             font_without_backend: None,
+            screens_without_backend: [Screen::DEFAULT; 4],
+            transfers_without_backend: [ProcRef::IDENTITY; 4],
+            graphics_procs: vec![identity_proc],
+            graphics_proc_index: HashMap::new(),
+            server_password,
+            server_level: false,
+            prelude_ran: false,
             font_programs: HashMap::new(),
             cid_programs: HashMap::new(),
             cmaps: HashMap::new(),
@@ -405,6 +480,7 @@ impl Interp {
                 errordict,
                 error,
                 statusdict,
+                serverdict,
             },
             atoms,
             dstack_floor: 3,
@@ -421,7 +497,39 @@ impl Interp {
             max_host_depth: 0,
         };
         interp.populate();
-        interp
+        if let Err((e, key)) = ops::status::seed_identity(&mut interp, &identity) {
+            return Err(PreludeError {
+                name: e.name().to_string(),
+                offending: key,
+            });
+        }
+        if let Some(prelude) = prelude {
+            interp.run_prelude(&prelude)?;
+        }
+        Ok(interp)
+    }
+
+    /// Runs the prelude through the normal loop at the server level. A
+    /// `quit` in it ends the prelude, not the interpreter.
+    fn run_prelude(&mut self, prelude: &[u8]) -> Result<(), PreludeError> {
+        self.server_level = true;
+        let outcome = self.run(&mut SliceSource::new(prelude));
+        self.server_level = false;
+        self.quit = false;
+        self.prelude_ran = true;
+        match outcome {
+            Outcome::Ok => Ok(()),
+            Outcome::Error(summary) => Err(PreludeError {
+                name: summary.name,
+                offending: summary.command,
+            }),
+            // A slice never promises more bytes, so this is a prelude
+            // that ended inside a token.
+            Outcome::Suspended => Err(PreludeError {
+                name: VmError::SyntaxError.name().to_string(),
+                offending: String::new(),
+            }),
+        }
     }
 
     fn populate(&mut self) {
@@ -431,6 +539,7 @@ impl Interp {
             let dict = match entry.visibility {
                 Visibility::Public => dicts.systemdict,
                 Visibility::Internal => dicts.errordict,
+                Visibility::Server => dicts.serverdict,
                 Visibility::Graphics | Visibility::ProcSet => continue,
             };
             let key = self.intern(entry.name);
@@ -451,6 +560,7 @@ impl Interp {
             ("errordict", dicts.errordict),
             ("$error", dicts.error),
             ("statusdict", dicts.statusdict),
+            ("serverdict", dicts.serverdict),
             ("FontDirectory", self.font_category.local),
             ("GlobalFontDirectory", self.font_category.global),
             ("StandardEncoding", self.standard_encoding),
@@ -469,6 +579,7 @@ impl Interp {
 
         ops::pagedevice::seed(self).expect("fresh dictionary");
         ops::distiller::seed(self).expect("fresh dictionary");
+        ops::status::seed(self).expect("fresh dictionary");
 
         let atoms = self.atoms;
         for (key, value) in [
@@ -588,6 +699,62 @@ impl Interp {
                 Ok(())
             }
         }
+    }
+
+    /// The screens in the graphics state: the backend's, or the VM's own
+    /// slot without one.
+    pub fn screens(&self) -> [Screen; 4] {
+        match &self.graphics {
+            Some(backend) => backend.screens(),
+            None => self.screens_without_backend,
+        }
+    }
+
+    pub(crate) fn set_screens(&mut self, screens: [Screen; 4]) -> Result<(), VmError> {
+        match self.graphics.as_deref_mut() {
+            Some(backend) => backend.set_screens(screens),
+            None => {
+                self.screens_without_backend = screens;
+                Ok(())
+            }
+        }
+    }
+
+    /// The transfer functions in the graphics state, as [`Interp::screens`].
+    pub fn transfers(&self) -> [ProcRef; 4] {
+        match &self.graphics {
+            Some(backend) => backend.transfers(),
+            None => self.transfers_without_backend,
+        }
+    }
+
+    pub(crate) fn set_transfers(&mut self, transfers: [ProcRef; 4]) -> Result<(), VmError> {
+        match self.graphics.as_deref_mut() {
+            Some(backend) => backend.set_transfers(transfers),
+            None => {
+                self.transfers_without_backend = transfers;
+                Ok(())
+            }
+        }
+    }
+
+    /// The reference the graphics state holds `procedure` by, allocated
+    /// on first use.
+    pub(crate) fn graphics_proc_ref(&mut self, procedure: Object) -> Result<ProcRef, VmError> {
+        let key = procedure.composite_ref().ok_or(VmError::TypeCheck)?;
+        if let Some(&id) = self.graphics_proc_index.get(&key) {
+            return Ok(id);
+        }
+        let id =
+            ProcRef(u32::try_from(self.graphics_procs.len()).map_err(|_| VmError::LimitCheck)?);
+        self.graphics_procs.push(procedure);
+        self.graphics_proc_index.insert(key, id);
+        Ok(id)
+    }
+
+    /// The procedure behind a `ProcRef` of the graphics state.
+    pub fn graphics_proc(&self, id: ProcRef) -> Option<Object> {
+        self.graphics_procs.get(id.0 as usize).copied()
     }
 
     /// The instance id the graphics state refers to `dict` by, allocated
@@ -733,6 +900,35 @@ impl Interp {
     /// Whether `quit` has been executed.
     pub fn has_quit(&self) -> bool {
         self.quit
+    }
+
+    /// Whether execution is at the server level: while the prelude runs,
+    /// and after `exitserver` was given the right password.
+    pub fn server_level(&self) -> bool {
+        self.server_level
+    }
+
+    /// `exitserver`'s effect once the password matched: what follows
+    /// persists for the interpreter's life, and the dictionary stack is
+    /// back at its permanent dictionaries.
+    pub(crate) fn enter_server_level(&mut self) {
+        self.server_level = true;
+        self.dstack.truncate(self.dstack_floor);
+    }
+
+    pub(crate) fn server_password(&self) -> i32 {
+        self.server_password
+    }
+
+    /// Whether a configured prelude has run.
+    pub fn prelude_ran(&self) -> bool {
+        self.prelude_ran
+    }
+
+    /// The `statusdict` entries in insertion order, key and value in
+    /// their syntactic forms.
+    pub fn statusdict_entries(&self) -> Vec<(String, String)> {
+        ops::status::entries(self)
     }
 
     /// The deepest nesting of the execution loop on the host stack seen so

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 3
+% expect-output: cexec
+% divergence: cexec-defined
+% Scenario: cexec. The job-server escape executes its operand as exec
+% does, under its own name for error attribution.
+% Expect: 3, cexec.
+{ 1 2 add = } cexec
+{ cexec } stopped pop $error /command get 16 string cvs =

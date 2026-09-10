@@ -104,6 +104,15 @@ impl<'a> Metrics<'a> {
         }
     }
 
+    /// Every glyph name the metrics list, in the table's order: the
+    /// AFM's for the fourteen, sorted for the twenty-one.
+    pub fn glyph_names(&self) -> Vec<&'a str> {
+        match self {
+            Metrics::Afm(afm) => afm.chars().iter().map(|c| c.name).collect(),
+            Metrics::Table(table) => table.widths().iter().map(|(name, _)| *name).collect(),
+        }
+    }
+
     /// The number of glyphs the metrics list.
     pub fn glyph_count(&self) -> usize {
         match self {

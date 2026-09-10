@@ -36,6 +36,18 @@ fn distil_with(program: impl AsRef<[u8]>, options: &Options) -> Run {
     }
 }
 
+/// The identity a bare interpreter reports: its own, in printed form.
+fn default_identity() -> Vec<(String, String)> {
+    vec![
+        ("product".to_string(), "(EfterScript)".to_string()),
+        (
+            "version".to_string(),
+            format!("({})", env!("CARGO_PKG_VERSION")),
+        ),
+        ("revision".to_string(), "0".to_string()),
+    ]
+}
+
 fn distil(program: &str) -> Run {
     distil_with(program, &Options::compress(false))
 }
@@ -59,12 +71,53 @@ fn a_stroked_line_distils() {
             },
             not_honoured: Vec::new(),
             downsampled: 0,
+            identity: default_identity(),
+            prelude_ran: false,
         }
     );
     let pdf = check(&run.pdf);
     assert_eq!(kids(&pdf).len(), 1);
     assert_eq!(media_box(&pdf, 0), [0.0, 0.0, 612.0, 792.0]);
     assert_eq!(content(&pdf, 0), "2 w\n10 10 m\n100 10 l\nS\n");
+}
+
+// The identity in the report: seeded entries and what the prelude added
+// are listed, and a failing prelude is the engine's error.
+#[test]
+fn the_report_carries_the_identity_and_a_prelude_failure_is_an_error() {
+    let (io, out, _) = Io::capture();
+    let config = Config {
+        io,
+        identity: vec![(
+            "product".to_string(),
+            ps_vm::MarkValue::String(b"Fictional Press".to_vec()),
+        )],
+        prelude: Some(b"statusdict /waittimeout 300 put".to_vec()),
+        ..Default::default()
+    };
+    let (report, _) = remelt::distill(
+        b"statusdict /product get = 10 10 100 100 rectfill showpage",
+        config,
+        &Options::compress(false),
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(out.text(), "Fictional Press\n");
+    assert_eq!(report.pages, 1);
+    assert!(report.prelude_ran);
+    let mut identity = default_identity();
+    identity[0].1 = "(Fictional Press)".to_string();
+    identity.push(("waittimeout".to_string(), "300".to_string()));
+    assert_eq!(report.identity, identity);
+
+    let config = Config {
+        prelude: Some(b"1 0 div".to_vec()),
+        ..Default::default()
+    };
+    let error =
+        remelt::distill(b"1", config, &Options::compress(false), Vec::new()).expect_err("fails");
+    assert!(matches!(&error, remelt::Error::Prelude(e) if e.name == "undefinedresult"));
+    assert_eq!(error.to_string(), "prelude failed: undefinedresult in div");
 }
 
 // three-pages.ps
@@ -108,6 +161,8 @@ fn a_job_with_no_pages() {
             },
             not_honoured: Vec::new(),
             downsampled: 0,
+            identity: default_identity(),
+            prelude_ran: false,
         }
     );
     let pdf = check(&run.pdf);

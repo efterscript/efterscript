@@ -683,7 +683,7 @@ fn image_dictionary_form() {
         ("2 1 8 [2 0 0 1 0 0] 7 image", "typecheck"),
         ("2 1 8 [2 0 0 1 0 0] [<80>] image", "typecheck"),
         ("2 1 5 [2 0 0 1 0 0] <80> imagemask", "typecheck"),
-        ("colorimage", "undefined"),
+        ("colorimage", "stackunderflow"),
     ] {
         let run = exec(program);
         assert_eq!(run.error(), Some(error), "{program}");
@@ -1073,4 +1073,51 @@ fn setpagedevice_type_checks_the_keys_it_recognises() {
          currentpagedevice /Duplex known =",
     );
     assert_eq!(run.output, "false\n");
+}
+
+// colorimage-rgb.ps, colorimage-planes.ps
+#[test]
+fn colorimage_paints_device_samples_from_one_source_or_planes() {
+    let single = exec(
+        "0 0 0 1 setcmykcolor 2 2 8 [2 0 0 -2 0 2] <FF000000FF000000FFFFFFFF> false 3 colorimage",
+    );
+    assert_eq!(single.error(), None);
+    let planes = exec(
+        "/r <FF0000FF> def /g <00FF00FF> def /b <0000FFFF> def \
+         2 2 8 [2 0 0 -2 0 2] { r } { g } { b } true 3 colorimage",
+    );
+    assert_eq!(planes.error(), None);
+    let images = image_calls(&single);
+    assert_eq!(images, image_calls(&planes));
+    let (spec, data) = &images[0];
+    assert_eq!(spec.color_space, Some(SpaceSpec::DeviceRGB));
+    assert_eq!(spec.bits_per_component, 8);
+    assert_eq!(spec.decode, vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(data, &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]);
+    let strings = exec("2 2 8 [2 0 0 -2 0 2] <FF0000FF> <00FF00FF> <0000FFFF> true 3 colorimage");
+    assert_eq!(image_calls(&strings), images);
+    let gray = exec("1 1 8 [1 0 0 1 0 0] <80> false 1 colorimage");
+    assert_eq!(
+        image_calls(&gray)[0].0.color_space,
+        Some(SpaceSpec::DeviceGray)
+    );
+    let cmyk = exec("1 1 8 [1 0 0 1 0 0] <00000080> false 4 colorimage");
+    assert_eq!(
+        image_calls(&cmyk)[0].0.color_space,
+        Some(SpaceSpec::DeviceCMYK)
+    );
+    for (program, error) in [
+        ("1 1 8 [1 0 0 1 0 0] <00> false 2 colorimage", "rangecheck"),
+        (
+            "1 1 1 [1 0 0 1 0 0] <00> <00> <00> true 3 colorimage",
+            "limitcheck",
+        ),
+        (
+            "1 1 8 [1 0 0 1 0 0] <00> { } <00> true 3 colorimage",
+            "typecheck",
+        ),
+        ("1 1 8 [1 0 0 1 0 0] 5 false 1 colorimage", "typecheck"),
+    ] {
+        assert_eq!(exec(program).error(), Some(error), "{program}");
+    }
 }

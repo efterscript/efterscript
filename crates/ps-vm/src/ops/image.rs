@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! `image` and `imagemask` (PLRM3 §4.10): the operand and dictionary
-//! forms, and sample-data acquisition. A string source is taken as is, a
-//! file is read for the required count, and a procedure runs as a loop
-//! frame until it has delivered enough or returns an empty string. The
-//! backend receives complete rows only: a source that runs dry truncates
-//! the image to the rows it delivered.
+//! `image`, `imagemask`, and `colorimage` (PLRM3 §4.10): the operand and
+//! dictionary forms, and sample-data acquisition. A string source is
+//! taken as is, a file is read for the required count, and a procedure
+//! runs as a loop frame until it has delivered enough or returns an
+//! empty string. A `colorimage` with one source per component collects
+//! each component's plane from its own source, the procedures called in
+//! rotation, and interleaves the planes at the end (8-bit samples only;
+//! packed depths are `limitcheck`). The backend receives complete rows
+//! only: a source that runs dry truncates the image to the rows it
+//! delivered.
 
 use crate::error::VmError;
 use crate::graphics::{ImageSpec, SpaceSpec};
@@ -23,40 +27,109 @@ pub struct ImageAcquisition {
     pub(crate) data: Vec<u8>,
     /// Whether the data procedure has been started.
     pub(crate) started: bool,
+    operator: &'static str,
+    /// One source per component when `colorimage` was given several;
+    /// each feeds its own plane, `current` being the one to call next.
+    pub(crate) sources: Vec<Object>,
+    planes: Vec<Vec<u8>>,
+    current: usize,
 }
 
 impl ImageAcquisition {
-    fn new(spec: ImageSpec) -> Result<Self, VmError> {
+    fn new(spec: ImageSpec, operator: &'static str) -> Result<Self, VmError> {
         let needed = spec.data_len().ok_or(VmError::LimitCheck)?;
         Ok(ImageAcquisition {
             spec,
             needed,
             data: Vec::new(),
             started: false,
+            operator,
+            sources: Vec::new(),
+            planes: Vec::new(),
+            current: 0,
         })
     }
 
+    /// As `new`, collecting one plane per source.
+    fn planar(spec: ImageSpec, sources: Vec<Object>) -> Result<Self, VmError> {
+        let mut acquisition = Self::new(spec, "colorimage")?;
+        acquisition.planes = vec![Vec::new(); sources.len()];
+        acquisition.sources = sources;
+        Ok(acquisition)
+    }
+
     pub(crate) fn operator_name(&self) -> &'static str {
-        if self.spec.is_mask {
-            "imagemask"
-        } else {
-            "image"
-        }
+        self.operator
+    }
+
+    fn is_planar(&self) -> bool {
+        !self.planes.is_empty()
+    }
+
+    /// Bytes each plane holds when complete: one per sample.
+    fn plane_needed(&self) -> usize {
+        self.needed / self.planes.len().max(1)
     }
 
     pub(crate) fn is_complete(&self) -> bool {
-        self.data.len() >= self.needed
+        if self.is_planar() {
+            let needed = self.plane_needed();
+            self.planes.iter().all(|plane| plane.len() >= needed)
+        } else {
+            self.data.len() >= self.needed
+        }
     }
 
-    /// Appends a chunk; returns whether more is wanted. An empty chunk
-    /// ends the acquisition early.
+    /// Appends a chunk — to the current plane when planar, which then
+    /// moves on to the next incomplete one; returns whether more is
+    /// wanted. An empty chunk ends the acquisition early.
     pub(crate) fn feed(&mut self, chunk: &[u8]) -> bool {
         if chunk.is_empty() {
             return false;
         }
-        let room = self.needed - self.data.len();
-        self.data.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if self.is_planar() {
+            let needed = self.plane_needed();
+            let plane = &mut self.planes[self.current];
+            let room = needed - plane.len().min(needed);
+            plane.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            let count = self.planes.len();
+            for step in 1..=count {
+                let next = (self.current + step) % count;
+                if self.planes[next].len() < needed {
+                    self.current = next;
+                    break;
+                }
+            }
+        } else {
+            let room = self.needed - self.data.len();
+            self.data.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        }
         !self.is_complete()
+    }
+
+    /// The procedure to call for the next chunk of a planar acquisition.
+    pub(crate) fn next_source(&self) -> Option<Object> {
+        self.sources.get(self.current).copied()
+    }
+
+    /// The planes interleaved sample by sample into `data`, as many
+    /// whole rows as every plane delivered.
+    fn interleave(&mut self) {
+        let width = self.spec.width as usize;
+        let rows = self
+            .planes
+            .iter()
+            .map(|plane| plane.len().checked_div(width).unwrap_or(0))
+            .min()
+            .unwrap_or(0);
+        let mut data = Vec::with_capacity(rows * width * self.planes.len());
+        for at in 0..rows * width {
+            for plane in &self.planes {
+                data.push(plane[at]);
+            }
+        }
+        self.data = data;
+        self.planes.clear();
     }
 }
 
@@ -77,38 +150,113 @@ fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
         let (spec, source) = from_operands(i, is_mask)?;
         (spec, source, 5)
     };
-    let acquisition = ImageAcquisition::new(spec)?;
-    match source.ty() {
-        Type::String => {
-            let mut acquisition = acquisition;
-            let data = bytes(i, source)?;
-            acquisition.feed(&data);
-            drop_operands(i, operands)?;
-            finish(i, acquisition)
-        }
-        Type::File => {
-            let mut acquisition = acquisition;
-            let mut buffer = vec![0u8; acquisition.needed];
-            let mut filled = 0;
-            while filled < buffer.len() {
-                let got = i.mem.file_read(source, &mut buffer[filled..])?;
-                if got == 0 {
-                    break;
-                }
-                filled += got;
+    let operator = if is_mask { "imagemask" } else { "image" };
+    let acquisition = ImageAcquisition::new(spec, operator)?;
+    acquire(i, acquisition, &[source], operands)
+}
+
+/// `width height bits matrix source… multi ncomp colorimage`: samples in
+/// the device space of `ncomp` components, from one source or one per
+/// component.
+pub(crate) fn colorimage(i: &mut Interp) -> Result<(), VmError> {
+    let ncomp = i.peek(0)?.as_i32().ok_or(VmError::TypeCheck)?;
+    let multi = i.peek(1)?.as_bool().ok_or(VmError::TypeCheck)?;
+    let color_space = match ncomp {
+        1 => SpaceSpec::DeviceGray,
+        3 => SpaceSpec::DeviceRGB,
+        4 => SpaceSpec::DeviceCMYK,
+        _ => return Err(VmError::RangeCheck),
+    };
+    let count = if multi { ncomp as usize } else { 1 };
+    let sources: Vec<Object> = (0..count)
+        .rev()
+        .map(|n| i.peek(2 + n))
+        .collect::<Result<_, _>>()?;
+    let base = 2 + count;
+    let matrix = read_matrix(i, i.peek(base)?)?;
+    let bits_per_component = bits(i.peek(base + 1)?, false)?;
+    let height = dimension(i.peek(base + 2)?)?;
+    let width = dimension(i.peek(base + 3)?)?;
+    if multi && bits_per_component != 8 {
+        return Err(VmError::LimitCheck);
+    }
+    let components = color_space.components();
+    let spec = ImageSpec {
+        width,
+        height,
+        bits_per_component,
+        decode: default_decode(Some(&color_space), bits_per_component, components),
+        color_space: Some(color_space),
+        matrix,
+        interpolate: false,
+        is_mask: false,
+    };
+    let acquisition = if multi {
+        ImageAcquisition::planar(spec, sources.clone())?
+    } else {
+        ImageAcquisition::new(spec, "colorimage")?
+    };
+    acquire(i, acquisition, &sources, base + 4)
+}
+
+/// Collects the data from `sources` — strings and files at once,
+/// procedures through a loop frame — and hands it on. The sources must
+/// all be of one kind.
+fn acquire(
+    i: &mut Interp,
+    mut acquisition: ImageAcquisition,
+    sources: &[Object],
+    operands: usize,
+) -> Result<(), VmError> {
+    let kind = |source: &Object| match source.ty() {
+        Type::String => Some(0),
+        Type::File => Some(1),
+        Type::Array | Type::PackedArray if source.is_executable() => Some(2),
+        _ => None,
+    };
+    let kinds: Vec<u8> = sources
+        .iter()
+        .map(kind)
+        .collect::<Option<_>>()
+        .ok_or(VmError::TypeCheck)?;
+    if kinds.windows(2).any(|pair| pair[0] != pair[1]) {
+        return Err(VmError::TypeCheck);
+    }
+    match kinds[0] {
+        0 | 1 => {
+            for &source in sources {
+                let data = if source.ty() == Type::String {
+                    bytes(i, source)?
+                } else {
+                    let wanted = if acquisition.is_planar() {
+                        acquisition.plane_needed()
+                    } else {
+                        acquisition.needed
+                    };
+                    let mut buffer = vec![0u8; wanted];
+                    let mut filled = 0;
+                    while filled < buffer.len() {
+                        let got = i.mem.file_read(source, &mut buffer[filled..])?;
+                        if got == 0 {
+                            break;
+                        }
+                        filled += got;
+                    }
+                    buffer.truncate(filled);
+                    buffer
+                };
+                acquisition.feed(&data);
             }
-            acquisition.feed(&buffer[..filled]);
             drop_operands(i, operands)?;
             finish(i, acquisition)
         }
-        Type::Array | Type::PackedArray if source.is_executable() => {
+        _ => {
             drop_operands(i, operands)?;
             i.push_frame(Frame::Loop(LoopFrame::ImageData {
-                body: source,
+                body: sources[0],
                 acquisition: Box::new(acquisition),
             }))
         }
-        _ => Err(VmError::TypeCheck),
     }
 }
 
@@ -121,6 +269,10 @@ fn drop_operands(i: &mut Interp, count: usize) -> Result<(), VmError> {
 
 /// Hands the collected data to the backend, trimmed to whole rows.
 pub(crate) fn finish(i: &mut Interp, acquisition: ImageAcquisition) -> Result<(), VmError> {
+    let mut acquisition = acquisition;
+    if acquisition.is_planar() {
+        acquisition.interleave();
+    }
     let ImageAcquisition {
         mut spec,
         needed,
@@ -306,17 +458,53 @@ mod tests {
 
     #[test]
     fn feeding_stops_at_the_required_count_or_an_empty_chunk() {
-        let mut a = ImageAcquisition::new(spec(10, 3, 1)).unwrap();
+        let mut a = ImageAcquisition::new(spec(10, 3, 1), "image").unwrap();
         assert_eq!(a.needed, 6);
         assert!(a.feed(&[1, 2, 3, 4]));
         assert!(!a.feed(&[5, 6, 7, 8]));
         assert_eq!(a.data, [1, 2, 3, 4, 5, 6]);
-        let mut b = ImageAcquisition::new(spec(10, 3, 1)).unwrap();
+        let mut b = ImageAcquisition::new(spec(10, 3, 1), "image").unwrap();
         assert!(b.feed(&[1]));
         assert!(!b.feed(&[]));
         assert!(!b.is_complete());
-        let empty = ImageAcquisition::new(spec(0, 3, 8)).unwrap();
+        let empty = ImageAcquisition::new(spec(0, 3, 8), "image").unwrap();
         assert!(empty.is_complete());
+    }
+
+    #[test]
+    fn planes_rotate_and_interleave() {
+        let rgb = ImageSpec {
+            color_space: Some(SpaceSpec::DeviceRGB),
+            decode: vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            ..spec(2, 2, 8)
+        };
+        let sources = vec![Object::integer(0), Object::integer(1), Object::integer(2)];
+        let mut a = ImageAcquisition::planar(rgb, sources).unwrap();
+        let next = |a: &ImageAcquisition| a.next_source().and_then(|o| o.as_i32());
+        assert_eq!(a.plane_needed(), 4);
+        assert_eq!(next(&a), Some(0));
+        assert!(a.feed(&[1, 2]));
+        assert_eq!(next(&a), Some(1));
+        assert!(a.feed(&[11, 12, 13, 14, 15]));
+        assert_eq!(next(&a), Some(2));
+        assert!(a.feed(&[21, 22, 23, 24]));
+        // Back to the first plane, the only incomplete one.
+        assert_eq!(next(&a), Some(0));
+        assert!(!a.feed(&[3, 4]));
+        a.interleave();
+        assert_eq!(a.data, [1, 11, 21, 2, 12, 22, 3, 13, 23, 4, 14, 24]);
+        // A short plane cuts the image to the rows every plane has.
+        let rgb = ImageSpec {
+            color_space: Some(SpaceSpec::DeviceRGB),
+            decode: vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            ..spec(2, 2, 8)
+        };
+        let mut b = ImageAcquisition::planar(rgb, vec![Object::null(); 3]).unwrap();
+        b.feed(&[1, 2, 3, 4]);
+        b.feed(&[5, 6]);
+        b.feed(&[7, 8, 9, 10]);
+        b.interleave();
+        assert_eq!(b.data, [1, 5, 7, 2, 6, 8]);
     }
 
     #[test]

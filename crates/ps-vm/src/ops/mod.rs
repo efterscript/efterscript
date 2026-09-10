@@ -61,6 +61,8 @@ pub enum Visibility {
     Graphics,
     /// Reachable only through a built-in `ProcSet` resource dictionary.
     ProcSet,
+    /// Reachable only through `serverdict`.
+    Server,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,8 +83,9 @@ pub struct OpEntry {
 /// ```
 ///
 /// `internal OPS { … }` marks every entry internal, `graphics OPS { … }`
-/// marks every entry as belonging to the graphics group, and `procset OPS
-/// { … }` as belonging to a built-in procedure set.
+/// marks every entry as belonging to the graphics group, `procset OPS
+/// { … }` as belonging to a built-in procedure set, and `server OPS
+/// { … }` as an entry of `serverdict`.
 macro_rules! op_table {
     ($table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
         op_table!(@build $table, Public, { $($name => $func $(, [$($sig),*])?;)* });
@@ -95,6 +98,9 @@ macro_rules! op_table {
     };
     (procset $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
         op_table!(@build $table, ProcSet, { $($name => $func $(, [$($sig),*])?;)* });
+    };
+    (server $table:ident { $($name:expr => $func:expr $(, [$($sig:ident),* $(,)?])?;)* }) => {
+        op_table!(@build $table, Server, { $($name => $func $(, [$($sig),*])?;)* });
     };
     (@build $table:ident, $visibility:ident, { $($name:expr => $func:expr $(, [$($sig:ident),*])?;)* }) => {
         pub(crate) static $table: &[$crate::ops::OpEntry] = &[
@@ -125,8 +131,10 @@ pub mod output;
 pub mod pagedevice;
 pub mod pdfmark;
 pub mod resource;
+pub mod screen;
 pub mod show;
 pub mod stack;
+pub mod status;
 pub mod types;
 pub mod vm;
 
@@ -152,6 +160,10 @@ const MODULES: &[&[OpEntry]] = &[
     cidinit::OPS,
     pdfmark::OPS,
     distiller::OPS,
+    status::OPS,
+    status::SERVER_OPS,
+    screen::OPS,
+    graphics::LATER_OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -245,6 +257,13 @@ mod tests {
         assert!(find("pdfmark", Visibility::Public).is_none());
         assert!(find("setdistillerparams", Visibility::Public).is_some());
         assert!(find("currentdistillerparams", Visibility::Public).is_some());
+        assert!(find("exitserver", Visibility::Server).is_some());
+        assert!(find("exitserver", Visibility::Public).is_none());
+        assert!(find("framedevice", Visibility::Public).is_some());
+        assert!(find("setscreen", Visibility::Public).is_some());
+        assert!(find("cexec", Visibility::Public).is_some());
+        assert!(find("pathforall", Visibility::Graphics).is_some());
+        assert!(find("colorimage", Visibility::Graphics).is_some());
     }
 
     #[test]

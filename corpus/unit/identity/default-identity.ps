@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: EfterScript
+% expect-output: 3
+% expect-output: true
+% expect-output: true
+% Scenario: default identity. A bare interpreter's statusdict holds its
+% own product string and nothing but product, version, and revision;
+% both statusdict and serverdict are writable, and serverdict holds
+% exitserver. The reference converter answers with its own identity,
+% so its output differs by design.
+% Expect: EfterScript, 3, true, true.
+statusdict /product get =
+statusdict length =
+statusdict wcheck serverdict wcheck and =
+serverdict /exitserver known =

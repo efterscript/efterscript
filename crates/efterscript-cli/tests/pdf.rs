@@ -306,3 +306,57 @@ fn embed_all_on_the_line_embeds_the_standard_faces() {
     assert!(text.contains("/BaseFont /Helvetica"));
     assert!(!text.contains("/FontFile2"));
 }
+
+// The identity on the line and a prelude file reach the job; a failing
+// prelude is reported and nothing is distilled.
+#[test]
+fn identity_and_prelude_reach_the_job() {
+    let dir = scratch("identity");
+    let input = policy_job(
+        &dir,
+        "who.ps",
+        "statusdict /product get = statusdict /manualfeed get = \
+         statusdict /waittimeout get = 10 10 100 100 rectfill showpage",
+    );
+    let prelude = dir.join("host.ps");
+    std::fs::write(&prelude, "%!PS\nstatusdict /waittimeout 300 put\n").unwrap();
+    let out = dir.join("who.pdf");
+    let output = efterscript()
+        .args([
+            "pdf",
+            "--identity",
+            "product=(Fictional Press)",
+            "--identity",
+            "manualfeed=false",
+            "--prelude",
+        ])
+        .arg(&prelude)
+        .arg(&input)
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"Fictional Press\nfalse\n300\n");
+    assert!(output.stderr.is_empty());
+    assert!(looks_like_a_pdf(&std::fs::read(&out).unwrap()));
+
+    let broken = dir.join("broken.ps");
+    std::fs::write(&broken, "%!PS\n1 0 div\n").unwrap();
+    let out = dir.join("broken.pdf");
+    let output = efterscript()
+        .args(["pdf", "--prelude"])
+        .arg(&broken)
+        .arg(&input)
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .ends_with("efterscript: prelude failed: undefinedresult in div\n"),
+        "{output:?}"
+    );
+    // The document was opened before the interpreter was built and never
+    // finished: a header without a trailer.
+    assert!(!looks_like_a_pdf(&std::fs::read(&out).unwrap()));
+}

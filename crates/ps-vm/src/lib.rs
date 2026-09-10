@@ -30,12 +30,12 @@ pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
     Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    MarkValue, Matrix, Point, Rect, Seg, SpaceSpec,
+    MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,
-    LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, Quirks, SourceFrame, SourceSlot,
-    StandardDicts,
+    LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, PreludeError, Quirks, ResourceKey,
+    SourceFrame, SourceSlot, StandardDicts,
 };
 pub use io::{Capture, Io};
 pub use memory::{

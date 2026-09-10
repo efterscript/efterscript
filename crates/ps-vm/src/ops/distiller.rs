@@ -121,7 +121,7 @@ pub(crate) fn put_values(i: &mut Interp, entries: &[(Vec<u8>, MarkValue)]) -> Re
 }
 
 /// The object a value becomes, allocated in the current VM.
-fn object(i: &mut Interp, value: &MarkValue, depth: usize) -> Result<Object, VmError> {
+pub(crate) fn object(i: &mut Interp, value: &MarkValue, depth: usize) -> Result<Object, VmError> {
     if depth > MAX_VALUE_DEPTH {
         return Err(VmError::LimitCheck);
     }

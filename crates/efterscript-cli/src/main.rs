@@ -72,6 +72,12 @@ fn usage() -> ExitCode {
     eprintln!("       --embed-all             EmbedAllFonts true");
     eprintln!("       --no-subset             SubsetFonts false");
     eprintln!("       --lock <Key>            the job may not change <Key> (repeatable)");
+    eprintln!(
+        "       --identity <Key>=<Value> a statusdict entry (repeatable; a string in parentheses)"
+    );
+    eprintln!(
+        "       --prelude <file.ps>     a program run once before the job, at the server level"
+    );
     ExitCode::from(2)
 }
 
@@ -124,16 +130,25 @@ struct PdfArgs {
     options: Options,
     /// Command-line parameters the writer does not honour.
     refused: Vec<NotHonoured>,
+    /// `statusdict` entries from `--identity`.
+    identity: Vec<(String, MarkValue)>,
+    /// The prelude file from `--prelude`.
+    prelude: Option<PathBuf>,
 }
 
-/// A `--param` value: a boolean, an integer, a real, else a name (with
-/// or without its slash).
+/// A `--param` or `--identity` value: a boolean, an integer, a real, a
+/// string in parentheses, else a name (with or without its slash).
 fn param_value(text: &str) -> MarkValue {
     match text {
         "true" => MarkValue::Bool(true),
         "false" => MarkValue::Bool(false),
         _ => {
-            if let Ok(i) = text.parse::<i32>() {
+            if let Some(inner) = text
+                .strip_prefix('(')
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                MarkValue::String(inner.as_bytes().to_vec())
+            } else if let Ok(i) = text.parse::<i32>() {
                 MarkValue::Int(i)
             } else if let Ok(r) = text.parse::<f32>() {
                 MarkValue::Real(r)
@@ -150,6 +165,8 @@ fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
     let mut options = Options::default();
     let mut refused = Vec::new();
     let mut locks = Vec::new();
+    let mut identity = Vec::new();
+    let mut prelude = None;
     let mut positional = Vec::new();
     let mut at = 0;
     while at < args.len() {
@@ -173,6 +190,14 @@ fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
             "--embed-all" => options.params.embed_all_fonts = true,
             "--no-subset" => options.params.subset_fonts = false,
             "--lock" => locks.push(value()?.to_string()),
+            "--identity" => {
+                let pair = value()?;
+                let (key, text) = pair
+                    .split_once('=')
+                    .ok_or_else(|| format!("--identity wants Key=Value, got {pair}"))?;
+                identity.push((key.to_string(), param_value(text)));
+            }
+            "--prelude" => prelude = Some(PathBuf::from(value()?)),
             _ if arg.starts_with("--") => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
         }
@@ -190,6 +215,8 @@ fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
         target,
         options,
         refused,
+        identity,
+        prelude,
     })
 }
 
@@ -265,9 +292,13 @@ fn distill_to<W: Write + 'static>(
     io: Io,
     sink: PdfSink<W>,
     refused: Vec<NotHonoured>,
+    identity: Vec<(String, MarkValue)>,
+    prelude: Option<Vec<u8>>,
 ) -> ExitCode {
     let config = Config {
         io,
+        identity,
+        prelude,
         ..Default::default()
     };
     let result = remelt::distill_into(bytes, config, sink).map(|(report, out)| {
@@ -286,12 +317,19 @@ fn pdf(bytes: &[u8], args: PdfArgs) -> ExitCode {
         target,
         options,
         refused,
+        identity,
+        prelude,
         ..
     } = args;
+    let prelude = match prelude.map(|path| read_program(&path.to_string_lossy())) {
+        Some(Ok(bytes)) => Some(bytes),
+        Some(Err(code)) => return code,
+        None => None,
+    };
     if target == Path::new("-") {
         let io = Io::new(HostStderr, HostStderr).with_stdin(HostStdin);
         return match PdfSink::new(BufWriter::new(std::io::stdout()), options) {
-            Ok(sink) => distill_to(bytes, io, sink, refused),
+            Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude),
             Err(e) => conclude(Err(e), refused),
         };
     }
@@ -299,7 +337,7 @@ fn pdf(bytes: &[u8], args: PdfArgs) -> ExitCode {
         Ok(file) => {
             let io = Io::new(HostStdout, HostStderr).with_stdin(HostStdin);
             match PdfSink::new_seekable(BufWriter::new(file), options) {
-                Ok(sink) => distill_to(bytes, io, sink, refused),
+                Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude),
                 Err(e) => conclude(Err(e), refused),
             }
         }
@@ -363,6 +401,38 @@ mod tests {
             MarkValue::Name(b"Average".to_vec())
         );
         assert_eq!(param_value("All"), MarkValue::Name(b"All".to_vec()));
+        assert_eq!(
+            param_value("(Fictional Press)"),
+            MarkValue::String(b"Fictional Press".to_vec())
+        );
+        assert_eq!(param_value("()"), MarkValue::String(Vec::new()));
+    }
+
+    #[test]
+    fn identity_and_prelude_are_collected() {
+        let parsed = pdf_args(&[
+            "--identity",
+            "product=(Fictional Press)",
+            "--prelude",
+            "host.ps",
+            "--identity",
+            "manualfeed=false",
+            "in.ps",
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed.identity,
+            vec![
+                (
+                    "product".to_string(),
+                    MarkValue::String(b"Fictional Press".to_vec())
+                ),
+                ("manualfeed".to_string(), MarkValue::Bool(false)),
+            ]
+        );
+        assert_eq!(parsed.prelude, Some(PathBuf::from("host.ps")));
+        assert!(pdf_args(&["--identity", "NoEquals", "a.ps"]).is_err());
+        assert!(pdf_args(&["--prelude"]).is_err());
     }
 
     #[test]

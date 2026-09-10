@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 1
+% divergence: server-password-default
+% Scenario: exitserver with the right password. The default server
+% password is 0; the dictionary stack is back at the permanent
+% dictionaries, so a definition made after leaving the server loop
+% lands in userdict and is still there later in the run.
+% Expect: 1.
+serverdict begin 0 exitserver
+/persist 1 def
+persist =

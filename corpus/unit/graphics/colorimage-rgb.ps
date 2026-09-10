@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: colorimage from one source. Four 8-bit RGB samples given as
+% one interleaved string paint in DeviceRGB whatever the current colour
+% space; the sidecar golden shows one three-component image resource.
+0 setgray
+100 100 translate
+50 50 scale
+2 2 8 [2 0 0 -2 0 2] <FF0000 00FF00 0000FF FFFFFF> false 3 colorimage
+showpage

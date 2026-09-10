@@ -3,6 +3,7 @@
 
 //! Execution-stack frames.
 
+use crate::graphics::Seg;
 use crate::names::Atom;
 use crate::object::{Handle, Object};
 use crate::ops::Num;
@@ -120,14 +121,30 @@ pub enum LoopFrame {
     /// consumed one step at a time so a Type 3 glyph procedure or a
     /// `kshow` procedure can run as frames above it.
     Show(Box<ShowFrame>),
-    /// `resourceforall`: each of `names` is written into `scratch` and
-    /// the body runs with the filled interval.
+    /// `resourceforall`: each name in `keys` is written into `scratch` and
+    /// the body runs with the filled interval; an integer key (the
+    /// implicit categories') is pushed as it is.
     ResourceForAll {
         body: Object,
-        names: Vec<Vec<u8>>,
+        keys: Vec<ResourceKey>,
         scratch: Object,
         next: usize,
     },
+    /// `pathforall`: each segment of `segs` (already in user space) pushes
+    /// its coordinates and runs the procedure of its kind — move, line,
+    /// curve, close, in `procs` order.
+    PathForAll {
+        procs: [Object; 4],
+        segs: Vec<Seg>,
+        next: usize,
+    },
+}
+
+/// A resource instance's key as `resourceforall` enumerates it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResourceKey {
+    Name(Vec<u8>),
+    Int(i32),
 }
 
 impl LoopFrame {
@@ -141,6 +158,7 @@ impl LoopFrame {
             | LoopFrame::ForAll { body, .. }
             | LoopFrame::ImageData { body, .. }
             | LoopFrame::ResourceForAll { body, .. } => *body,
+            LoopFrame::PathForAll { procs, .. } => procs[0],
             LoopFrame::Show(frame) => frame.procedure(),
         }
     }
@@ -151,6 +169,8 @@ impl LoopFrame {
         match self {
             LoopFrame::ForAll { container, .. } => objects.push(*container),
             LoopFrame::ResourceForAll { scratch, .. } => objects.push(*scratch),
+            LoopFrame::ImageData { acquisition, .. } => objects.extend(&acquisition.sources),
+            LoopFrame::PathForAll { procs, .. } => objects.extend(&procs[1..]),
             LoopFrame::Show(frame) => objects.extend(frame.references()),
             _ => {}
         }

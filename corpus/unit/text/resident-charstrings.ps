@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: false
+% expect-output: true
+% Scenario: a resident face has the Type 1 dictionary's required
+% entries. CharStrings holds every glyph the face has, .notdef included,
+% and Private exists; a glyph the face lacks is absent, and neither
+% dictionary can be changed.
+% Expect: true, true, true, false, true.
+/Times-Roman findfont /CharStrings get
+dup /space known =
+dup /.notdef known =
+dup /eacute known =
+dup /nosuchglyph known =
+wcheck not /Times-Roman findfont /Private known and =

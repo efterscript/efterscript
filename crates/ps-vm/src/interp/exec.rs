@@ -8,8 +8,9 @@
 //! unwind by truncating the stack.
 
 use super::{ErrorSummary, Frame, Interp, LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome};
-use super::{SourceFrame, SourceSlot, lookup_in};
+use super::{ResourceKey, SourceFrame, SourceSlot, lookup_in};
 use crate::error::VmError;
+use crate::graphics::{Point, Seg};
 use crate::memory::Memory;
 use crate::names::Atom;
 use crate::object::{Access, Object, Type};
@@ -51,11 +52,34 @@ impl Source for RunSource {
     }
 }
 
+/// What an iteration pushes before its body: up to the six numbers of a
+/// `pathforall` curve.
+type Values = [Option<Object>; 6];
+
+const NO_VALUES: Values = [None; 6];
+
+fn one(value: Object) -> Values {
+    [Some(value), None, None, None, None, None]
+}
+
+fn two(first: Object, second: Object) -> Values {
+    [Some(first), Some(second), None, None, None, None]
+}
+
+fn points(points: &[Point]) -> Values {
+    let mut values = NO_VALUES;
+    for (slot, p) in values.chunks_mut(2).zip(points) {
+        slot[0] = Some(Object::real(p.x));
+        slot[1] = Some(Object::real(p.y));
+    }
+    values
+}
+
 enum LoopStep {
     Finished,
     Iterate {
         body: Object,
-        values: [Option<Object>; 2],
+        values: Values,
         operator: &'static str,
     },
     /// The image's data is complete: hand it to the backend.
@@ -329,12 +353,20 @@ impl Interp {
             LoopFrame::Show(_) => LoopStep::Finished,
             LoopFrame::ResourceForAll {
                 body,
-                names,
+                keys,
                 scratch,
                 next,
-            } => match names.get(*next) {
+            } => match keys.get(*next) {
                 None => LoopStep::Finished,
-                Some(name) => {
+                Some(ResourceKey::Int(key)) => {
+                    *next += 1;
+                    LoopStep::Iterate {
+                        body: *body,
+                        values: one(Object::integer(*key)),
+                        operator: "resourceforall",
+                    }
+                }
+                Some(ResourceKey::Name(name)) => {
                     let filled = u32::try_from(name.len())
                         .ok()
                         .and_then(|n| scratch.with_interval(0, n))
@@ -349,11 +381,28 @@ impl Interp {
                             *next += 1;
                             LoopStep::Iterate {
                                 body: *body,
-                                values: [Some(interval), None],
+                                values: one(interval),
                                 operator: "resourceforall",
                             }
                         }
                         Err(e) => LoopStep::Failed(e, "resourceforall"),
+                    }
+                }
+            },
+            LoopFrame::PathForAll { procs, segs, next } => match segs.get(*next) {
+                None => LoopStep::Finished,
+                Some(seg) => {
+                    let (body, values) = match *seg {
+                        Seg::Move(p) => (procs[0], points(&[p])),
+                        Seg::Line(p) => (procs[1], points(&[p])),
+                        Seg::Curve(a, b, c) => (procs[2], points(&[a, b, c])),
+                        Seg::Close => (procs[3], NO_VALUES),
+                    };
+                    *next += 1;
+                    LoopStep::Iterate {
+                        body,
+                        values,
+                        operator: "pathforall",
                     }
                 }
             },
@@ -394,7 +443,7 @@ impl Interp {
                     }
                     LoopStep::Iterate {
                         body: *body,
-                        values: [Some(value), None],
+                        values: one(value),
                         operator: "for",
                     }
                 }
@@ -406,14 +455,14 @@ impl Interp {
                     *remaining -= 1;
                     LoopStep::Iterate {
                         body: *body,
-                        values: [None, None],
+                        values: NO_VALUES,
                         operator: "repeat",
                     }
                 }
             }
             LoopFrame::Loop { body } => LoopStep::Iterate {
                 body: *body,
-                values: [None, None],
+                values: NO_VALUES,
                 operator: "loop",
             },
             LoopFrame::ForAll {
@@ -427,9 +476,7 @@ impl Interp {
                         if index >= container.length().unwrap_or(0) as usize {
                             Ok(None)
                         } else {
-                            self.mem
-                                .array_get(*container, index)
-                                .map(|v| Some([Some(v), None]))
+                            self.mem.array_get(*container, index).map(|v| Some(one(v)))
                         }
                     }
                     Type::String => {
@@ -438,13 +485,13 @@ impl Interp {
                         } else {
                             self.mem
                                 .string_get(*container, index)
-                                .map(|b| Some([Some(Object::integer(i32::from(b))), None]))
+                                .map(|b| Some(one(Object::integer(i32::from(b)))))
                         }
                     }
                     _ => self
                         .mem
                         .dict_entry_at(*container, index)
-                        .map(|entry| entry.map(|(k, v)| [Some(k), Some(v)])),
+                        .map(|entry| entry.map(|(k, v)| two(k, v))),
                 };
                 match element {
                     Ok(None) => LoopStep::Finished,
@@ -468,7 +515,7 @@ impl Interp {
                     } else {
                         LoopStep::Iterate {
                             body: *body,
-                            values: [None, None],
+                            values: NO_VALUES,
                             operator,
                         }
                     }
@@ -482,9 +529,12 @@ impl Interp {
                                 None => LoopStep::Failed(VmError::InvalidAccess, operator),
                                 Some(bytes) => {
                                     if acquisition.feed(bytes) {
+                                        if let Some(next) = acquisition.next_source() {
+                                            *body = next;
+                                        }
                                         LoopStep::Iterate {
                                             body: *body,
-                                            values: [None, None],
+                                            values: NO_VALUES,
                                             operator,
                                         }
                                     } else {

@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use ps_vm::{
     Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    MarkValue, Matrix, Point, Rect, Seg, SpaceSpec, VmError,
+    MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec, VmError,
 };
 
 use crate::arc;
@@ -564,6 +564,22 @@ impl<S: PageSink> Graphics<S> {
 
     /// Delivers a page, with the annotations marks placed on it ahead of
     /// time, and counts it.
+    /// Stored segments (default user space) taken back through the CTM;
+    /// a singular CTM leaves them where they are.
+    fn to_user(&self, segs: Vec<Seg>) -> Vec<Seg> {
+        let to_user = self.gstate.ctm.inverse().unwrap_or(Matrix::IDENTITY);
+        segs.into_iter()
+            .map(|seg| match seg {
+                Seg::Move(p) => Seg::Move(to_user.apply(p)),
+                Seg::Line(p) => Seg::Line(to_user.apply(p)),
+                Seg::Curve(a, b, c) => {
+                    Seg::Curve(to_user.apply(a), to_user.apply(b), to_user.apply(c))
+                }
+                Seg::Close => Seg::Close,
+            })
+            .collect()
+    }
+
     fn deliver(&mut self, mut page: Page) {
         if let Some(annots) = self.pending_annots.remove(&self.current_page()) {
             page.annots.extend(annots);
@@ -851,18 +867,29 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             None => crate::state::bounds_segments(self.gstate.media_box),
         };
         self.gstate.path = Path::from_segments(segs.clone());
-        let to_user = self.gstate.ctm.inverse().unwrap_or(Matrix::IDENTITY);
-        Ok(segs
-            .into_iter()
-            .map(|seg| match seg {
-                Seg::Move(p) => Seg::Move(to_user.apply(p)),
-                Seg::Line(p) => Seg::Line(to_user.apply(p)),
-                Seg::Curve(a, b, c) => {
-                    Seg::Curve(to_user.apply(a), to_user.apply(b), to_user.apply(c))
-                }
-                Seg::Close => Seg::Close,
-            })
-            .collect())
+        Ok(self.to_user(segs))
+    }
+
+    fn current_path(&self) -> Vec<Seg> {
+        self.to_user((*self.gstate.path.segs).clone())
+    }
+
+    fn set_screens(&mut self, screens: [Screen; 4]) -> Result<(), VmError> {
+        self.gstate.screens = screens;
+        Ok(())
+    }
+
+    fn screens(&self) -> [Screen; 4] {
+        self.gstate.screens
+    }
+
+    fn set_transfers(&mut self, transfers: [ProcRef; 4]) -> Result<(), VmError> {
+        self.gstate.transfers = transfers;
+        Ok(())
+    }
+
+    fn transfers(&self) -> [ProcRef; 4] {
+        self.gstate.transfers
     }
 
     fn image(&mut self, spec: &ImageSpec, data: &[u8]) -> Result<(), VmError> {

@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: 4
+% expect-output: -166
+% Scenario: a resident face's FontBBox is executable. A Type 1 font
+% program defines FontBBox as a procedure of four numbers, and setup
+% code that re-encodes a font executes the name after begin and
+% rebuilds the array with astore; the resident faces present it the
+% same way. The reference's own outlines carry other numbers, so its
+% output differs.
+% Expect: true, 4, -166.
+/Helvetica findfont /FontBBox get xcheck =
+/Helvetica findfont begin FontBBox 4 array astore end
+dup length = 0 get =

@@ -817,3 +817,38 @@ fn a_simple_descendant_shows_as_that_font_with_the_cid_as_its_code() {
          ops:\ntext 0 0.012 0 0 0.012 100 700 <00480069> 722 0 222 0\n"
     );
 }
+
+// --- printer identity: screens, transfers, pathforall ------------------------------
+
+// identity/screen-round-trip.ps
+#[test]
+fn screens_and_transfers_follow_the_graphics_state_and_leave_the_ir_alone() {
+    let run = exec(
+        "60 45 { pop } setscreen currentscreen pop pop = \
+         gsave 30 0 { pop } setscreen { 1 exch sub } settransfer grestore \
+         currentscreen pop pop = currenttransfer == \
+         { dup mul } settransfer initgraphics currenttransfer == \
+         save 10 10 { pop } setscreen restore currentscreen pop pop = \
+         0 0 100 100 rectfill showpage",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "60.0\n60.0\n{}\n{dup mul}\n60.0\n");
+    assert_eq!(run.pages.len(), 1);
+    assert!(matches!(ops(&run.pages[0]).as_slice(), [IrOp::Fill { .. }]));
+}
+
+// graphics/pathforall-enumerates.ps
+#[test]
+fn pathforall_reports_segments_in_user_space() {
+    let run = exec(
+        "2 2 scale 10 10 moveto 20 10 lineto 30 30 40 40 50 10 curveto closepath \
+         { (m) = pop pop } { (l) = pop pop } { (c) = 6 { pop } repeat } { (h) = } pathforall \
+         currentpoint = = \
+         1 1 moveto { 4 4 scale } { } { } { } pathforall currentpoint = = ",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    // The path survives the enumeration, and a CTM change inside a
+    // procedure (run twice: the path now has two moves) does not move
+    // the remaining segments.
+    assert_eq!(run.output, "m\nl\nc\nh\n10.0\n10.0\n0.0625\n0.0625\n");
+}

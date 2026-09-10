@@ -1,0 +1,29 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: m
+% expect-output: 10.0
+% expect-output: 10.0
+% expect-output: l
+% expect-output: 10.0
+% expect-output: 20.0
+% expect-output: c
+% expect-output: 10.0
+% expect-output: 50.0
+% expect-output: 40.0
+% expect-output: 40.0
+% expect-output: 30.0
+% expect-output: 30.0
+% expect-output: h
+% expect-output: 0
+% Scenario: pathforall enumerates the current path. Each segment runs
+% the procedure of its kind with its coordinates in the user space of
+% the CTM in effect, so a path built under a scale reads back in the
+% numbers it was built with; the procedures print the kind letter, then
+% the coordinates top-down. An empty path runs nothing.
+% Expect: m 10 10, l 10 20, c 10 50 40 40 30 30, h, then 0.
+2 2 scale
+10 10 moveto 20 10 lineto 30 30 40 40 50 10 curveto closepath
+{ (m) = = = } { (l) = = = } { (c) = = = = = = = } { (h) = } pathforall
+newpath
+0 { pop 1 add } dup dup dup pathforall =

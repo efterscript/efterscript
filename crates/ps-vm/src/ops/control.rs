@@ -11,6 +11,7 @@ use crate::ops::Num;
 
 op_table! { OPS {
     "exec" => exec, [Any];
+    "cexec" => exec, [Any];
     "if" => if_, [Bool, Array];
     "ifelse" => ifelse, [Bool, Array, Array];
     "for" => for_, [Num, Num, Num, Array];
@@ -24,6 +25,8 @@ op_table! { OPS {
     "quit" => quit;
 }}
 
+// `cexec` is the same operation under its own name: the reference's
+// job-server escape, accepted as plain execution.
 fn exec(i: &mut Interp) -> Result<(), VmError> {
     let object = i.pop()?;
     i.exec_indirect(object)

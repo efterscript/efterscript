@@ -12,7 +12,10 @@
 
 use std::rc::Rc;
 
-use ps_vm::{Bounds, FontRef, LineCap, LineJoin, Matrix, Point, Rect, Seg, SpaceSpec, VmError};
+use ps_vm::{
+    Bounds, FontRef, LineCap, LineJoin, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
+    VmError,
+};
 
 /// The inside rule of a fill or clip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +174,11 @@ pub struct GState {
     pub null_device: bool,
     /// The current font, `None` until `setfont`.
     pub font: Option<FontRef>,
+    /// The red, green, blue, and gray halftone screens, recorded for the
+    /// getters and never applied.
+    pub screens: [Screen; 4],
+    /// The transfer functions, likewise.
+    pub transfers: [ProcRef; 4],
 }
 
 impl Default for GState {
@@ -190,19 +198,24 @@ impl Default for GState {
             path: Path::default(),
             null_device: false,
             font: None,
+            screens: [Screen::DEFAULT; 4],
+            transfers: [ProcRef::IDENTITY; 4],
         }
     }
 }
 
 impl GState {
     /// What `initgraphics` leaves: the defaults with the device untouched
-    /// (media box and null device kept) and the font kept, since
-    /// `initgraphics` and `showpage` do not reset it (PLRM3 §8.2).
+    /// (media box and null device kept) and the font, screens, and
+    /// transfer functions kept, since `initgraphics` and `showpage` do
+    /// not reset them (PLRM3 §8.2).
     pub fn reinitialized(&self) -> GState {
         GState {
             media_box: self.media_box,
             null_device: self.null_device,
             font: self.font,
+            screens: self.screens,
+            transfers: self.transfers,
             ..GState::default()
         }
     }

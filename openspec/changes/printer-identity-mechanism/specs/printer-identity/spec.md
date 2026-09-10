@@ -27,9 +27,10 @@ definitions persist for the interpreter's life.
 
 #### Scenario: exitserver with the right password
 
-- **GIVEN** `serverdict begin 0 exitserver /persist 1 def end` and
-  later `persist =`
-- **THEN** the output is `1`
+- **GIVEN** `serverdict begin 0 exitserver /persist 1 def` and later
+  `persist =`
+- **THEN** the output is `1`: the dictionary stack is back at the
+  permanent dictionaries and the definition landed in `userdict`
 
 #### Scenario: exitserver with the wrong password
 
@@ -55,7 +56,7 @@ SHALL accept `--identity Key=Value` and `--prelude <file>`.
 #### Scenario: Prelude defines the device
 
 - **GIVEN** a prelude `statusdict begin /waittimeout 300 def /setpage {
-  << /PageSize 4 2 roll pop 2 array astore >> setpagedevice } def end`
+  pop 2 array astore << /PageSize 3 -1 roll >> setpagedevice } def end`
 - **WHEN** a job runs `statusdict /waittimeout get =` and `612 792 0
   setpage` is used before a page
 - **THEN** the output is `300` and the page is 612 by 792
@@ -77,7 +78,8 @@ SHALL affect the IR.
 #### Scenario: Screen round-trips
 
 - **GIVEN** `60 45 { pop } setscreen currentscreen pop pop =`
-- **THEN** the output is `60` and the page's IR is unchanged
+- **THEN** the output is `60.0` (the frequency comes back as a real)
+  and the page's IR is unchanged
 
 #### Scenario: cexec
 

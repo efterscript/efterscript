@@ -11,7 +11,7 @@
 
 use crate::error::VmError;
 use crate::graphics::{Bounds, LineCap, LineJoin, Matrix, Point, Rect, SpaceSpec};
-use crate::interp::{Interp, scan_error};
+use crate::interp::{Frame, Interp, LoopFrame, scan_error};
 use crate::object::{Object, Type};
 use crate::ops::array::{bytes, items};
 use crate::ops::{image, output};
@@ -91,6 +91,12 @@ op_table! { graphics OPS {
     "copypage" => copypage;
     "erasepage" => erasepage;
     "nulldevice" => nulldevice;
+}}
+
+// Appended after the earlier groups so their table positions stay put.
+op_table! { graphics LATER_OPS {
+    "pathforall" => pathforall, [Array, Array, Array, Array];
+    "colorimage" => image::colorimage, [Bool, Int];
 }}
 
 // --- operand helpers ---------------------------------------------------------
@@ -561,6 +567,23 @@ fn initclip(i: &mut Interp) -> Result<(), VmError> {
 fn clippath(i: &mut Interp) -> Result<(), VmError> {
     i.backend()?.clippath()?;
     Ok(())
+}
+
+/// `move line curve close pathforall`: the segments are taken in the
+/// user space of the CTM in effect now and enumerated as a loop frame,
+/// so a procedure that changes the CTM does not move the rest.
+fn pathforall(i: &mut Interp) -> Result<(), VmError> {
+    let procs = [i.peek(3)?, i.peek(2)?, i.peek(1)?, i.peek(0)?];
+    let segs = i.backend()?.current_path();
+    drop(i, 4)?;
+    if segs.is_empty() {
+        return Ok(());
+    }
+    i.push_frame(Frame::Loop(LoopFrame::PathForAll {
+        procs,
+        segs,
+        next: 0,
+    }))
 }
 
 // The rectangles of a `rect…` operator: four numbers, or an array of

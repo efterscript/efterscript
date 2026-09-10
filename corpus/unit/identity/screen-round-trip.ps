@@ -1,0 +1,27 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 60.0
+% expect-output: 60.0
+% expect-output: 12
+% expect-output: 4
+% expect-output: true
+% Scenario: screens and transfer functions round-trip. setscreen's
+% values come back from currentscreen; a screen set inside gsave is
+% gone after grestore; setcolorscreen leaves twelve values for
+% currentcolorscreen and setcolortransfer four for currentcolortransfer;
+% and a transfer function reads back as the procedure given. None of it
+% touches the page: the sidecar golden shows the fill alone.
+% Expect: 60.0, 60.0, 12, 4, true.
+60 45 { pop } setscreen
+currentscreen pop pop =
+gsave 30 0 { pop } setscreen grestore
+currentscreen pop pop =
+60 45 { pop } 60 45 { pop } 60 45 { pop } 60 45 { pop } setcolorscreen
+currentcolorscreen count = clear
+{ } { } { } { } setcolortransfer
+currentcolortransfer count = clear
+/t { dup mul } def
+/t load settransfer currenttransfer /t load eq =
+0 0 100 100 rectfill
+showpage

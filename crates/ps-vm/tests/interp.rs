@@ -492,7 +492,8 @@ fn systemdict_holds_constants_and_is_read_only() {
     assert_eq!(stack[0].as_i32(), Some(1));
     assert_eq!(stack[1].as_i32(), Some(2));
     assert_eq!(stack[2].as_bool(), Some(true));
-    assert_eq!(stack[3].as_i32(), Some(0));
+    // product, version, revision
+    assert_eq!(stack[3].as_i32(), Some(3));
     assert_eq!(stack[4].as_bool(), Some(false));
 }
 

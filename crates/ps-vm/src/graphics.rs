@@ -532,6 +532,41 @@ impl MarkValue {
     }
 }
 
+/// An opaque reference to a procedure the graphics state carries on the
+/// VM's behalf: a screen's spot function or a transfer function. The VM
+/// resolves it (`Interp::graphics_proc`); [`ProcRef::IDENTITY`] is the
+/// empty procedure every state starts with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ProcRef(pub u32);
+
+impl ProcRef {
+    pub const IDENTITY: ProcRef = ProcRef(0);
+}
+
+/// A halftone screen as `setscreen` records it (PLRM3 §7.4): frequency in
+/// lines per inch, angle in degrees, and the spot function. Recorded so
+/// the getters answer; never applied.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Screen {
+    pub frequency: f32,
+    pub angle: f32,
+    pub spot: ProcRef,
+}
+
+impl Screen {
+    pub const DEFAULT: Screen = Screen {
+        frequency: 60.0,
+        angle: 45.0,
+        spot: ProcRef::IDENTITY,
+    };
+}
+
+impl Default for Screen {
+    fn default() -> Self {
+        Screen::DEFAULT
+    }
+}
+
 /// A path segment, in user space, as `clippath` reports the clip.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Seg {
@@ -629,6 +664,34 @@ pub trait GraphicsBackend {
     /// Replaces the current path with the clip path and returns its
     /// segments.
     fn clippath(&mut self) -> Result<Vec<Seg>, VmError>;
+    /// The current path's segments in the current user space, for
+    /// `pathforall`. A backend that keeps no path reports none.
+    fn current_path(&self) -> Vec<Seg> {
+        Vec::new()
+    }
+
+    // --- halftone and transfer ---------------------------------------------------
+
+    /// Records the red, green, blue, and gray screens, in that order
+    /// (`setscreen` gives one screen for all four); saved and restored
+    /// with the state, never applied. A backend without a state slot for
+    /// them answers the defaults.
+    fn set_screens(&mut self, screens: [Screen; 4]) -> Result<(), VmError> {
+        let _ = screens;
+        Ok(())
+    }
+    fn screens(&self) -> [Screen; 4] {
+        [Screen::DEFAULT; 4]
+    }
+    /// Records the red, green, blue, and gray transfer functions, in that
+    /// order; as `set_screens`.
+    fn set_transfers(&mut self, transfers: [ProcRef; 4]) -> Result<(), VmError> {
+        let _ = transfers;
+        Ok(())
+    }
+    fn transfers(&self) -> [ProcRef; 4] {
+        [ProcRef::IDENTITY; 4]
+    }
 
     // --- images ------------------------------------------------------------------
 

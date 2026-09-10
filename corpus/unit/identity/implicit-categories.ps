@@ -1,0 +1,33 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: false
+% expect-output: /DeviceRGB
+% expect-output: true
+% expect-output: 3
+% expect-output: /invalidaccess
+% expect-output: 0
+% expect-output: 1
+% expect-output: 2
+% expect-output: 3
+% expect-output: 42
+% Scenario: the implicit categories answer for the interpreter. Type 42
+% fonts are supported (status 0, size 0); type 7 is not; findresource on
+% an implicit category returns the key; the Category category lists
+% Font, FontType, and Category among its members; a member cannot be
+% redefined; and FontType enumerates its integer keys, which no template
+% filters. The reference converter's own tables differ, so its output
+% does.
+% Expect: true 0 0, false, /DeviceRGB, true, 3, true, /invalidaccess,
+% then 0 1 2 3 42.
+42 /FontType resourcestatus = = =
+7 /FontType resourcestatus =
+/DeviceRGB /ColorSpaceFamily findresource ==
+9 /FMapType resourcestatus = pop pop
+0 (*) { cvn dup /Font eq exch dup /FontType eq exch /Category eq or or { 1 add } if }
+  32 string /Category resourceforall =
+{ /Mine 7 /FontType defineresource } stopped pop $error /errorname get ==
+(*) { = } 32 string /FontType resourceforall

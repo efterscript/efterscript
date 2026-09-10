@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::{error, fmt};
 
 use ps_graphics::{DocMark, Graphics, Page, PageSink};
-use ps_vm::{Config, FontSubstitution, Interp, Outcome, SliceSource};
+use ps_vm::{Config, FontSubstitution, Interp, Outcome, PreludeError, SliceSource};
 
 mod composite;
 mod content;
@@ -96,6 +96,12 @@ pub struct Report {
     pub not_honoured: Vec<NotHonoured>,
     /// Images reduced by downsampling.
     pub downsampled: usize,
+    /// The `statusdict` entries in effect when the job started — the
+    /// default identity, the embedder's seeding, and what the prelude
+    /// added — keys and values in their syntactic forms.
+    pub identity: Vec<(String, String)>,
+    /// Whether a configured prelude ran.
+    pub prelude_ran: bool,
 }
 
 /// Why a document could not be written. The interpreter's own failures
@@ -103,12 +109,15 @@ pub struct Report {
 #[derive(Debug)]
 pub enum Error {
     Pdf(pdf_out::Error),
+    /// The interpreter could not be built: its prelude failed.
+    Prelude(PreludeError),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Pdf(e) => write!(f, "cannot write the document: {e}"),
+            Error::Prelude(e) => write!(f, "{e}"),
         }
     }
 }
@@ -117,7 +126,14 @@ impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Error::Pdf(e) => Some(e),
+            Error::Prelude(e) => Some(e),
         }
+    }
+}
+
+impl From<PreludeError> for Error {
+    fn from(e: PreludeError) -> Self {
+        Error::Prelude(e)
     }
 }
 
@@ -185,8 +201,10 @@ pub fn distill_into<W: Write + 'static>(
     sink: PdfSink<W>,
 ) -> Result<(Report, W), Error> {
     let entries = sink.params().entries();
+    let mut interp = Interp::try_with_config(config)?;
     let shared = Rc::new(RefCell::new(Some(sink)));
-    let mut interp = Interp::with_config(config);
+    let identity = interp.statusdict_entries();
+    let prelude_ran = interp.prelude_ran();
     // A value the VM cannot hold (a name too long, nesting too deep) is
     // left out of the job's view of the parameters; the writer keeps it.
     let _ = interp.set_distiller_params(&entries);
@@ -217,6 +235,8 @@ pub fn distill_into<W: Write + 'static>(
             params,
             not_honoured,
             downsampled,
+            identity,
+            prelude_ran,
         },
         out,
     ))
