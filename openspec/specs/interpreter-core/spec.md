@@ -163,3 +163,12 @@ angles keep single precision's digits.
 
 - **GIVEN** `1000000 cos =`
 - **THEN** the output is `0.17364818` within one unit in the last place
+
+### Requirement: languagelevel
+
+`languagelevel` SHALL return 2.
+
+#### Scenario: Level claim
+
+- **GIVEN** `languagelevel =`
+- **THEN** the output is `2`
