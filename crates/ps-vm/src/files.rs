@@ -37,6 +37,19 @@ pub trait Stream {
     fn close(&mut self) -> Result<(), VmError> {
         Ok(())
     }
+
+    /// Whether end of data may be followed by more bytes later. A stream
+    /// answering `true` fails a read that finds nothing with
+    /// [`VmError::NeedMore`] instead of returning zero, and must
+    /// implement [`Stream::unread`].
+    fn more_may_come(&self) -> bool {
+        false
+    }
+
+    /// Hands bytes back so the next read returns them first: the
+    /// interpreter undoes an operator's reads when it suspends for more
+    /// data. Only streams that may grow are ever asked.
+    fn unread(&mut self, _bytes: &[u8]) {}
 }
 
 /// Resolves a `file` request into a stream. Absent a capability, every
@@ -82,11 +95,33 @@ struct Entry {
     position: usize,
 }
 
+/// The state of an entry when the current operator first read from it,
+/// kept only for entries whose bytes may still be growing, so the reads
+/// can be undone if the operator has to wait for more.
+struct Saved {
+    handle: Handle,
+    pushback: Vec<u8>,
+    position: usize,
+    layer: Option<LayerState>,
+    /// Bytes taken from the stream since the snapshot.
+    taken: Vec<u8>,
+}
+
+/// A layer's decrypting state, as saved and restored.
+struct LayerState {
+    cipher: Decryptor,
+    form: Option<Form>,
+    skip: u8,
+    lookahead: Vec<u8>,
+    before: Decryptor,
+}
+
 /// Open and closed file entries. Handles are never reused, so a file object
 /// that outlives its entry resolves to a closed file.
 #[derive(Default)]
 pub struct FileTable {
     entries: Vec<Option<Entry>>,
+    saved: Vec<Saved>,
 }
 
 impl fmt::Debug for FileTable {
@@ -164,6 +199,98 @@ impl FileTable {
         }
     }
 
+    /// Whether the entry's bytes may still be growing: its stream says
+    /// so, or it is a layer over one.
+    fn may_grow(&self, handle: Handle) -> bool {
+        match self.entries.get(handle.0 as usize) {
+            Some(Some(Entry {
+                kind: Kind::Stream(stream),
+                ..
+            })) => stream.more_may_come(),
+            Some(Some(Entry {
+                kind: Kind::Layer(layer),
+                ..
+            })) => self.may_grow(layer.base),
+            _ => false,
+        }
+    }
+
+    /// Records the entry's state before the current operator's first
+    /// read from it, if it may grow and is not recorded yet.
+    fn guard(&mut self, handle: Handle) {
+        if self.saved.iter().any(|s| s.handle == handle) || !self.may_grow(handle) {
+            return;
+        }
+        let Some(Some(entry)) = self.entries.get(handle.0 as usize) else {
+            return;
+        };
+        let layer = match &entry.kind {
+            Kind::Stream(_) => None,
+            Kind::Layer(l) => Some(LayerState {
+                cipher: l.cipher,
+                form: l.form,
+                skip: l.skip,
+                lookahead: l.lookahead.clone(),
+                before: l.before,
+            }),
+        };
+        self.saved.push(Saved {
+            handle,
+            pushback: entry.pushback.clone(),
+            position: entry.position,
+            layer,
+            taken: Vec::new(),
+        });
+    }
+
+    /// Notes bytes taken from the stream behind `handle` since its
+    /// snapshot.
+    fn note_taken(&mut self, handle: Handle, bytes: &[u8]) {
+        if let Some(saved) = self.saved.iter_mut().find(|s| s.handle == handle) {
+            saved.taken.extend_from_slice(bytes);
+        }
+    }
+
+    /// Forgets the snapshots: the operator that read completed.
+    pub fn commit(&mut self) {
+        if !self.saved.is_empty() {
+            self.saved.clear();
+        }
+    }
+
+    /// Restores every recorded entry to its snapshot and hands the bytes
+    /// taken since back to their streams: the operator that read is
+    /// suspended and will run again from the start.
+    pub fn rollback(&mut self) {
+        while let Some(saved) = self.saved.pop() {
+            let Some(Some(entry)) = self.entries.get_mut(saved.handle.0 as usize) else {
+                continue;
+            };
+            entry.pushback = saved.pushback;
+            entry.position = saved.position;
+            match (&mut entry.kind, saved.layer) {
+                (Kind::Stream(stream), _) => stream.unread(&saved.taken),
+                (Kind::Layer(layer), Some(saved)) => {
+                    layer.cipher = saved.cipher;
+                    layer.form = saved.form;
+                    layer.skip = saved.skip;
+                    layer.lookahead = saved.lookahead;
+                    layer.before = saved.before;
+                }
+                (Kind::Layer(_), None) => {}
+            }
+        }
+    }
+
+    /// Returns bytes a layer took from its base without producing a
+    /// byte, so a read that must wait for more leaves nothing consumed.
+    fn give_back(&mut self, base: Handle, raw: &[u8]) -> Result<(), VmError> {
+        let entry = self.entry(base)?;
+        entry.position -= raw.len();
+        entry.pushback.extend(raw.iter().rev());
+        Ok(())
+    }
+
     /// One byte from the base of a layer, for the layer's own use.
     fn base_byte(&mut self, base: Handle) -> Result<Option<u8>, VmError> {
         let mut byte = [0u8; 1];
@@ -182,9 +309,13 @@ impl FileTable {
             None => {
                 let mut first = Vec::with_capacity(4);
                 while first.len() < 4 {
-                    match self.base_byte(base)? {
-                        Some(b) => first.push(b),
-                        None => break,
+                    match self.base_byte(base) {
+                        Ok(Some(b)) => first.push(b),
+                        Ok(None) => break,
+                        Err(e) => {
+                            self.give_back(base, &first)?;
+                            return Err(e);
+                        }
                     }
                 }
                 let form = if first.len() == 4 && first.iter().all(|&b| hex_value(b).is_some()) {
@@ -217,8 +348,13 @@ impl FileTable {
                 Form::Hex => {
                     let mut high = None;
                     loop {
-                        let Some(b) = self.base_byte(base)? else {
-                            return Ok(None);
+                        let b = match self.base_byte(base) {
+                            Ok(Some(b)) => b,
+                            Ok(None) => return Ok(None),
+                            Err(e) => {
+                                self.give_back(base, &raw)?;
+                                return Err(e);
+                            }
                         };
                         match hex_value(b) {
                             Some(v) => {
@@ -234,9 +370,7 @@ impl FileTable {
                                 // is neither; it and the whitespace before
                                 // it belong to the base.
                                 raw.push(b);
-                                let base_entry = self.entry(base)?;
-                                base_entry.position -= raw.len();
-                                base_entry.pushback.extend(raw.iter().rev());
+                                self.give_back(base, &raw)?;
                                 return Ok(None);
                             }
                         }
@@ -263,6 +397,7 @@ impl FileTable {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.guard(handle);
         let entry = self.entry(handle)?;
         let mut n = 0;
         while n < buf.len() {
@@ -276,6 +411,9 @@ impl FileTable {
         if let Kind::Stream(stream) = &mut entry.kind {
             let got = stream.read(&mut buf[n..])?;
             entry.position += got;
+            if got > 0 {
+                self.note_taken(handle, &buf[n..n + got]);
+            }
             return Ok(n + got);
         }
         while n < buf.len() {
@@ -295,6 +433,7 @@ impl FileTable {
 
     /// The next unread byte without consuming it; `None` at end of data.
     pub fn peek(&mut self, handle: Handle) -> Result<Option<u8>, VmError> {
+        self.guard(handle);
         let entry = self.entry(handle)?;
         if let Some(&byte) = entry.pushback.last() {
             return Ok(Some(byte));
@@ -302,7 +441,11 @@ impl FileTable {
         let byte = match &mut entry.kind {
             Kind::Stream(stream) => {
                 let mut byte = [0u8; 1];
-                (stream.read(&mut byte)? == 1).then_some(byte[0])
+                let got = (stream.read(&mut byte)? == 1).then_some(byte[0]);
+                if got.is_some() {
+                    self.note_taken(handle, &byte);
+                }
+                got
             }
             Kind::Layer(_) => self.layer_byte(handle)?,
         };

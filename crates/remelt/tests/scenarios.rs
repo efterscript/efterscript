@@ -73,6 +73,7 @@ fn a_stroked_line_distils() {
             downsampled: 0,
             identity: default_identity(),
             prelude_ran: false,
+            budget_exceeded: false,
         }
     );
     let pdf = check(&run.pdf);
@@ -163,6 +164,7 @@ fn a_job_with_no_pages() {
             downsampled: 0,
             identity: default_identity(),
             prelude_ran: false,
+            budget_exceeded: false,
         }
     );
     let pdf = check(&run.pdf);

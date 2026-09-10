@@ -137,6 +137,8 @@ dependencies = [
 name = "platen"
 version = "0.0.1"
 dependencies = [
+ "proptest",
+ "ps-vm",
  "remelt",
 ]
 

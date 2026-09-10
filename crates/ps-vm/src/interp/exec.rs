@@ -91,7 +91,7 @@ impl Interp {
     /// Executes `source` as a job: a run boundary and a `Source` frame are
     /// pushed and the loop runs until the boundary is reached again.
     pub fn run(&mut self, source: &mut dyn Source) -> Outcome {
-        self.discard_run_input();
+        self.reset_run_input();
         self.push_frame_unchecked(Frame::Marker(Marker::RunBoundary));
         self.push_frame_unchecked(Frame::Source(Box::new(SourceFrame {
             slot: SourceSlot::Run,
@@ -102,6 +102,11 @@ impl Interp {
 
     /// Continues a suspended run once `source` has more bytes.
     pub fn resume(&mut self, source: &mut dyn Source) -> Outcome {
+        // An operator re-queued for its reads runs before the source
+        // frame gets its turn, so the new bytes are moved in first.
+        if let Err(e) = self.pump_run_source(source) {
+            self.raise(e, Object::null());
+        }
         self.execute_until_boundary(source)
     }
 
@@ -112,6 +117,10 @@ impl Interp {
             self.max_host_depth = self.max_host_depth.max(self.host_depth);
         }
         let outcome = loop {
+            if self.starved {
+                self.starved = false;
+                break Outcome::Suspended;
+            }
             match self.estack.last_mut() {
                 None => break Outcome::Ok,
                 Some(Frame::Object(object)) => {
@@ -247,6 +256,7 @@ impl Interp {
     // procedure element, where executable arrays and strings are pushed
     // rather than run (PLRM3 §3.5.5).
     fn execute(&mut self, object: Object, direct: bool) {
+        self.mem.files_mut().commit();
         if self.charge(object) {
             return;
         }
@@ -288,8 +298,10 @@ impl Interp {
                 },
                 Type::Operator => {
                     let index = object.as_operator().expect("operator");
-                    if let Err(e) = self.call_operator(index) {
-                        self.raise(e, object);
+                    match self.call_operator(index) {
+                        Ok(()) => {}
+                        Err(VmError::NeedMore) => self.suspend_for_input(object),
+                        Err(e) => self.raise(e, object),
                     }
                     return;
                 }
@@ -330,6 +342,21 @@ impl Interp {
         }
     }
 
+    /// An operator's read of the job's source found no byte with more to
+    /// come: its reads are undone, the operand stack is as it left it
+    /// (a reading operator pops nothing before its read completes), and
+    /// the operator is queued to run again when the loop resumes. The
+    /// step it was charged is refunded so a split job counts as an
+    /// unsplit one.
+    fn suspend_for_input(&mut self, operator: Object) {
+        self.mem.files_mut().rollback();
+        if self.steps_limit.is_some() {
+            self.steps -= 1;
+        }
+        self.push_frame_unchecked(Frame::Object(operator));
+        self.starved = true;
+    }
+
     fn call_operator(&mut self, index: u32) -> Result<(), VmError> {
         let entry = self
             .ops
@@ -341,6 +368,7 @@ impl Interp {
     }
 
     fn advance_loop(&mut self) {
+        self.mem.files_mut().commit();
         if let Some(Frame::Loop(LoopFrame::Show(_))) = self.estack.last() {
             ops::show::step(self);
             return;
@@ -563,6 +591,11 @@ impl Interp {
                     self.raise(e, command);
                 }
             }
+            LoopStep::Failed(VmError::NeedMore, _) => {
+                // The frame stays and takes the step again on resume.
+                self.mem.files_mut().rollback();
+                self.starved = true;
+            }
             LoopStep::Failed(e, operator) => {
                 self.pop_frame();
                 let command = self.operator(operator).unwrap_or(Object::null());
@@ -620,6 +653,10 @@ impl Interp {
     /// `errordict` entry for the error runs; absent one, the default
     /// handling applies.
     pub(crate) fn raise(&mut self, error: VmError, command: Object) {
+        debug_assert!(
+            error != VmError::NeedMore,
+            "a starved read outside an operator or loop step"
+        );
         let name = self.intern(error.name());
         let nested = self
             .estack

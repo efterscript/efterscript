@@ -76,7 +76,9 @@ crates/ps-graphics     graphics state and the PDF-shaped vector IR; sink traits
 crates/ps-fonts        Type 1 / CFF / TrueType parsing, metrics, subsetting, ToUnicode
 crates/pdf-out         low-level PDF serialisation, zero PostScript knowledge
 crates/remelt          the distillation engine: policies, pdfmark, PDF writing
-crates/platen          interactive session front-end: job protocol, queries, back channel
+crates/platen          session front-end: a job fed in pieces, replies and error reports
+                       read back, a PDF at the end; C ABI and Emscripten build
+                       (see crates/platen/docs/embedding.md)
 crates/efterscript-cli PostScript-to-PDF command-line tool
 tools/psgen            property-based PostScript program generator
 tools/difftest         differential test harness

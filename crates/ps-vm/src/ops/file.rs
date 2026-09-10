@@ -236,7 +236,9 @@ fn scan_one(i: &mut Interp, source: &mut dyn Source) -> Result<Option<Object>, V
     let mut scanner = Scanner::new();
     match scanner.next(source, &mut i.mem, &mut resolver) {
         Ok(Scan::Token { object, .. }) => Ok(Some(object)),
-        Ok(Scan::End | Scan::NeedMore) => Ok(None),
+        Ok(Scan::End) => Ok(None),
+        // The file may grow: the operator waits and scans again.
+        Ok(Scan::NeedMore) => Err(VmError::NeedMore),
         Err(e) => Err(scan_error(e.kind)),
     }
 }

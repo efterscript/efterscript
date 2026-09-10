@@ -189,10 +189,13 @@ impl Source for StringSource {
 
 /// A source over a file-table entry. The entry keeps the read position and
 /// the lookahead byte, so bytes the scanner leaves unread are exactly what
-/// `read` on the file returns next.
+/// `read` on the file returns next. A file whose bytes may still be
+/// growing (the job's own source, or a layer over it) reads as ended
+/// with more to come while it waits, so the scanner suspends.
 #[derive(Clone, Copy, Debug)]
 pub struct FileSource {
     handle: Handle,
+    starved: bool,
 }
 
 impl FileSource {
@@ -200,11 +203,15 @@ impl FileSource {
     pub fn new(object: Object) -> Option<Self> {
         (object.ty() == Type::File).then(|| FileSource {
             handle: object.handle().expect("file is composite"),
+            starved: false,
         })
     }
 
     pub fn from_handle(handle: Handle) -> Self {
-        FileSource { handle }
+        FileSource {
+            handle,
+            starved: false,
+        }
     }
 
     pub fn handle(&self) -> Handle {
@@ -214,7 +221,16 @@ impl FileSource {
 
 impl Source for FileSource {
     fn peek(&mut self, memory: &mut Memory) -> Result<Option<u8>, VmError> {
-        memory.files_mut().peek(self.handle)
+        match memory.files_mut().peek(self.handle) {
+            Err(VmError::NeedMore) => {
+                self.starved = true;
+                Ok(None)
+            }
+            other => {
+                self.starved = false;
+                other
+            }
+        }
     }
 
     fn advance(&mut self, memory: &mut Memory) {
@@ -226,7 +242,7 @@ impl Source for FileSource {
     }
 
     fn more_may_come(&self) -> bool {
-        false
+        self.starved
     }
 }
 

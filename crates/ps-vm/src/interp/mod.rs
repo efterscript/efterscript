@@ -29,15 +29,57 @@ pub use frame::{Frame, LoopFrame, Marker, ResourceKey, SourceFrame, SourceSlot};
 
 // The file-table stream behind the job's source. The loop moves the bytes
 // of the source handed to `run` into this buffer before scanning, so the
-// scanner's cursor and `currentfile` reads share one file entry.
+// scanner's cursor and `currentfile` reads share one file entry. While
+// the source may grow, an empty buffer is not the end: a read then
+// fails with `NeedMore` and the loop suspends.
 #[derive(Clone, Default)]
-struct RunStream(Rc<RefCell<VecDeque<u8>>>);
+struct RunStream(Rc<RefCell<RunBuffer>>);
+
+#[derive(Default)]
+struct RunBuffer {
+    pending: VecDeque<u8>,
+    more: bool,
+    /// `closefile` on the job's source: what remains and whatever
+    /// arrives later is discarded until the next `run`.
+    closed: bool,
+}
+
+impl RunStream {
+    fn set_more(&self, more: bool) {
+        self.0.borrow_mut().more = more;
+    }
+
+    /// Empties the buffer for a new run.
+    fn reset(&self) {
+        let mut inner = self.0.borrow_mut();
+        inner.pending.clear();
+        inner.closed = false;
+        inner.more = false;
+    }
+
+    /// Discards the rest of the job's input.
+    fn close(&self) {
+        let mut inner = self.0.borrow_mut();
+        inner.pending.clear();
+        inner.closed = true;
+    }
+
+    fn extend(&self, bytes: Vec<u8>) {
+        let mut inner = self.0.borrow_mut();
+        if !inner.closed {
+            inner.pending.extend(bytes);
+        }
+    }
+}
 
 impl Stream for RunStream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
-        let mut pending = self.0.borrow_mut();
-        let n = buf.len().min(pending.len());
-        for (slot, byte) in buf.iter_mut().zip(pending.drain(..n)) {
+        let mut inner = self.0.borrow_mut();
+        if inner.pending.is_empty() && inner.more && !inner.closed && !buf.is_empty() {
+            return Err(VmError::NeedMore);
+        }
+        let n = buf.len().min(inner.pending.len());
+        for (slot, byte) in buf.iter_mut().zip(inner.pending.drain(..n)) {
             *slot = byte;
         }
         Ok(n)
@@ -45,6 +87,18 @@ impl Stream for RunStream {
 
     fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
         Err(VmError::InvalidAccess)
+    }
+
+    fn more_may_come(&self) -> bool {
+        let inner = self.0.borrow();
+        inner.more && !inner.closed
+    }
+
+    fn unread(&mut self, bytes: &[u8]) {
+        let mut inner = self.0.borrow_mut();
+        for &byte in bytes.iter().rev() {
+            inner.pending.push_front(byte);
+        }
     }
 }
 
@@ -299,6 +353,10 @@ pub struct Interp {
     stopped: bool,
     pending_error: Option<ErrorSummary>,
     quit: bool,
+    /// Set when an operator's read of the job's source found no byte
+    /// with more to come: the loop suspends at its next turn, the
+    /// operator re-queued.
+    starved: bool,
     #[cfg(debug_assertions)]
     host_depth: u32,
     #[cfg(debug_assertions)]
@@ -491,6 +549,7 @@ impl Interp {
             stopped: false,
             pending_error: None,
             quit: false,
+            starved: false,
             #[cfg(debug_assertions)]
             host_depth: 0,
             #[cfg(debug_assertions)]
@@ -980,11 +1039,18 @@ impl Interp {
     /// preceding the next job. The entry itself stays open, so it is never
     /// newer than a `save`.
     pub(crate) fn discard_run_input(&mut self) {
-        self.run_buffer.0.borrow_mut().clear();
+        self.run_buffer.close();
         let _ = self.mem.file_read(self.run_file, &mut [0u8; 1]);
     }
 
-    /// Moves the bytes `source` has available into the run file.
+    /// Empties the run file for a new job.
+    pub(crate) fn reset_run_input(&mut self) {
+        self.run_buffer.reset();
+        let _ = self.mem.file_read(self.run_file, &mut [0u8; 1]);
+    }
+
+    /// Moves the bytes `source` has available into the run file and
+    /// notes whether more may follow.
     pub(crate) fn pump_run_source(
         &mut self,
         source: &mut dyn crate::source::Source,
@@ -992,8 +1058,9 @@ impl Interp {
         let mut bytes = Vec::new();
         source.drain_into(&mut self.mem, &mut bytes)?;
         if !bytes.is_empty() {
-            self.run_buffer.0.borrow_mut().extend(bytes);
+            self.run_buffer.extend(bytes);
         }
+        self.run_buffer.set_more(source.more_may_come());
         Ok(())
     }
 

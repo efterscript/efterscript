@@ -3,12 +3,15 @@
 
 [package]
 name = "platen"
-description = "Virtual-printer session front-end: printer identity, statusdict, query handling, back channel, job protocol framing"
+description = "Session front-end: a job fed in pieces with replies and error reports read back, a PDF at the end, and a C ABI for hosts that act as a printer"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
 
 [features]
 default = ["resident-outlines"]
@@ -18,3 +21,7 @@ resident-outlines = ["remelt/resident-outlines"]
 
 [dependencies]
 remelt.workspace = true
+ps-vm.workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

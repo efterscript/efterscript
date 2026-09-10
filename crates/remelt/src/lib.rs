@@ -16,7 +16,9 @@
 //! returns and memory is bounded by the largest page. [`distill`] is the
 //! driver: it builds an interpreter around a sink, runs a program, and
 //! closes the document — including after a job that ended in an error,
-//! whose pages are still worth having.
+//! whose pages are still worth having. [`Distillation`] is the same in
+//! pieces, for a host that receives the program incrementally and reads
+//! its output between pieces.
 //!
 //! Named for the letterpress practice of remelting hellbox lead into fresh
 //! type: old type in, clean type out.
@@ -28,7 +30,7 @@ use std::rc::Rc;
 use std::{error, fmt};
 
 use ps_graphics::{DocMark, Graphics, Page, PageSink};
-use ps_vm::{Config, FontSubstitution, Interp, Outcome, PreludeError, SliceSource};
+use ps_vm::{ChunkSource, Config, FontSubstitution, Interp, Outcome, PreludeError, SliceSource};
 
 mod composite;
 mod content;
@@ -102,6 +104,9 @@ pub struct Report {
     pub identity: Vec<(String, String)>,
     /// Whether a configured prelude ran.
     pub prelude_ran: bool,
+    /// Whether the execution budget was exceeded, in which case the
+    /// outcome's `limitcheck` is the budget's, not the program's.
+    pub budget_exceeded: bool,
 }
 
 /// Why a document could not be written. The interpreter's own failures
@@ -200,44 +205,149 @@ pub fn distill_into<W: Write + 'static>(
     config: Config,
     sink: PdfSink<W>,
 ) -> Result<(Report, W), Error> {
-    let entries = sink.params().entries();
-    let mut interp = Interp::try_with_config(config)?;
-    let shared = Rc::new(RefCell::new(Some(sink)));
-    let identity = interp.statusdict_entries();
-    let prelude_ran = interp.prelude_ran();
-    // A value the VM cannot hold (a name too long, nesting too deep) is
-    // left out of the job's view of the parameters; the writer keeps it.
-    let _ = interp.set_distiller_params(&entries);
-    interp.set_graphics_backend(Box::new(Graphics::new(Shared(shared.clone()))));
-    let outcome = interp.run(&mut SliceSource::new(program));
-    let substitutions = interp.font_substitutions().to_vec();
-    drop(interp);
-    let sink = Rc::try_unwrap(shared)
-        .ok()
-        .and_then(RefCell::into_inner)
-        .expect("the interpreter has been dropped and with it the only other handle");
-    let pages = sink.pages();
-    let notes = sink.notes().to_vec();
-    let marks_written = sink.marks_written();
-    let marks_ignored = sink.marks_ignored().clone();
-    let params = sink.params().clone();
-    let not_honoured = sink.not_honoured();
-    let downsampled = sink.downsampled();
-    let out = sink.finish()?;
-    Ok((
-        Report {
-            outcome,
-            pages,
-            substitutions,
-            notes,
-            marks_written,
-            marks_ignored,
-            params,
-            not_honoured,
-            downsampled,
+    let mut distiller = Distillation::new(config, sink)?;
+    distiller.run(program);
+    distiller.finish()
+}
+
+/// An interpreter and a sink held together across calls: the program
+/// arrives through [`Distillation::feed`] in pieces of any size, or whole
+/// through [`Distillation::run`], and [`Distillation::finish`] closes the
+/// document. The interpreter's output streams are whatever `config`
+/// injected; a host reading replies between pieces gives it captures.
+pub struct Distillation<W: Write> {
+    interp: Interp,
+    shared: Rc<RefCell<Option<PdfSink<W>>>>,
+    source: ChunkSource,
+    /// The last outcome; `None` before the first piece.
+    outcome: Option<Outcome>,
+    identity: Vec<(String, String)>,
+    prelude_ran: bool,
+}
+
+impl<W: Write + 'static> Distillation<W> {
+    /// Builds the interpreter from `config` — a prelude failure is
+    /// [`Error::Prelude`] — seeds the sink's parameters into it, and
+    /// installs the graphics backend over the sink.
+    pub fn new(config: Config, sink: PdfSink<W>) -> Result<Self, Error> {
+        let entries = sink.params().entries();
+        let mut interp = Interp::try_with_config(config)?;
+        let shared = Rc::new(RefCell::new(Some(sink)));
+        let identity = interp.statusdict_entries();
+        let prelude_ran = interp.prelude_ran();
+        // A value the VM cannot hold (a name too long, nesting too deep) is
+        // left out of the job's view of the parameters; the writer keeps it.
+        let _ = interp.set_distiller_params(&entries);
+        interp.set_graphics_backend(Box::new(Graphics::new(Shared(shared.clone()))));
+        Ok(Distillation {
+            interp,
+            shared,
+            source: ChunkSource::new(),
+            outcome: None,
             identity,
             prelude_ran,
-        },
-        out,
-    ))
+        })
+    }
+
+    pub fn interp(&self) -> &Interp {
+        &self.interp
+    }
+
+    pub fn interp_mut(&mut self) -> &mut Interp {
+        &mut self.interp
+    }
+
+    /// Pages delivered to the document so far.
+    pub fn pages(&self) -> usize {
+        self.shared.borrow().as_ref().map_or(0, PdfSink::pages)
+    }
+
+    /// The outcome so far: `None` before any program bytes, `Suspended`
+    /// while the job waits for more.
+    pub fn outcome(&self) -> Option<&Outcome> {
+        self.outcome.as_ref()
+    }
+
+    /// Whether the job has ended — by reaching the end of its data, by
+    /// an uncaught error, or by `quit` — so later bytes would be ignored.
+    pub fn is_done(&self) -> bool {
+        matches!(self.outcome, Some(Outcome::Ok | Outcome::Error(_)))
+    }
+
+    /// Runs `program` whole as the job; the unsplit form of `feed`.
+    pub fn run(&mut self, program: &[u8]) -> Outcome {
+        let outcome = self.interp.run(&mut SliceSource::new(program));
+        self.outcome = Some(outcome.clone());
+        outcome
+    }
+
+    /// Appends `bytes` to the job and executes as far as they allow:
+    /// `Suspended` when the job waits for more, else the job's outcome.
+    /// Bytes fed to a job that has ended are ignored and the outcome
+    /// repeated.
+    pub fn feed(&mut self, bytes: &[u8]) -> Outcome {
+        if self.is_done() {
+            return self.outcome.clone().expect("done implies an outcome");
+        }
+        self.source.append(bytes);
+        let outcome = match self.outcome {
+            None => self.interp.run(&mut self.source),
+            Some(_) => self.interp.resume(&mut self.source),
+        };
+        self.outcome = Some(outcome.clone());
+        outcome
+    }
+
+    /// Marks the end of the program, runs it to completion, and closes
+    /// the document. The writer comes back with the report so a caller
+    /// writing to memory keeps its bytes and one writing to a file can
+    /// close it.
+    pub fn finish(self) -> Result<(Report, W), Error> {
+        let Distillation {
+            mut interp,
+            shared,
+            mut source,
+            outcome,
+            identity,
+            prelude_ran,
+        } = self;
+        source.finish();
+        let outcome = match outcome {
+            None => interp.run(&mut source),
+            Some(Outcome::Suspended) => interp.resume(&mut source),
+            Some(done) => done,
+        };
+        let substitutions = interp.font_substitutions().to_vec();
+        let budget_exceeded = interp.budget_exceeded();
+        drop(interp);
+        let sink = Rc::try_unwrap(shared)
+            .ok()
+            .and_then(RefCell::into_inner)
+            .expect("the interpreter has been dropped and with it the only other handle");
+        let pages = sink.pages();
+        let notes = sink.notes().to_vec();
+        let marks_written = sink.marks_written();
+        let marks_ignored = sink.marks_ignored().clone();
+        let params = sink.params().clone();
+        let not_honoured = sink.not_honoured();
+        let downsampled = sink.downsampled();
+        let out = sink.finish()?;
+        Ok((
+            Report {
+                outcome,
+                pages,
+                substitutions,
+                notes,
+                marks_written,
+                marks_ignored,
+                params,
+                not_honoured,
+                downsampled,
+                identity,
+                prelude_ran,
+                budget_exceeded,
+            },
+            out,
+        ))
+    }
 }

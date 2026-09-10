@@ -34,6 +34,11 @@ pub enum VmError {
     UndefinedResult,
     UnmatchedMark,
     VmFull,
+    /// Not a PostScript error: a read from the job's source found no
+    /// byte although more may still arrive. The execution loop turns it
+    /// into a suspension and re-executes the operator once bytes have
+    /// come, so it never reaches a program and is not in [`VmError::ALL`].
+    NeedMore,
 }
 
 impl VmError {
@@ -88,6 +93,7 @@ impl VmError {
             VmError::UndefinedResult => "undefinedresult",
             VmError::UnmatchedMark => "unmatchedmark",
             VmError::VmFull => "VMerror",
+            VmError::NeedMore => "ioerror",
         }
     }
 }
