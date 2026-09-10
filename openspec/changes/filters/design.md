@@ -1,0 +1,114 @@
+# Design: Filters
+
+See proposal.md and the spec deltas. This document fixes where the
+codecs live, how a filter reuses the layer mechanism, how encode
+filters write, how the parameter dictionaries are read, and how a DCT
+image reaches the PDF.
+
+## Context
+
+- `files.rs` already has a decoding-layer entry: `Kind::Layer` reads a
+  base handle through a `Decryptor`, snapshots and rolls back for the
+  incremental-feed path, and `closefile` leaves the base positioned
+  after the consumed bytes. A filter is the same entry with a codec in
+  place of the cipher.
+- `image` acquires samples from a string, a file, or a procedure; a
+  filtered source is just a file the acquisition already reads.
+- The writer has a hand-written DEFLATE encoder; the test inflater in
+  `pdf-out/tests/common/inflate.rs` decodes stored, fixed, and dynamic
+  blocks but is test-only.
+- The `Filter` implicit category exists and answers `false`.
+
+## Decisions
+
+**D1. A `codec` module in `pdf-out`, shared.** Promote the test
+inflater to `pdf_out::codec::inflate` (a `Result`-returning streaming
+inflater) beside the existing `deflate`/`compress`, and add `lzw`
+encode/decode there; `pdf-out` already owns Flate. `ps-vm` depends on
+`pdf-out` (it does not today — check; if that edge is unwanted, put the
+codecs in a tiny new `crates/codec` both depend on — decide by whether
+`ps-vm` → `pdf-out` is acceptable; record). The ASCII, RunLength, and
+SubFile filters are trivial and live in `ps-vm`'s filter module. *Chosen:*
+a new `crates/codec` crate for inflate/deflate/lzw, depended on by both
+`pdf-out` and `ps-vm`, so neither font-of-knowledge crate depends on
+the other; `pdf-out::flate` becomes a re-export. Record the move; every
+compressed golden must stay byte-identical (the encoder is unchanged,
+only relocated).
+
+**D2. Filters are decoding layers.** `files.rs` generalises
+`Kind::Layer { base, LayerState }` to `Kind::Decode { base, Decoder }`
+where `Decoder` is an enum (`Eexec(Decryptor)`, `AsciiHex`, `Ascii85`,
+`RunLength`, `Flate(InflateState)`, `Lzw(LzwState)`, `SubFile{…}`); the
+`eexec` layer becomes the `Eexec` variant, unchanged in behaviour. Each
+decoder is a pull function `next(&mut self, base: &mut dyn FnMut() ->
+Option<u8>) -> Decoded` returning a byte, end-of-data, or need-more;
+the entry's read loop, snapshot, and rollback already handle the base
+positioning and the incremental-feed suspension, so filters inherit
+`currentfile` chaining and piece-boundary safety for free. A filter
+over a string or procedure source opens a base entry over that source
+first (a string becomes a one-shot stream; a procedure becomes the
+image-style data source), then a decode layer over it. *Alternative:* a
+parallel filter stack outside the file table — duplicates the snapshot
+and chaining logic the layer already has.
+
+**D3. Encode filters.** `Kind::Encode { target, Encoder }`: writes to
+the filter go through the encoder to the target file; `closefile`
+flushes the encoder's final bytes (ASCII85 `~>`, Flate's final block,
+LZW's clear-and-EOD). The encoders reuse `codec` for Flate and LZW.
+
+**D4. Parameters.** The optional dictionary operand is read into a
+small typed `FilterParams` per filter: predictors (`Predictor`,
+`Colors`, `BitsPerComponent`, `Columns`) applied after inflate/LZW as a
+row unfilter (PNG predictors 10–15 and the TIFF predictor 2),
+`EarlyChange` (default 1) for LZW, `EODCount`/`EODString` for SubFile,
+`CloseSource`/`CloseTarget` honoured on `closefile`. A bad parameter
+type is `typecheck`, an out-of-range value `rangecheck`.
+
+**D5. DCT.** `DCTDecode` is a decoder that, when read for bytes, raises
+`undefined` (we do not decode JPEG), but is recognised so a
+`DataSource` of `currentfile /DCTDecode filter` in an `image` dict is
+detected: `image` acquisition, seeing a DCT filter at the top of the
+source chain, reads the *encoded* bytes straight from the underlying
+source (bounded by the image's own end-of-data or a `SubFileDecode`
+around it) and records them with a flag. `ImageSpec` gains `encoded:
+Option<Encoded>` where `Encoded::Dct` carries nothing more; the IR
+`Image` keeps the encoded bytes; the dump notes `dct`; the writer emits
+`/Filter /DCTDecode` with the bytes verbatim instead of Flate. Raw
+images are unchanged. *Alternative:* decode JPEG to samples — a codec
+we do not want in-process and the charter defers with rasterisation;
+passthrough is what a distiller does anyway.
+
+**D6. The Filter category** lists the twelve names; `resourceforall`
+enumerates them; `findresource` returns the key (there is no object to
+return, as with the other implicit categories).
+
+**D7. Corpus.** `corpus/unit/filters/`: each decode filter read to
+end-of-data with `readstring`; a chain; each encode-then-decode round
+trip; Flate and LZW with a PNG predictor and a TIFF predictor;
+SubFileDecode by count and by string; the `currentfile … filter … exec`
+idiom; the `Filter` category status; a `DCTDecode` image passthrough
+with a tiny hand-built baseline JPEG (generated by a committed helper,
+the project's own). `.ir`/`.pdf` goldens; the DCT one checked by the
+external checker. The private tier re-runs the captured driver job (it
+uses no filters, so it stays a pass) and is the place a future
+LaserWriter 8 harvest, which will, gets tried.
+
+## Risks / Trade-offs
+
+- [A hand-written inflater and LZW are error-prone] → the inflater
+  already exists and is exercised by every compressed golden; LZW gets
+  round-trip proptests and a fixed decode against a known vector; the
+  predictors get row-level unit tests.
+- [The `crates/codec` move churns pdf-out] → mechanical, and the
+  byte-identical golden check catches any behavioural change.
+- [DCT passthrough without validation embeds a malformed JPEG] → the
+  external checker over the corpus DCT golden; a job's own JPEG is the
+  job's problem, as with any passthrough.
+- [Filters over the incremental feed] → they inherit the layer's
+  snapshot/rollback; a chunked test over a filtered `currentfile` job
+  confirms it.
+
+## Open Questions
+
+- Whether `ReusableStreamDecode` is worth adding for jobs that rewind a
+  filtered source; not seen yet, deferred.
