@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: false
+% expect-output: /ASCII85Decode
+% expect-output: 13
+% expect-output: 6
+% Scenario: the Filter category is resident. A standard filter has
+% status 0 and size 0, an unknown name is absent, findresource returns
+% the key, and resourceforall enumerates the thirteen standard names,
+% six of them encoders. An interpreter may list further filters of its
+% own, so the enumeration is counted against the standard names.
+% Expect: true 0 0, false, /ASCII85Decode, 13, 6.
+/FlateDecode /Filter resourcestatus = = =
+/NoSuch /Filter resourcestatus =
+/ASCII85Decode /Filter findresource ==
+/standard 13 dict def
+[ /ASCIIHexDecode /ASCII85Decode /RunLengthDecode /FlateDecode /LZWDecode
+  /SubFileDecode /DCTDecode /ASCIIHexEncode /ASCII85Encode /RunLengthEncode
+  /FlateEncode /LZWEncode /NullEncode ] { standard exch true put } forall
+0 (*) { cvn standard exch known { 1 add } if } 32 string /Filter resourceforall =
+0 (*Encode) { cvn standard exch known { 1 add } if } 32 string /Filter resourceforall =

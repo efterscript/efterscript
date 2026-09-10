@@ -61,8 +61,23 @@ pub(crate) enum Implicit {
 /// 1, 2 (loaded through a FontSet, definable by hand), 3, and 42.
 pub(crate) const FONT_TYPES: [i32; 5] = [0, 1, 2, 3, 42];
 pub(crate) const FMAP_TYPES: [i32; 1] = [9];
-/// No filters exist yet, so the category is empty until they do.
-pub(crate) const FILTERS: [&str; 0] = [];
+/// The filters `filter` accepts, sorted: the six decode filters and the
+/// DCT placeholder, and the six encode filters.
+pub(crate) const FILTERS: [&str; 13] = [
+    "ASCII85Decode",
+    "ASCII85Encode",
+    "ASCIIHexDecode",
+    "ASCIIHexEncode",
+    "DCTDecode",
+    "FlateDecode",
+    "FlateEncode",
+    "LZWDecode",
+    "LZWEncode",
+    "NullEncode",
+    "RunLengthDecode",
+    "RunLengthEncode",
+    "SubFileDecode",
+];
 /// The families the colour boundary carries, sorted.
 pub(crate) const COLOR_SPACE_FAMILIES: [&str; 6] = [
     "DeviceCMYK",
@@ -460,6 +475,17 @@ fn resourceforall(i: &mut Interp) -> Result<(), VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implicit_tables_are_sorted() {
+        assert!(FILTERS.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            COLOR_SPACE_FAMILIES
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+        );
+        assert!(CATEGORIES.windows(2).all(|pair| pair[0] < pair[1]));
+    }
 
     #[test]
     fn templates_glob() {

@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: FD,5.EHPu*CER),Dg-(AAoDn~>
+% expect-output: the quick brown fox
+% Scenario: ASCII85Encode over standard output writes five digits per
+% four bytes, one digit more than the bytes of a final partial group
+% (the last three bytes give four digits), and closefile ends the data
+% with `~>`; the same text read through ASCII85Decode gives the bytes
+% back. The first group: `the ` is 0x74686520 = 1953064224, which in
+% base 85 is 37 11 12 21 13, that is `FD,5.`. The parentheses in the
+% text are escaped in the string below.
+% Expect: the base-85 text, then the decoded bytes.
+(%stdout) (w) file /ASCII85Encode filter
+dup (the quick brown fox) writestring closefile
+(\n) print
+(FD,5.EHPu*CER\),Dg-\(AAoDn~>) /ASCII85Decode filter
+100 string readstring pop =

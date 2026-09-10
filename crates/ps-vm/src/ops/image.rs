@@ -10,13 +10,24 @@
 //! rotation, and interleaves the planes at the end (8-bit samples only;
 //! packed depths are `limitcheck`). The backend receives complete rows
 //! only: a source that runs dry truncates the image to the rows it
-//! delivered.
+//! delivered. A file source that is a decode filter is read through its
+//! end-of-data marker once the samples are in, so a program that put
+//! its data inline after `image` continues after the marker.
+//!
+//! A file source whose filter is `DCTDecode` is not read for samples
+//! (the interpreter decodes no JPEG): the encoded bytes are read from
+//! the file under the filter, as far as the stream's own end-of-image
+//! marker or the source's end, and handed on flagged as encoded, the
+//! dictionary's dimensions and depth describing the samples a decoder
+//! would produce.
 
 use crate::error::VmError;
-use crate::graphics::{ImageSpec, SpaceSpec};
+use crate::graphics::{Encoded, ImageSpec, SpaceSpec};
 use crate::interp::{Frame, Interp, LoopFrame};
-use crate::object::{Object, Type};
+use crate::jpeg::{MarkerWalker, Walk};
+use crate::object::{Access, Handle, Object, Type};
 use crate::ops::array::{bytes, items};
+use crate::ops::file::{drain_to_marker, file_operand};
 use crate::ops::graphics::read_matrix;
 
 /// Sample data being collected for one image.
@@ -190,6 +201,7 @@ pub(crate) fn colorimage(i: &mut Interp) -> Result<(), VmError> {
         matrix,
         interpolate: false,
         is_mask: false,
+        encoded: None,
     };
     let acquisition = if multi {
         ImageAcquisition::planar(spec, sources.clone())?
@@ -224,6 +236,15 @@ fn acquire(
     }
     match kinds[0] {
         0 | 1 => {
+            if let Some(base) = encoded_source(i, &acquisition, sources)? {
+                let data = read_encoded(i, base)?;
+                drain_to_marker(i, sources[0])?;
+                acquisition.spec.encoded = Some(Encoded::Dct);
+                acquisition.needed = data.len();
+                acquisition.data = data;
+                drop_operands(i, operands)?;
+                return finish(i, acquisition);
+            }
             for &source in sources {
                 let data = if source.ty() == Type::String {
                     bytes(i, source)?
@@ -243,6 +264,9 @@ fn acquire(
                         filled += got;
                     }
                     buffer.truncate(filled);
+                    // A decode filter is read through its end-of-data
+                    // marker, so the program resumes after the data.
+                    drain_to_marker(i, source)?;
                     buffer
                 };
                 acquisition.feed(&data);
@@ -258,6 +282,46 @@ fn acquire(
             }))
         }
     }
+}
+
+/// The file under a `DCTDecode` filter when the one source is such a
+/// filter and the image takes samples (a mask cannot be DCT-encoded),
+/// so the encoded bytes are read from there instead.
+fn encoded_source(
+    i: &mut Interp,
+    acquisition: &ImageAcquisition,
+    sources: &[Object],
+) -> Result<Option<Handle>, VmError> {
+    let [source] = sources else {
+        return Ok(None);
+    };
+    if source.ty() != Type::File || acquisition.is_planar() || acquisition.spec.is_mask {
+        return Ok(None);
+    }
+    let handle = file_operand(*source, Access::ReadOnly)?;
+    let files = i.mem.files();
+    if !files.is_dct_layer(handle) {
+        return Ok(None);
+    }
+    Ok(files.layer_base(handle))
+}
+
+/// The JPEG stream at `base`'s position, through its end-of-image
+/// marker; a stream cut short by the source's end is what was read. A
+/// byte that breaks the marker structure is `ioerror`.
+fn read_encoded(i: &mut Interp, base: Handle) -> Result<Vec<u8>, VmError> {
+    let mut walker = MarkerWalker::new();
+    let mut data = Vec::new();
+    let mut byte = [0u8; 1];
+    while i.mem.files_mut().read(base, &mut byte)? == 1 {
+        data.push(byte[0]);
+        match walker.push(byte[0]) {
+            Ok(Walk::More) => {}
+            Ok(Walk::End) => break,
+            Err(_) => return Err(VmError::IoError),
+        }
+    }
+    Ok(data)
 }
 
 fn drop_operands(i: &mut Interp, count: usize) -> Result<(), VmError> {
@@ -380,6 +444,7 @@ fn from_operands(i: &mut Interp, is_mask: bool) -> Result<(ImageSpec, Object), V
             matrix,
             interpolate: false,
             is_mask,
+            encoded: None,
         },
         source,
     ))
@@ -433,6 +498,7 @@ fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<(ImageSpec, 
             matrix,
             interpolate,
             is_mask,
+            encoded: None,
         },
         source,
     ))
@@ -453,6 +519,7 @@ mod tests {
             matrix: Matrix::IDENTITY,
             interpolate: false,
             is_mask: false,
+            encoded: None,
         }
     }
 

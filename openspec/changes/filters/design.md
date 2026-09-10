@@ -112,3 +112,334 @@ LaserWriter 8 harvest, which will, gets tried.
 
 - Whether `ReusableStreamDecode` is worth adding for jobs that rewind a
   filtered source; not seen yet, deferred.
+
+## Implementation notes
+
+Recorded where the code departs from, or pins down, the text above.
+Part 1 covered tasks 1 and 2 (the codec crate, the decode filters, the
+parameters, the category); part 2 the encode filters, the DCT
+passthrough, and the verification (tasks 3 to 5).
+
+- **D1, the codec crate as built.** `crates/codec` (no dependencies,
+  `#![forbid(unsafe_code)]`, in the wasm audit's crate list) holds
+  `deflate` (the encoder moved from `pdf-out/src/flate.rs` unchanged,
+  `compress` and `adler32` made public, its tests moved with it),
+  `inflate`, `lzw`, and `predictor`. `pdf-out/src/flate.rs` is now a
+  one-line `pub(crate) use codec::deflate::compress`, and the test-side
+  `pdf-out/tests/common/inflate.rs` delegates to `codec::inflate` with
+  every error turned into a panic, so the structural tests and
+  `remelt`'s (which include that file) read as before; `remelt` gained
+  `codec` as a dev-dependency for that include. Every pre-existing golden
+  is byte-identical after the move (`difftest run` 200 of 200, none
+  rewritten).
+- **The inflater.** `codec::inflate::Inflater` is a state machine fed
+  one byte at a time (`push(byte, &mut out) -> Result<Status, Error>`,
+  `Status::Done` once the Adler-32 trailer is read): header, block
+  header, stored, the dynamic header's three tables, symbols read bit
+  by bit through the canonical code's counts so a word can straddle
+  input bytes, length and distance extras, a 32 KB ring window, the
+  running checksum. `Error` names the violation (header, block type,
+  stored length, code lengths, code, distance, checksum, truncated,
+  trailing). `inflate`, `block_kinds`, and `decode_symbols` are the
+  whole-buffer conveniences the encoder's tests use.
+- **LZW.** `codec::lzw::Decoder` reads 9- to 12-bit codes packed
+  most-significant bit first, clear 256, end 257, first code 258,
+  widening after an entry is defined when `next + EarlyChange ≥ 2^width`
+  and never past 12 bits; an entry is defined only while the table has
+  room. `encode` mirrors that: after writing a code it applies the same
+  test to the count *before* defining its own entry, because the
+  encoder defines one entry ahead of the decoder; a full table writes a
+  clear code. Tests: the PDF specification's worked example (ISO
+  32000-1 §7.4.4.2) byte for byte, a 256-literal stream whose width
+  grows after 254 codes under early change and 255 without (packed by
+  an independent bit packer in the test), a clear in mid-stream, the
+  string-being-defined case, a table that fills, and round-trip
+  proptests for both settings.
+- **Predictors.** `codec::predictor::Predictor::new(predictor, colors,
+  bpc, columns)` is `None` for 1, the TIFF differencer for 2, and the
+  PNG unfilter for 10–15 (the per-row tag decides, so the five values
+  behave alike); `push` collects a row and emits it unfiltered, `flush`
+  passes a partial last row through as it is. TIFF handles 1, 2, 4, 8,
+  and 16 bits per component; PNG looks back `ceil(colors × bpc / 8)`
+  bytes. Parameter errors map to `rangecheck` in the operator.
+- **D2 as built: decoders push, layers pull.** `files.rs` has
+  `Kind::Decode(Layer)` with `Layer { base, decoder: Decoder, pending,
+  ended, raw, lookahead, close_source }`, and `crates/ps-vm/src/
+  decoders.rs` holds the `Decoder` enum (`Eexec`, `AsciiHex`,
+  `Ascii85`, `RunLength`, `Flate`, `Lzw`, `SubFile`, `Dct`). The
+  contract is push-style rather than the pull function D2 sketched:
+  `push(byte, &mut out) -> Result<Fed, VmError>` with `Fed::More`,
+  `Fed::End` (the byte completed the marker), or `Fed::EndBefore` (the
+  byte and everything fed since the last decoded byte belong to the
+  base — the cipher's hex form ending at a foreign byte), and
+  `finish(&mut out)` when the base ends. The layer's `layer_byte` hands
+  out `pending` first, else feeds one base byte. A decoder holds
+  partial state (a hex nibble, a base-85 group, an inflater mid-symbol)
+  instead of reading ahead and giving back, so a base that fails a read
+  with `NeedMore` leaves the decoder exactly where the next attempt
+  continues; on the operator path `rollback` restores the whole `Layer`
+  (cloned by `guard`, the inflater's window included) together with the
+  base, on the scanner path nothing is undone and the decoder simply
+  continues. The `eexec` layer is the `Eexec` variant with the same
+  behaviour as before (form decided from four held bytes, four plain
+  bytes skipped, the base bytes behind a peeked byte returned on close;
+  `tests/eexec.rs` unchanged) — the one visible difference is that a
+  hex pair split by a piece boundary is kept in the decoder rather than
+  handed back to the base and re-read, which no test observes.
+- **Sources.** A file source is the base itself (read access checked,
+  `ioerror` if closed). A string source is copied into a `Bytes` stream
+  entry (`FileTable::open_bytes`) at `filter` time — a later change to
+  the string is not seen. A procedure source is a `Kind::Procedure`
+  entry (`FileTable::open_procedure`): its reads come from a buffer the
+  interpreter fills, and an empty buffer that is not exhausted fails the
+  read with `NeedMore`, the same failure a growing job source gives,
+  while the table notes which entry starved. The execution loop's three
+  `NeedMore` sites (an operator's read, the scanner's, a loop step's)
+  ask `take_wanted_procedure` before suspending: if a procedure entry
+  starved, a `LoopFrame::FilterData { body, handle }` frame runs the
+  procedure once and feeds the string it leaves (`feed_procedure`; an
+  empty string ends the source; not a string is `typecheck`), and the
+  reader — the re-queued operator, or the scanner that kept its partial
+  token — tries again. So a procedure runs exactly when its bytes are
+  wanted, as `image`'s data procedure does, and a procedure that itself
+  reads the job's source suspends and resumes inside that. *Cost:* an
+  operator re-reads what it had each time the procedure runs, as it
+  does across pieces.
+- **Operand order (the `filter` signature of PLRM3 §8.2, checked
+  against the spec delta's scenarios).** The name is on top; the
+  parameter dictionary, when present, is directly under it; the source
+  is under that. `SubFileDecode`
+  also accepts `source count string /SubFileDecode filter`, taken only
+  when a string sits under the name with an integer under it and a
+  source under that, so `(x) /SubFileDecode filter` alone reads as a
+  bare sub-file passing everything. Every filter accepts the dictionary,
+  `CloseSource` being read for all of them; keys a filter does not use
+  are ignored; `DCTDecode`'s `ColorTransform` is checked (integer 0 or
+  1) and dropped.
+- **End-of-data and closing.** Reading past the marker returns end of
+  data; the base stays where the marker ended. Three places read a
+  filter through its marker on the program's behalf, so the scanner
+  under it resumes after the data: the `closefile` operator on a filter
+  not yet at its end; `image`/`imagemask`/`colorimage` once a file
+  source that is a filter has delivered its samples; and the end of a
+  filter executed by `exec`, which also closes it. Each walks down a
+  chain — the inner filter's end does not consume the outer filter's
+  marker, so `… /ASCII85Decode filter /FlateDecode filter cvx exec`
+  leaves `~>` to be read by the walk. A sub-file with no marker of its
+  own (empty string, count 0) and the DCT placeholder are left where
+  they are; the cipher layer keeps its own close rule. A read that
+  starves mid-drain suspends and is retried like any other. This is a
+  behavioural choice, not a PLRM statement, recorded here: the common
+  driver idioms put more program after the marker and rely on it.
+- **`FileTable` API added.** `open_bytes`, `open_procedure`,
+  `open_decoder(base, decoder, close_source)` (`open_layer` is the
+  `eexec` case), `is_filter`, `is_dct_layer` (for part 4's image
+  detection; `layer_base` reaches the source), `ends_at_marker`,
+  `take_wanted_procedure`, `feed_procedure`. `close` on a layer opened
+  with `CloseSource` closes its base.
+- **D4 as built.** `ops/filter.rs` reads the dictionary into `Params`
+  with the standard defaults (`Predictor` 1, `Colors` 1,
+  `BitsPerComponent` 8, `Columns` 1, `EarlyChange` 1, `EODCount` 0,
+  `EODString` empty, `CloseSource` false); a wrong type is `typecheck`,
+  `Predictor` outside {1, 2, 10–15}, `Colors`/`Columns` under 1,
+  `BitsPerComponent` outside {1, 2, 4, 8, 16}, `EarlyChange` outside
+  {0, 1}, a negative `EODCount`, or `ColorTransform` outside {0, 1} is
+  `rangecheck`. `CloseTarget` and the record length came with the
+  encoders (below).
+- **D6, thirteen names, not twelve.** The category lists the six decode
+  filters, `DCTDecode`, and the six encode filters — thirteen, since the
+  spec delta names seven decoders including `DCTDecode`; D6's "twelve"
+  miscounted. `FILTERS` in `ops/resource.rs` is the sorted table and a
+  test checks the order. The encode names are recognised by `filter`
+  and build `Kind::Encode` entries (below).
+- **D7, the corpus.** `corpus/unit/filters/`: the hex `readstring`
+  scenario, the chain, the unknown name, `typecheck` operands, each
+  decoder read to its end, both predictors, sub-file by count and by
+  string, `currentfile … cvx exec`, `currentfile … closefile` with the
+  scanner resuming, the category, and `hex-image.ps`, whose IR and PDF
+  goldens are byte-identical to `graphics/gray-image`'s. Files whose
+  inline data ends in a bare `>` bound the section with the structuring
+  comments `%%BeginData: n ASCII Lines` / `%%EndData`, which the parse
+  survey now steps over (bytes or lines) as it steps over `StartData`;
+  the interpreter sees comments. The encoded data in the files was
+  produced with `codec` itself. `crates/ps-vm/tests/filters.rs` checks
+  the base's position after every decoder's marker, the string,
+  procedure, and file sources, chaining, `CloseSource`, and the
+  parameter errors; `tests/chunked.rs` splits a job with an executed
+  chain, a filtered image, a closed filter, and a procedure source that
+  reads the job at every byte.
+- **D3 as built: encode entries.** `files.rs` has `Kind::Encode(Writer)`
+  with `Writer { target, encoder: Encoder, close_target }`, opened by
+  `FileTable::open_encoder(target, encoder, close_target)` (`ioerror`
+  if the target is not open). A write to the entry runs the bytes
+  through the encoder and writes everything it emits to the target,
+  which must accept it all (`ioerror` otherwise, and `ioerror` once the
+  target is closed); `flush` writes what the encoder can emit short of
+  ending the data and flushes the target; `close` writes the encoder's
+  final bytes and marker, then closes the target when `CloseTarget` was
+  true. Reading an encode entry is `ioerror` (it has no source). The
+  entry never grows, so the snapshot machinery ignores it. The `filter`
+  operator builds it for the six encode names with the same operand
+  order as the decode side — `target [dict] /Name filter` — the target
+  checked for write access (`invalidaccess` for a read-only file,
+  `typecheck` for a non-file, `ioerror` if closed), and returns a file
+  object with unlimited access. `Params` gained `CloseTarget` (a
+  boolean, `typecheck` otherwise; default false) and reads `EarlyChange`
+  for `LZWEncode`. `RunLengthEncode` requires its record length as an
+  integer directly under the name, the dictionary under that (`target
+  [dict] length /RunLengthEncode filter`, PLRM3 §3.13.3): a missing
+  integer is `typecheck`, a negative one `rangecheck`. This was found by
+  the oracle tier — the reference interpreter rejected part 2's first
+  corpus file, which omitted the integer, with `typecheck` — and
+  confirmed black-box: it accepts the dictionary before the integer and
+  not after, and with record length 4 no run of its output crosses a
+  record boundary.
+- **The encoders (`crates/ps-vm/src/encoders.rs`).** `Encoder::push
+  (bytes, &mut out)`, `flush`, `finish`. The choices the formats leave
+  open: `ASCIIHexEncode` writes upper-case digits in lines of at most 64
+  digits and ends with `>`; `ASCII85Encode` writes five digits per four
+  bytes, `z` for a zero group, one digit more than the byte count for a
+  final partial group, lines of at most 75 digits (fifteen groups), and
+  ends with `~>` — 64 and 75 are the lengths other interpreters were
+  observed to use, so their output and ours agree byte for byte;
+  `RunLengthEncode` makes a repeat run of two or more equal bytes and a
+  literal run of the rest, each at most 128 bytes, decides a run only
+  when the next byte or the 128 limit ends it (so a write emits what is
+  decided and keeps the rest), and with a record length decides
+  everything at each record's end; `flushfile` on it emits the pending
+  runs without the end byte, which the format allows; `FlateEncode` and
+  `LZWEncode` buffer the whole input and encode it on `closefile` with
+  `codec::deflate::compress` and `codec::lzw::encode` (whole-buffer
+  encoders; a flush emits nothing); `NullEncode` passes bytes through
+  and adds no marker. Unit tests decode every encoder's output through
+  the matching decoder and check the decoder ends exactly at the last
+  byte.
+- **D5 as built: DCT passthrough.** `ImageSpec` gained `encoded:
+  Option<Encoded>` with `pub enum Encoded { Dct }` (exported from
+  `ps_vm`); every literal in the workspace names it. In `ops/image.rs`,
+  `acquire` first asks `encoded_source`: the one source is a file, the
+  image is not planar and not a mask, and `FileTable::is_dct_layer`
+  holds for it — then the bytes are read from `layer_base` (the entry
+  under the DCT layer, whatever it is: the job, a hexadecimal layer over
+  the job, a string source) by `read_encoded`, which feeds each byte to
+  `ps_vm::jpeg::MarkerWalker` and stops after the byte that completes
+  the end-of-image marker; the source's end first stops it with what
+  was read (a truncated stream is passed through truncated); a byte the
+  marker structure does not allow is `ioerror` attributed to the image
+  operator. The bytes become the acquisition's data with `needed` set to
+  their length, so `finish` trims nothing, and `spec.encoded` is
+  `Some(Dct)`; width, height, depth, and colour space come from the
+  dictionary as for any image. `drain_to_marker` then runs as for any
+  file source: the DCT layer has no marker (`has_marker` is false, so it
+  is left alone and never read — reading it stays `undefined`), and the
+  walk continues to the layer under it, so a hexadecimal layer is read
+  through its `>` and the scanner resumes after it. A mask, a planar
+  `colorimage`, or a `readstring` over a DCT filter reads the layer and
+  gets `undefined` as before. Reads go through `FileTable::read` a byte
+  at a time, so a stream over the growing job source is snapshot and
+  rolled back like any other read; `tests/chunked.rs` splits a job with
+  a hexadecimal-wrapped stream and a raw one at every byte.
+- **The marker walker (`crates/ps-vm/src/jpeg.rs`, public).** A state
+  machine over the marker structure of ITU-T T.81 Annex B: a `0xFF`
+  prefix (fill bytes repeat it), a code; standalone codes (SOI, RSTn,
+  TEM) have no length, every other one a two-byte length counting
+  itself whose segment is skipped unread; after a start-of-scan segment
+  the entropy-coded data runs until a `0xFF` followed by anything but a
+  stuffed `0x00`, a restart code, or another `0xFF`, and that marker is
+  handled like any other (a second scan or a DNL continues the walk);
+  the end-of-image code ends it. `Malformed` names a byte the structure
+  does not allow: a non-`0xFF` where a marker prefix is expected, a
+  stuffed zero outside a scan, a length under two. `stream_len` is the
+  whole-buffer convenience. Nothing inside a segment is interpreted, so
+  the walk bounds baseline and progressive streams alike.
+- **IR and writer.** `ps_graphics::Image` carries the flag in its
+  `spec`; the ir/1 dump appends ` dct` to the image line after the
+  optional ` interpolate` (the header comment lists it). `pdf_out::
+  Filter` gained `Dct`, which declares `/Filter /DCTDecode` and writes
+  the data as given; `remelt::resources::write_image` chooses it when
+  `spec.encoded` is `Some(Dct)` and Flate otherwise, the dictionary
+  unchanged (`Width`, `Height`, `BitsPerComponent`, `ColorSpace`, the
+  `Decode` array when not the default). `downsample::Class::of` answers
+  `Err("DCT-encoded")` for such an image, so `reduce` returns
+  `Unsupported` and the report notes `image n (DCT-encoded) is not
+  downsampled` when downsampling is on; off, it is `Unchanged` as
+  before. The test support's `decoded` passes a `DCTDecode` stream's
+  data through.
+- **The tiny-JPEG helper (`xtask/src/tiny_jpeg.rs`, `cargo xtask
+  tiny-jpeg [--corpus]`).** The project's own baseline JPEG for the
+  trivial case: 16 by 16 grey samples as four flat 8 by 8 blocks of
+  greys 128, 160, 224, 160 (raster order). A flat block's forward DCT
+  is its DC coefficient alone, eight times the level-shifted value, so
+  with a quantisation table of ones each block codes as one DC
+  difference and an end-of-block: differences 0, 256, 512, −512 in
+  categories 0, 9, 10, 10. The DC Huffman table holds just the
+  categories used, coded 0, 10, 110 (never all ones), the AC table the
+  end-of-block symbol alone; the 42 data bits pad to six bytes, the
+  fifth 0xFF and stuffed, so the corpus stream exercises stuffing.
+  Segments: SOI, DQT, SOF0, DHT ×2, SOS, data, EOI; 149 bytes. Tests
+  pin the stream to the hand-derived bytes, check the segment lengths
+  add up and `ps_vm::jpeg::stream_len` ends exactly at its last byte
+  (and at the same place with bytes after it), and — the drift check of
+  `corpus_fonts.rs` — that `corpus/unit/filters/dct-image.ps` equals
+  `--corpus`'s output and that `corpus/golden/pdf/filters/dct-image.pdf`
+  holds the stream verbatim under `/Filter /DCTDecode`. The corpus file
+  embeds the stream as hexadecimal under `currentfile /ASCIIHexDecode
+  filter /DCTDecode filter` inside a `%%BeginData` section, so the file
+  stays text; its IR golden reads `img 0 16x16 bpc=8 cs=0 decode=[0 1]
+  149 bytes dct`.
+- **D7, the corpus, part 2.** Six encode files under `corpus/unit/
+  filters/`, each writing through the encoder to standard output so the
+  encoded text is the expectation and hand-checkable: `asciihex-encode`
+  and `ascii85-encode` (the first group worked out in the comments),
+  and for the binary encoders a chain through `ASCIIHexEncode` with
+  `CloseTarget` closing down to it — `runlength-encode` (record lengths
+  0 and 4), `lzw-encode` (twenty-one nine-bit codes, `EarlyChange` 0
+  giving the same bytes), `flate-encode` (header and Adler-32 checked
+  by hand; the block's bytes are this encoder's, so the file carries
+  `% oracle: skip` — a Flate encoding is not unique across encoders),
+  and `null-encode`. Each file then decodes the same text through the
+  matching decode filter, which is the round trip the language offers
+  without a writable string. `filter-category.ps` now counts the
+  enumeration against the thirteen standard names rather than in total:
+  the oracle tier showed the reference lists 42 members (18 encoders)
+  of its own, so a total is implementation-defined and the scenario is
+  that the standard names are enumerated. `crates/ps-vm/tests/
+  filters.rs` has a target the program can read back (a capability
+  whose `(t) (w) file` appends to a buffer and `(t) (r) file` reads it)
+  and checks every encoder round-trips through its decoder, the exact
+  hexadecimal and base-85 texts, `CloseTarget` both ways and down a
+  chain, the record-length operand, a closed or read-only or non-file
+  target, `LZWEncode` with `EarlyChange 0` decoding only with
+  `EarlyChange 0` over 300 bytes (enough codes for the width to grow),
+  and the DCT scenarios in `tests/graphics.rs`: passthrough through a
+  hexadecimal layer with the program resuming after `>`, a truncated
+  stream, a malformed one (`ioerror` in `image`), a mask over a DCT
+  source (`undefined`).
+- **The base-85 finding.** `(Gb"0Ec) /ASCII85Decode filter 100 string
+  readstring` is `ioerror` by the format: the six digits are a full
+  group and a final partial group of one digit, and a partial group
+  needs at least two digits to carry a byte (an encoder writes one
+  digit more than the bytes it has). `Gb"0E` alone decodes to `78 9C ED
+  CB`, a zlib header, so the input is a truncated base-85 wrapping of a
+  Flate stream; the decoder is right and `tests/filters.rs` pins the
+  reason.
+- **Oracle tier, filters corpus** (`difftest oracle --profile default
+  corpus/unit/filters`): 23 files, 22 pass, 0 fail, 1 skipped
+  (`flate-encode`); output same for every compared file, including
+  `dct-image` (the reference renders the passed-through stream the same
+  as our document) and `hex-image`. Two files failed the first run and
+  were fixed as recorded above: `runlength-encode` (our operand parsing
+  lacked the record length) and `filter-category` (a total count). The
+  private tier's captured driver job with its host prelude (`difftest
+  oracle --prelude`): pass, output same, one page each, as before this
+  change.
+- **Gates, final.** `cargo test --workspace` 983 passed, 0 failed, 3
+  ignored (from part 1's 963); clippy clean on all targets; fmt clean;
+  `difftest run` 207 of 207 (184 pre-existing, every one byte-identical,
+  the 16 part-1 filter files, the six encode files, and `dct-image`; the
+  only goldens added since part 1 are `dct-image`'s); `parse-survival`
+  207 files, 0 failed; `fuzz-round` 2 600 programs (1 300 core, 1 300
+  graphics), 0 failed; `lint-strings` clean (825 files); `check-wasm`
+  passes; the `--no-default-features` build passes; `openspec validate
+  filters` valid; the oracle tier over the filters corpus and the
+  private tier's captured job as recorded above.

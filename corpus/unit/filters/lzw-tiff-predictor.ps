@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: 1
+% expect-output: 2
+% expect-output: 3
+% expect-output: 4
+% expect-output: 5
+% expect-output: 5
+% expect-output: 5
+% expect-output: 5
+% Scenario: LZW with the TIFF predictor. Two rows of four 8-bit samples
+% were stored as differences from the sample before; predictor 2 adds
+% them back up row by row.
+% Expect: 1 2 3 4 5 5 5 5.
+<800060401028020D01> << /Predictor 2 /Columns 4 >> /LZWDecode filter
+100 string readstring pop { = } forall

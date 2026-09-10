@@ -13,8 +13,8 @@ use std::rc::Rc;
 
 use common::{Call, Log, Recording};
 use ps_vm::{
-    Bounds, Config, FontRef, Glyph, GraphicsBackend, ImageSpec, Interp, Io, LineCap, LineJoin,
-    Matrix, Object, Outcome, Point, Rect, Seg, SliceSource, SpaceSpec, Stream, VmError,
+    Bounds, Config, Encoded, FontRef, Glyph, GraphicsBackend, ImageSpec, Interp, Io, LineCap,
+    LineJoin, Matrix, Object, Outcome, Point, Rect, Seg, SliceSource, SpaceSpec, Stream, VmError,
 };
 
 // --- helpers -----------------------------------------------------------------
@@ -613,6 +613,72 @@ fn image_data_from_strings_and_files() {
     assert_eq!(run.output, "(jklmn)\n");
 }
 
+/// A marker stream the walker accepts: SOI, a segment, a scan with a
+/// stuffed byte, EOI.
+const DCT_HEX: &str = "FFD8FFDB0004AABBFFDA0003011234FF00FFD9";
+
+fn dct_bytes() -> Vec<u8> {
+    (0..DCT_HEX.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&DCT_HEX[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_dct_source_is_passed_through_encoded() {
+    // The stream comes through a hexadecimal layer over the job; the
+    // image reads it to its end-of-image marker, the hexadecimal layer
+    // is read through its `>`, and the program continues.
+    let program = format!(
+        "<< /ImageType 1 /Width 16 /Height 16 /BitsPerComponent 8 \
+         /ImageMatrix [16 0 0 -16 0 16] \
+         /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> image\n\
+         {DCT_HEX}>\n(after) ="
+    );
+    let run = exec(&program);
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "after\n");
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(spec.encoded, Some(Encoded::Dct));
+    assert_eq!(
+        (spec.width, spec.height, spec.bits_per_component),
+        (16, 16, 8)
+    );
+    assert_eq!(spec.color_space, Some(SpaceSpec::DeviceGray));
+    assert_eq!(*data, dct_bytes());
+}
+
+#[test]
+fn a_truncated_dct_source_ends_at_the_source_end_and_a_broken_one_is_ioerror() {
+    let run = exec(
+        "<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] \
+         /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> image\n\
+         FFD8FFDB0004AA",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(spec.encoded, Some(Encoded::Dct));
+    assert_eq!(*data, [0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x04, 0xAA]);
+    let run = exec(
+        "<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] \
+         /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> image\n\
+         FFD8FFDB0004AABB12",
+    );
+    assert_eq!(run.error(), Some("ioerror"));
+    assert_eq!(run.command(), Some("image"));
+    // A mask cannot be DCT-encoded: its samples are read, which the
+    // placeholder decoder refuses.
+    let run = exec(
+        "<< /ImageType 1 /Width 8 /Height 1 /BitsPerComponent 1 /ImageMatrix [8 0 0 1 0 0] \
+         /Decode [0 1] /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> imagemask\n\
+         FFD8FFD9>",
+    );
+    assert_eq!(run.error(), Some("undefined"));
+    // A plain image's spec is not flagged.
+    let run = exec("2 2 8 [2 0 0 2 0 0] <00112233> image");
+    assert_eq!(image_calls(&run)[0].0.encoded, None);
+}
+
 #[test]
 fn image_dictionary_form() {
     let run = exec(
@@ -633,6 +699,7 @@ fn image_dictionary_form() {
             matrix: Matrix([4.0, 0.0, 0.0, -2.0, 0.0, 2.0]),
             interpolate: true,
             is_mask: false,
+            encoded: None,
         }
     );
     assert_eq!(data, b"12345678");

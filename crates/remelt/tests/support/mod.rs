@@ -58,12 +58,14 @@ pub fn media_box(pdf: &Pdf, index: usize) -> Vec<f64> {
     }
 }
 
-/// A stream's data after undoing its filter.
+/// A stream's data after undoing its filter; a DCT stream is its own
+/// data, passed through as it was.
 pub fn decoded(stream: &Value) -> Vec<u8> {
     let data = stream.stream_data();
     match stream.get("Filter") {
         None => data.to_vec(),
         Some(Value::Name(name)) if name == b"FlateDecode" => inflate(data),
+        Some(Value::Name(name)) if name == b"DCTDecode" => data.to_vec(),
         Some(other) => panic!("unexpected filter {other:?}"),
     }
 }

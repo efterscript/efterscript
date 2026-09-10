@@ -251,6 +251,19 @@ pub struct ImageSpec {
     pub matrix: Matrix,
     pub interpolate: bool,
     pub is_mask: bool,
+    /// The data is not raw samples but their encoding in the named
+    /// format, passed through as read; the dimensions and depth still
+    /// describe the decoded samples.
+    pub encoded: Option<Encoded>,
+}
+
+/// An encoding an image's data is carried in rather than decoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Encoded {
+    /// The `DCTDecode` filter's format: a baseline or progressive JPEG
+    /// stream of ITU-T T.81, from its start-of-image marker through its
+    /// end-of-image marker.
+    Dct,
 }
 
 impl ImageSpec {
@@ -898,6 +911,7 @@ mod tests {
             matrix: Matrix::IDENTITY,
             interpolate: false,
             is_mask: true,
+            encoded: None,
         };
         assert_eq!(spec.row_bytes(), Some(2));
         assert_eq!(spec.data_len(), Some(6));
@@ -910,6 +924,7 @@ mod tests {
             matrix: Matrix::IDENTITY,
             interpolate: false,
             is_mask: false,
+            encoded: None,
         };
         assert_eq!(rgb.row_bytes(), Some(9));
         assert_eq!(rgb.data_len(), Some(18));

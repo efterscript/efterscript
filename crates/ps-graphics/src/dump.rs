@@ -11,7 +11,7 @@
 //! origin <llx> <lly>                  only when the media box origin is not 0 0
 //! resources:
 //! cs <n> <space>                      one per colour space, in index order
-//! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate]
+//! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate] [dct]
 //! font <n> <BaseName> [diff=[<code> /<name>…]]
 //! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
 //! font <n> embedded <type1|truetype|cff> <FontName> glyphs=<count> enc=[<code> /<name>…]
@@ -90,7 +90,7 @@
 //! its value.
 
 use ps_fonts::ProgramKind;
-use ps_vm::{Bounds, Glyph, ImageSpec, MarkValue, Matrix, Seg, SpaceSpec};
+use ps_vm::{Bounds, Encoded, Glyph, ImageSpec, MarkValue, Matrix, Seg, SpaceSpec};
 
 use crate::ir::{
     Annot, DocMark, FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget, Op, Page,
@@ -320,6 +320,7 @@ fn image(index: usize, image: &Image) -> String {
         bits_per_component,
         decode,
         interpolate,
+        encoded,
         ..
     } = &image.spec;
     let cs = match image.color_space {
@@ -333,6 +334,9 @@ fn image(index: usize, image: &Image) -> String {
     );
     if *interpolate {
         line.push_str(" interpolate");
+    }
+    if let Some(Encoded::Dct) = encoded {
+        line.push_str(" dct");
     }
     line
 }
@@ -640,6 +644,43 @@ mod tests {
         assert_eq!(ps_string(b"Spot"), "(Spot)");
         assert_eq!(ps_string(b"a(b)\\"), "(a\\(b\\)\\\\)");
         assert_eq!(ps_string(b"\x01\xff"), "(\\001\\377)");
+    }
+
+    #[test]
+    fn an_encoded_image_is_flagged() {
+        use crate::ir::SpaceRef;
+        let spec = ImageSpec {
+            width: 16,
+            height: 16,
+            bits_per_component: 8,
+            color_space: Some(SpaceSpec::DeviceGray),
+            decode: vec![0.0, 1.0],
+            matrix: Matrix::IDENTITY,
+            interpolate: true,
+            is_mask: false,
+            encoded: Some(Encoded::Dct),
+        };
+        let img = Image {
+            spec,
+            color_space: Some(SpaceRef(0)),
+            data: vec![0xFF, 0xD8, 0xFF, 0xD9],
+        };
+        assert_eq!(
+            image(3, &img),
+            "img 3 16x16 bpc=8 cs=0 decode=[0 1] 4 bytes interpolate dct"
+        );
+        let plain = Image {
+            spec: ImageSpec {
+                interpolate: false,
+                encoded: None,
+                ..img.spec.clone()
+            },
+            ..img
+        };
+        assert_eq!(
+            image(0, &plain),
+            "img 0 16x16 bpc=8 cs=0 decode=[0 1] 4 bytes"
+        );
     }
 
     #[test]

@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: a--b--
+% expect-output: abc
+% expect-output: abcdef
+% Scenario: SubFileDecode by count. With a count and a string the data
+% runs through the count-th occurrence of the string, inclusive; with a
+% count and an empty string exactly that many bytes pass; with neither,
+% everything does. The positional and dictionary forms agree.
+% Expect: a--b--, abc, abcdef.
+(a--b--c--) 2 (--) /SubFileDecode filter 100 string readstring pop =
+(abcdef) << /EODCount 3 /EODString () >> /SubFileDecode filter
+100 string readstring pop =
+(abcdef) 0 () /SubFileDecode filter 100 string readstring pop =

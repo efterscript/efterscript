@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: abcxxx!
+% Scenario: RunLengthDecode read to its end. A length byte below 128
+% copies that many plus one bytes, one above 128 repeats the next byte
+% 257 minus the length times, and 128 ends the data; the bytes after it
+% are not read.
+% Expect: false, abcxxx!.
+<02616263FE7800218009> /RunLengthDecode filter 100 string readstring = =

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: Hi ~
+% Scenario: a hexadecimal decode over a string. readstring takes the
+% bytes up to the `>` end-of-data and reports false, the string being
+% longer than the data.
+% Expect: false, then the four decoded bytes.
+(4869207e>) /ASCIIHexDecode filter 100 string readstring = =

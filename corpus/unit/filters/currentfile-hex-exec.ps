@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: from hex
+% expect-output: 5
+% expect-output: after
+% Scenario: a program section in hexadecimal, executed through a filter
+% over currentfile. The filter's end-of-data ends exec, and the scanner
+% resumes after the `>`.
+% Expect: from hex, 5, after.
+%%BeginData: 2 ASCII Lines
+currentfile /ASCIIHexDecode filter cvx exec
+2866726F6D2068657829203D202F7820352064656620>
+%%EndData
+x = (after) =

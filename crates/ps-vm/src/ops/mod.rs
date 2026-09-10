@@ -123,6 +123,7 @@ pub mod distiller;
 pub mod embedded;
 pub mod errors;
 pub mod file;
+pub mod filter;
 pub mod font;
 pub mod fontset;
 pub mod graphics;
@@ -164,6 +165,7 @@ const MODULES: &[&[OpEntry]] = &[
     status::SERVER_OPS,
     screen::OPS,
     graphics::LATER_OPS,
+    filter::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -264,6 +266,7 @@ mod tests {
         assert!(find("cexec", Visibility::Public).is_some());
         assert!(find("pathforall", Visibility::Graphics).is_some());
         assert!(find("colorimage", Visibility::Graphics).is_some());
+        assert!(find("filter", Visibility::Public).is_some());
     }
 
     #[test]

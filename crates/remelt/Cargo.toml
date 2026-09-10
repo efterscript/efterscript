@@ -23,4 +23,5 @@ ps-fonts.workspace = true
 pdf-out.workspace = true
 
 [dev-dependencies]
+codec.workspace = true
 proptest = "1.11.0"

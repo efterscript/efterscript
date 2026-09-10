@@ -117,6 +117,14 @@ pub enum LoopFrame {
         body: Object,
         acquisition: Box<ImageAcquisition>,
     },
+    /// A filter whose source is a procedure needs bytes: the body runs
+    /// once and the string it leaves is fed to the file entry `handle`,
+    /// after which the read that wanted the bytes runs again.
+    FilterData {
+        body: Object,
+        handle: Handle,
+        started: bool,
+    },
     /// A `show`-family operator or `stringwidth` in progress: glyphs are
     /// consumed one step at a time so a Type 3 glyph procedure or a
     /// `kshow` procedure can run as frames above it.
@@ -157,6 +165,7 @@ impl LoopFrame {
             | LoopFrame::Loop { body }
             | LoopFrame::ForAll { body, .. }
             | LoopFrame::ImageData { body, .. }
+            | LoopFrame::FilterData { body, .. }
             | LoopFrame::ResourceForAll { body, .. } => *body,
             LoopFrame::PathForAll { procs, .. } => procs[0],
             LoopFrame::Show(frame) => frame.procedure(),

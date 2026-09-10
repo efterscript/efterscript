@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% oracle: skip the Flate encoding of an input is not unique across encoders; the printed bytes are this encoder's
+% expect-output: 78012BC94855282CCD4CCE56482ACA2FCF5348CBAF0000478E0734>
+% expect-output: the quick brown fox
+% Scenario: FlateEncode writing through an ASCIIHexEncode filter to
+% standard output: the zlib header 78 01 (deflate, 32K window, no
+% dictionary, 0x7801 a multiple of 31), one final block (the low bits of
+% 2B are 011: last block, fixed Huffman codes) holding the nineteen
+% bytes, and the big-endian Adler-32 of the input, 478E0734. The text
+% read back through FlateDecode gives the bytes.
+% Expect: the hexadecimal text, then the decoded bytes.
+(%stdout) (w) file /ASCIIHexEncode filter
+<< /CloseTarget true >> /FlateEncode filter
+dup (the quick brown fox) writestring closefile
+(\n) print
+<78012BC94855282CCD4CCE56482ACA2FCF5348CBAF0000478E0734> /FlateDecode filter
+100 string readstring pop =

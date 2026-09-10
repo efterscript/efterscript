@@ -12,6 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+codec.workspace = true
 
 [dev-dependencies]
 proptest = "1.11.0"

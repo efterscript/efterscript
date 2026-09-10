@@ -8,6 +8,7 @@ members = [
     "crates/ps-graphics",
     "crates/ps-fonts",
     "crates/pdf-out",
+    "crates/codec",
     "crates/remelt",
     "crates/platen",
     "crates/efterscript-cli",
@@ -34,5 +35,6 @@ ps-vm = { path = "crates/ps-vm", default-features = false }
 ps-graphics = { path = "crates/ps-graphics", default-features = false }
 ps-fonts = { path = "crates/ps-fonts", default-features = false }
 pdf-out = { path = "crates/pdf-out" }
+codec = { path = "crates/codec" }
 remelt = { path = "crates/remelt", default-features = false }
 platen = { path = "crates/platen" }

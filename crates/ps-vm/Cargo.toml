@@ -18,6 +18,7 @@ default = ["resident-outlines"]
 resident-outlines = ["ps-fonts/resident-outlines"]
 
 [dependencies]
+codec.workspace = true
 ps-fonts.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: /typecheck
+% expect-output: /typecheck
+% expect-error: typecheck
+% Scenario: unsuitable operands are typecheck: a number as the source,
+% a parameter of the wrong type, and a literal array, which is not a
+% data-source procedure.
+% Expect: /typecheck twice, then an uncaught typecheck.
+{ 42 /ASCIIHexDecode filter } stopped pop $error /errorname get ==
+{ (x) << /Predictor (a) >> /FlateDecode filter } stopped pop
+  $error /errorname get ==
+[ 1 2 ] /ASCII85Decode filter

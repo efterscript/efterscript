@@ -198,12 +198,44 @@ impl Interp {
                         }
                     };
                     let command = slot.object().unwrap_or(Object::null());
+                    // A filter executed to its end is read through its
+                    // end-of-data marker and closed, so the file under it
+                    // continues after the marker.
+                    let filter = match slot {
+                        SourceSlot::File { object, .. }
+                            if self.mem.files().is_filter(object.handle().expect("file")) =>
+                        {
+                            Some(*object)
+                        }
+                        _ => None,
+                    };
                     match result {
                         Ok(Scan::Token { object, .. }) => self.execute(object, true),
                         Ok(Scan::End) => {
-                            self.pop_frame();
+                            match filter.map(|file| ops::file::drain_to_marker(self, file)) {
+                                None | Some(Ok(())) => {
+                                    if let Some(file) = filter {
+                                        let _ = self.mem.close_file(file);
+                                    }
+                                    self.pop_frame();
+                                }
+                                Some(Err(VmError::NeedMore)) => {
+                                    self.mem.files_mut().rollback();
+                                    if !self.run_wanted_procedure() {
+                                        self.starved = true;
+                                    }
+                                }
+                                Some(Err(e)) => {
+                                    self.pop_frame();
+                                    self.raise(e, command);
+                                }
+                            }
                         }
-                        Ok(Scan::NeedMore) => break Outcome::Suspended,
+                        Ok(Scan::NeedMore) => {
+                            if !self.run_wanted_procedure() {
+                                break Outcome::Suspended;
+                            }
+                        }
                         Err(e) => self.raise(scan_error(e.kind), command),
                     }
                 }
@@ -354,7 +386,25 @@ impl Interp {
             self.steps -= 1;
         }
         self.push_frame_unchecked(Frame::Object(operator));
-        self.starved = true;
+        if !self.run_wanted_procedure() {
+            self.starved = true;
+        }
+    }
+
+    /// If the read that found no byte was from a filter over a
+    /// procedure source, arranges for the procedure to run and deliver
+    /// its next string before the reader tries again, and returns true;
+    /// otherwise the bytes come from outside and the run must suspend.
+    fn run_wanted_procedure(&mut self) -> bool {
+        let Some((handle, body)) = self.mem.files_mut().take_wanted_procedure() else {
+            return false;
+        };
+        self.push_frame_unchecked(Frame::Loop(LoopFrame::FilterData {
+            body,
+            handle,
+            started: false,
+        }));
+        true
     }
 
     fn call_operator(&mut self, index: u32) -> Result<(), VmError> {
@@ -534,6 +584,38 @@ impl Interp {
                     Err(e) => LoopStep::Failed(e, "forall"),
                 }
             }
+            LoopFrame::FilterData {
+                body,
+                handle,
+                started,
+            } => {
+                if !*started {
+                    *started = true;
+                    LoopStep::Iterate {
+                        body: *body,
+                        values: NO_VALUES,
+                        operator: "filter",
+                    }
+                } else {
+                    // The procedure left its next string on the operand
+                    // stack; an empty one ends the source.
+                    match self.ostack.pop() {
+                        None => LoopStep::Failed(VmError::StackUnderflow, "filter"),
+                        Some(chunk) if chunk.ty() == Type::String => {
+                            let readable = chunk.access().unwrap_or_default() <= Access::ReadOnly;
+                            match self.mem.string(chunk).filter(|_| readable) {
+                                None => LoopStep::Failed(VmError::InvalidAccess, "filter"),
+                                Some(bytes) => {
+                                    let bytes = bytes.to_vec();
+                                    self.mem.files_mut().feed_procedure(*handle, &bytes);
+                                    LoopStep::Finished
+                                }
+                            }
+                        }
+                        Some(_) => LoopStep::Failed(VmError::TypeCheck, "filter"),
+                    }
+                }
+            }
             LoopFrame::ImageData { body, acquisition } => {
                 let operator = acquisition.operator_name();
                 if !acquisition.started {
@@ -594,7 +676,9 @@ impl Interp {
             LoopStep::Failed(VmError::NeedMore, _) => {
                 // The frame stays and takes the step again on resume.
                 self.mem.files_mut().rollback();
-                self.starved = true;
+                if !self.run_wanted_procedure() {
+                    self.starved = true;
+                }
             }
             LoopStep::Failed(e, operator) => {
                 self.pop_frame();

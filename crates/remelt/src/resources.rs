@@ -8,7 +8,8 @@
 //! is the captured PostScript source verbatim, unchecked against the
 //! calculator subset. Images are image XObjects `/Imn` (§8.9.5) with their
 //! samples in the Flate container, reduced first when the downsampling
-//! parameters say so (see `downsample`).
+//! parameters say so (see `downsample`); an image that arrived as a DCT
+//! stream keeps its bytes verbatim under the `DCTDecode` filter.
 //!
 //! The objects a page needs are written before the page itself, so a
 //! `Resources` dictionary only ever refers to objects already in the file.
@@ -19,7 +20,7 @@ use std::io::Write;
 
 use pdf_out::{DictBuilder, Document, Filter, Ref, Val};
 use ps_graphics::{FontIndex, Image, ImageRef, Page, SpaceRef};
-use ps_vm::{ImageSpec, SpaceSpec};
+use ps_vm::{Encoded, ImageSpec, SpaceSpec};
 
 use crate::content::Recode;
 use crate::downsample::{self, Outcome, Tally};
@@ -207,8 +208,12 @@ fn write_image<W: Write>(
     space: Option<&Form>,
 ) -> Result<Ref, pdf_out::Error> {
     let spec = &image.spec;
+    let filter = match spec.encoded {
+        Some(Encoded::Dct) => Filter::Dct,
+        None => Filter::Flate,
+    };
     let xobject = doc.alloc();
-    doc.write_stream(xobject, Filter::Flate, &image.data, |d| {
+    doc.write_stream(xobject, filter, &image.data, |d| {
         d.key("Type").name("XObject");
         d.key("Subtype").name("Image");
         d.key("Width").int(i64::from(spec.width));
@@ -245,7 +250,8 @@ impl Objects {
     /// Writes the function streams, image XObjects, and font objects
     /// `page` needs (fonts the document already has are reused through
     /// `fonts`); `filter` applies to the text streams (image data is
-    /// always Flate). Images are downsampled as `params` asks, counted
+    /// Flate, or the DCT stream it arrived as). Images are downsampled
+    /// as `params` asks, counted
     /// in `tally`; text the fonts could not carry and images left as
     /// they are for a reason are noted in `notes`.
     pub(crate) fn write<W: Write>(
@@ -390,6 +396,7 @@ mod tests {
             matrix: Matrix::IDENTITY,
             interpolate: false,
             is_mask: false,
+            encoded: None,
         }
     }
 

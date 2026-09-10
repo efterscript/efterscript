@@ -9,7 +9,7 @@ mod support;
 use std::io::{self, Write};
 
 use ps_graphics::{FillRule, IrOp, Op, Page, PageSink};
-use ps_vm::{Bounds, ImageSpec, LineCap, LineJoin, Matrix, Point, Seg, SpaceSpec};
+use ps_vm::{Bounds, Encoded, ImageSpec, LineCap, LineJoin, Matrix, Point, Seg, SpaceSpec};
 use remelt::{Error, Options, PdfSink};
 use support::{
     Value, array, check, color_space, content, decoded, distil_pages, kids, media_box, number,
@@ -64,6 +64,7 @@ fn image_spec(space: Option<SpaceSpec>, bits: u8, decode: Vec<f32>) -> ImageSpec
         matrix: Matrix::IDENTITY,
         interpolate: false,
         is_mask: space.is_none(),
+        encoded: None,
     }
 }
 
@@ -333,6 +334,34 @@ fn a_gray_image_becomes_an_xobject_painted_through_its_matrix() {
     assert_eq!(decoded(xobject), [0x00, 0x55, 0xAA, 0xFF]);
     // Device spaces interned for an image still declare no resource.
     assert!(resources(&pdf, 0).get("ColorSpace").is_none());
+}
+
+#[test]
+fn a_dct_image_keeps_its_stream_under_the_dct_filter() {
+    let mut page = Page::new(LETTER);
+    let spec = ImageSpec {
+        encoded: Some(Encoded::Dct),
+        ..image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0])
+    };
+    // Not a real stream: the writer passes the bytes on unread.
+    let stream = [0xFF, 0xD8, 0x00, 0xFF, 0xD9];
+    let image = page.resources.add_image(&spec, &stream);
+    page.ops = vec![IrOp::Image {
+        image,
+        matrix: Matrix([50.0, 0.0, 0.0, 50.0, 100.0, 100.0]),
+    }]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let xobject = xobject(&pdf, 0, "Im0");
+    assert_eq!(xobject.get("Filter").unwrap().as_name(), b"DCTDecode");
+    assert_eq!(xobject.get("Length").unwrap().as_int(), 5);
+    assert_eq!(xobject.stream_data(), stream);
+    assert_eq!(decoded(xobject), stream);
+    assert_eq!(xobject.get("Width").unwrap().as_int(), 2);
+    assert_eq!(xobject.get("BitsPerComponent").unwrap().as_int(), 8);
+    assert_eq!(xobject.get("ColorSpace").unwrap().as_name(), b"DeviceGray");
 }
 
 #[test]

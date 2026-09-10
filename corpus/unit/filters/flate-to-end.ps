@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: hello
+% Scenario: FlateDecode read to its end. The stream is the RFC 1950
+% container around one fixed-Huffman block; the data ends with the
+% container's checksum.
+% Expect: false, hello.
+<7801CB48CDC9C90700062C0215> /FlateDecode filter 100 string readstring = =

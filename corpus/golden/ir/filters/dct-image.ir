@@ -1,0 +1,10 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 DeviceGray
+img 0 16x16 bpc=8 cs=0 decode=[0 1] 149 bytes dct
+ops:
+Do img 0 200 0 0 200 100 100

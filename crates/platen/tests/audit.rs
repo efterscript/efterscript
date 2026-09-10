@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 const CRATES: &[&str] = &[
+    "codec",
     "ps-vm",
     "ps-fonts",
     "ps-graphics",

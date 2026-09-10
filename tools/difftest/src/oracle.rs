@@ -2308,6 +2308,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert_eq!(
             skipped,
             [
+                "corpus/unit/filters/flate-encode.ps",
                 "corpus/unit/graphics/no-backend-moveto-undefined.ps",
                 "corpus/unit/graphics/no-backend-names-unknown.ps",
                 "corpus/unit/interp/deep-recursion.ps",

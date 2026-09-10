@@ -6,9 +6,9 @@
 //! source finds no byte with more to come is undone and run again once
 //! bytes have arrived — `readline`, `readstring`, `readhexstring`,
 //! `read`, `token`, `eexec` in both forms, image data from
-//! `currentfile`, and `closefile` on it. Every program is split at every
-//! point and compared with its unsplit run: outcome, output, error
-//! output, and the backend's log.
+//! `currentfile`, `closefile` on it, and a filter chain over it. Every
+//! program is split at every point and compared with its unsplit run:
+//! outcome, output, error output, and the backend's log.
 
 mod common;
 
@@ -169,6 +169,62 @@ fn errors_and_closefile() {
     let run = agrees_at_every_split(b"currentfile 3 string readline ab");
     assert_eq!(run.outcome, Outcome::Ok);
     agrees_at_every_split(b"(open string");
+}
+
+#[test]
+fn filters_over_the_job_source() {
+    // A program section wrapped in Flate then base-85, executed through
+    // the chain; then image samples through a hexadecimal filter; then a
+    // filter read by readstring and closed, the close consuming its
+    // marker.
+    let mut program = b"currentfile /ASCII85Decode filter /FlateDecode filter cvx exec\n\
+                        GQH8a/'?1<8BXRU8_$eE<<*\"Ie-)r~>\n(after) =\n\
+                        4 2 8 [4 0 0 -2 0 2] currentfile /ASCIIHexDecode filter image\n\
+                        30313233 34353637>\n(next) =\n\
+                        /readit { currentfile /ASCII85Decode filter dup 5 string readstring pop = closefile } def\n\
+                        readit\nBOu!rDZ~>\n(last) ="
+        .to_vec();
+    let run = agrees_at_every_split(&program);
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "from flate\nafter\nnext\nhello\nlast\n");
+    assert!(run.log.contains("Image"), "{}", run.log);
+    // A filter over a procedure that itself reads the job's source, four
+    // bytes at a time: the data follows the outer read, and the `>` the
+    // second delivery brings ends the filter.
+    program.clear();
+    program.extend_from_slice(
+        b"{ currentfile 4 string readstring pop } /ASCIIHexDecode filter \
+          3 string readstring 414243> pop = (tail) =",
+    );
+    let run = agrees_at_every_split(&program);
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "ABC\ntail\n");
+}
+
+#[test]
+fn a_dct_image_over_the_job_source() {
+    // The stream's bytes are read from under the DCT filter as far as
+    // its end-of-image marker: through a hexadecimal layer whose `>` is
+    // then consumed, and straight from the job, where the scanner
+    // resumes right after the marker.
+    let dict =
+        b"<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] ";
+    let mut program = dict.to_vec();
+    program.extend_from_slice(
+        b"/DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> image\n\
+          FFD8FFDB0004AABBFFDA0003011234FF00FFD9>\n(hex) =\n",
+    );
+    program.extend_from_slice(dict);
+    program.extend_from_slice(b"/DataSource currentfile /DCTDecode filter >> image\n");
+    program.extend_from_slice(&[
+        0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x04, 0xAA, 0xBB, 0xFF, 0xDA, 0x00, 0x03, 0x01, 0x12, 0x34,
+        0xFF, 0x00, 0xFF, 0xD9,
+    ]);
+    program.extend_from_slice(b"(raw) =\n");
+    let run = agrees_at_every_split(&program);
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "hex\nraw\n");
+    assert_eq!(run.log.matches("Image(ImageSpec").count(), 2, "{}", run.log);
 }
 
 /// The budget sees one execution of an operator that had to wait: a

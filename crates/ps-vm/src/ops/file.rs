@@ -36,7 +36,7 @@ op_table! { OPS {
     "eexec" => eexec;
 }}
 
-fn file_operand(object: Object, needed: Access) -> Result<Handle, VmError> {
+pub(crate) fn file_operand(object: Object, needed: Access) -> Result<Handle, VmError> {
     if object.ty() != Type::File {
         return Err(VmError::TypeCheck);
     }
@@ -80,15 +80,39 @@ fn file(i: &mut Interp) -> Result<(), VmError> {
     i.push(object)
 }
 
+/// `closefile` on a decode filter that has not reached its end-of-data
+/// marker first reads through the marker, so the source continues after
+/// it — the `currentfile … filter … closefile` idiom relies on that.
 fn closefile(i: &mut Interp) -> Result<(), VmError> {
     let file = i.peek(0)?;
     if file.ty() == Type::File && file.eq(i.run_file()) {
         i.discard_run_input();
     } else {
+        if file.ty() == Type::File {
+            drain_to_marker(i, file)?;
+        }
         i.mem.close_file(file)?;
     }
     i.pop()?;
     Ok(())
+}
+
+/// Reads a decode filter to its end-of-data marker if it has one and has
+/// not reached it, and then each filter under it in a chain likewise, so
+/// the source at the bottom continues after the last marker; anything
+/// else is left alone.
+pub(crate) fn drain_to_marker(i: &mut Interp, file: Object) -> Result<(), VmError> {
+    let mut handle = file.handle().expect("file is composite");
+    loop {
+        if i.mem.files().ends_at_marker(handle) {
+            let mut sink = [0u8; 256];
+            while i.mem.files_mut().read(handle, &mut sink)? > 0 {}
+        }
+        match i.mem.files().layer_base(handle) {
+            Some(base) if i.mem.files().is_filter(base) => handle = base,
+            _ => return Ok(()),
+        }
+    }
 }
 
 fn read(i: &mut Interp) -> Result<(), VmError> {

@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: hello
+% Scenario: chained filters. A base-85 wrapping of a Flate encoding of
+% `hello`, read through an ASCII85Decode filter feeding a FlateDecode
+% filter, yields the plain bytes.
+% Expect: hello.
+(GQGuYc,n'4!!XtU'`~>) /ASCII85Decode filter /FlateDecode filter
+100 string readstring pop =

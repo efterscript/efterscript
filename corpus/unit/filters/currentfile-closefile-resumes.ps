@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: hello
+% expect-output: after
+% Scenario: closefile on a filter over currentfile. The procedure reads
+% five bytes through the filter and closes it; the close consumes the
+% rest of the data through the `~>` marker, so the scanner resumes at
+% the line after it.
+% Expect: hello, after. The structuring comments bound the data for
+% tools that scan the file rather than run it.
+/readit { currentfile /ASCII85Decode filter dup 5 string readstring pop = closefile } def
+%%BeginData: 2 ASCII Lines
+readit
+BOu!rDZ~>
+%%EndData
+(after) =

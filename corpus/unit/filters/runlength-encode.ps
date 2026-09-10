@@ -1,0 +1,28 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: F761046263646566FE6780>
+% expect-output: FD61FD61FF610162630364656667FF6780>
+% expect-output: aaaaaaaaaabcdefggg
+% Scenario: RunLengthEncode writing through an ASCIIHexEncode filter to
+% standard output, so the binary runs show as text. With record length
+% 0 (no records) ten `a` become a repeat run (length byte 257 - 10 =
+% 247, then the byte), `bcdef` a literal run (length byte 5 - 1, then
+% the bytes), the final `ggg` a repeat run (257 - 3 = 254), and
+% closefile ends the data with 128. With record length 4 no run crosses
+% a record boundary: `aaaa`, `aaaa`, `aa` + `bc`, `defg`, `gg`.
+% CloseTarget on the run-length filter closes the hexadecimal filter
+% with it, which ends its own data with `>`. The first text decoded
+% gives the bytes back.
+% Expect: the two hexadecimal texts, then the decoded bytes.
+(%stdout) (w) file /ASCIIHexEncode filter
+<< /CloseTarget true >> 0 /RunLengthEncode filter
+dup (aaaaaaaaaabcdefggg) writestring closefile
+(\n) print
+(%stdout) (w) file /ASCIIHexEncode filter
+<< /CloseTarget true >> 4 /RunLengthEncode filter
+dup (aaaaaaaaaabcdefggg) writestring closefile
+(\n) print
+<F761046263646566FE6780> /RunLengthDecode filter
+100 string readstring pop =

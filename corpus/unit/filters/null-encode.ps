@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: the quick brown fox
+% expect-output: still open
+% Scenario: NullEncode passes what is written through to its target
+% unchanged and adds no marker; closefile without CloseTarget leaves
+% the target open.
+% Expect: the bytes, then a line written to the target afterwards.
+(%stdout) (w) file /NullEncode filter
+dup (the quick brown fox\n) writestring closefile
+(still open) =

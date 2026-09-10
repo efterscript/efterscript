@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: hello
+% expect-output: true
+% Scenario: LZWDecode read to its end. Nine-bit codes: a clear code,
+% the five literals, and the end-of-data code. EarlyChange 0 reads the
+% same short stream, whose width never changes.
+% Expect: false, hello, true.
+<801A0CA6C361BE02> /LZWDecode filter 100 string readstring = =
+<801A0CA6C361BE02> << /EarlyChange 0 >> /LZWDecode filter
+100 string readstring pop (hello) eq =

@@ -12,12 +12,15 @@
 //!
 //! Independently useful as a PostScript scripting engine.
 
+mod decoders;
 pub mod dict;
+mod encoders;
 pub mod error;
 pub mod files;
 pub mod graphics;
 pub mod interp;
 pub mod io;
+pub mod jpeg;
 pub mod memory;
 pub mod names;
 pub mod object;
@@ -29,8 +32,8 @@ pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
-    Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
+    Bounds, Encoded, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap,
+    LineJoin, MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,

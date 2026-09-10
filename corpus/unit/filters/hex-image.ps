@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a 2x2 gray image whose samples come through an ASCIIHexDecode
+% filter over currentfile. The image reads the filter through its `>`,
+% so showpage on the next line runs; the page is the same as
+% graphics/gray-image.ps produces from an inline string.
+100 100 translate
+50 50 scale
+%%BeginData: 2 ASCII Lines
+2 2 8 [2 0 0 -2 0 2] currentfile /ASCIIHexDecode filter image
+0055AAFF>
+%%EndData
+showpage

@@ -12,10 +12,11 @@
 //! subsampled from each block's top-left sample; one-bit masks and
 //! one-bit gray are subsampled whatever the type asks. The matrix maps
 //! the unit square and stays as it is; only the sample grid changes.
-//! Indexed images and every other depth are left alone.
+//! Indexed images, every other depth, and images carried in an encoded
+//! form (a DCT stream has no samples to average) are left alone.
 
 use ps_graphics::{Image, IrOp, Page};
-use ps_vm::{ImageSpec, Matrix, SpaceSpec};
+use ps_vm::{Encoded, ImageSpec, Matrix, SpaceSpec};
 
 use crate::params::{Downsample, Params};
 
@@ -28,10 +29,13 @@ pub(crate) enum Class {
 }
 
 impl Class {
-    /// The class of `spec`, or why it has none: an Indexed space has no
-    /// component to average, and only eight-bit samples and one-bit
-    /// masks or gray are reduced.
+    /// The class of `spec`, or why it has none: encoded data has no
+    /// samples to reduce, an Indexed space has no component to average,
+    /// and only eight-bit samples and one-bit masks or gray are reduced.
     fn of(spec: &ImageSpec) -> Result<Class, String> {
+        if let Some(Encoded::Dct) = spec.encoded {
+            return Err("DCT-encoded".to_string());
+        }
         if matches!(spec.color_space, Some(SpaceSpec::Indexed { .. })) {
             return Err("Indexed".to_string());
         }
@@ -266,6 +270,7 @@ mod tests {
             decode: [0.0, 1.0].repeat(components),
             matrix: Matrix::IDENTITY,
             interpolate: false,
+            encoded: None,
         }
     }
 

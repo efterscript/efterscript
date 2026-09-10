@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: 74686520717569636B2062726F776E20666F78>
+% expect-output: the quick brown fox
+% Scenario: ASCIIHexEncode over standard output writes the hexadecimal
+% form of what is written to it, upper case, and closefile ends the data
+% with `>` without closing the target; the same text read through
+% ASCIIHexDecode gives the bytes back.
+% Expect: the hexadecimal text, then the decoded bytes.
+(%stdout) (w) file /ASCIIHexEncode filter
+dup (the quick brown fox) writestring closefile
+(\n) print
+(74686520717569636B2062726F776E20666F78>) /ASCIIHexDecode filter
+100 string readstring pop =

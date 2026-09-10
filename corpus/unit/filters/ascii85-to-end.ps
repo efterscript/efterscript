@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: hello
+% expect-output: 4
+% expect-output: 0
+% Scenario: ASCII85Decode read to its end. The data ends at `~>`; a
+% partial final group yields one byte fewer than its digit count; `z`
+% stands for four zero bytes; a second read after the end is empty.
+% Expect: false, hello, 4, 0.
+(BOu!rDZ~>) /ASCII85Decode filter 100 string readstring = =
+(z~>) /ASCII85Decode filter dup 100 string readstring pop length =
+100 string readstring pop length =

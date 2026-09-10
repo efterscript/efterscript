@@ -8,17 +8,33 @@
 //! `file` requests. This module must stay free of `std::fs` and every other
 //! host resource.
 //!
-//! An `eexec` layer is an entry that reads another entry — its base —
-//! decrypting as it goes, so the scanner and the read operators use it
-//! like any file while the base's position stays exact: closing the layer
-//! hands any byte it read ahead back to the base.
+//! A decode layer is an entry that reads another entry — its base —
+//! through a [`Decoder`]: the `eexec` cipher or one of the standard
+//! decode filters. The scanner and the read operators use it like any
+//! file while the base's position stays exact: the decoder takes base
+//! bytes one at a time and holds partial state rather than reading
+//! ahead, and closing the cipher layer hands the bytes behind a peeked
+//! but untaken byte back to the base.
+//!
+//! Two further entry kinds serve the `filter` operator's sources: an
+//! in-memory stream over a string's bytes, and a procedure source whose
+//! bytes come from running a program procedure. The table cannot run the
+//! procedure; a read that finds the procedure's buffer empty fails as a
+//! read from a growing source does, and records which procedure is
+//! wanted so the interpreter runs it and feeds the result back.
+//!
+//! An encode entry is the write-side counterpart of a decode layer: the
+//! bytes written to it go through an [`Encoder`] to another entry, its
+//! target, and closing it writes the encoding's final bytes and marker
+//! first.
 
+use std::collections::VecDeque;
 use std::fmt;
 
-use ps_fonts::type1::{Decryptor, EEXEC_KEY, hex_value};
-
+use crate::decoders::{Decoder, Fed};
+use crate::encoders::Encoder;
 use crate::error::VmError;
-use crate::object::Handle;
+use crate::object::{Handle, Object};
 
 /// An embedder-provided byte stream.
 pub trait Stream {
@@ -58,32 +74,110 @@ pub trait FileCapability {
     fn open(&mut self, name: &[u8], mode: &[u8]) -> Result<Box<dyn Stream>, VmError>;
 }
 
-/// The form of an `eexec` section, decided from its first four bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Form {
-    Hex,
-    Binary,
+/// A read-only stream over bytes held in memory: a string source.
+struct Bytes {
+    data: Vec<u8>,
+    at: usize,
 }
 
-/// The decrypting state of a layer: what it has taken from the base to
-/// produce the plain byte it holds in `pushback`, so a close can hand it
-/// back.
+impl Stream for Bytes {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
+        let n = buf.len().min(self.data.len() - self.at);
+        buf[..n].copy_from_slice(&self.data[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+
+    fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+        Err(VmError::IoError)
+    }
+}
+
+/// A source whose bytes a program procedure delivers a string at a time,
+/// an empty string ending it. The buffer holds what was delivered and
+/// not yet read.
+struct Procedure {
+    body: Object,
+    buffer: VecDeque<u8>,
+    exhausted: bool,
+}
+
+impl Stream for Procedure {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
+        if self.buffer.is_empty() && !self.exhausted && !buf.is_empty() {
+            return Err(VmError::NeedMore);
+        }
+        let mut n = 0;
+        while n < buf.len() {
+            let Some(byte) = self.buffer.pop_front() else {
+                break;
+            };
+            buf[n] = byte;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+        Err(VmError::IoError)
+    }
+
+    fn more_may_come(&self) -> bool {
+        !self.exhausted
+    }
+
+    fn unread(&mut self, bytes: &[u8]) {
+        for &byte in bytes.iter().rev() {
+            self.buffer.push_front(byte);
+        }
+    }
+}
+
+/// A decoding entry over a base entry. Everything but `base` and
+/// `close_source` changes as bytes are read, and all of it is what a
+/// snapshot keeps.
+#[derive(Clone)]
 struct Layer {
     base: Handle,
-    cipher: Decryptor,
-    /// Decided when the first byte is needed; `None` until then.
-    form: Option<Form>,
-    /// Leading plain bytes still to discard.
-    skip: u8,
-    /// The base bytes consumed for the byte in `pushback`, and the
-    /// cipher state before them.
+    decoder: Decoder,
+    /// Decoded bytes not yet handed out; the front is next.
+    pending: VecDeque<u8>,
+    /// The decoder reached its end (or the base ended): nothing more is
+    /// read from the base.
+    ended: bool,
+    /// Base bytes fed since the last decoded byte came out.
+    raw: Vec<u8>,
+    /// The base bytes behind the byte most recently handed out, kept
+    /// while that byte sits unconsumed in `pushback`.
     lookahead: Vec<u8>,
-    before: Decryptor,
+    /// Close the base when this entry closes.
+    close_source: bool,
+}
+
+/// An encoding entry writing through to a target entry.
+struct Writer {
+    target: Handle,
+    encoder: Encoder,
+    /// Close the target when this entry closes.
+    close_target: bool,
 }
 
 enum Kind {
     Stream(Box<dyn Stream>),
-    Layer(Layer),
+    Procedure(Procedure),
+    Decode(Layer),
+    Encode(Writer),
+}
+
+impl Kind {
+    /// The stream of a plain or procedure entry.
+    fn stream(&mut self) -> Option<&mut dyn Stream> {
+        match self {
+            Kind::Stream(stream) => Some(stream.as_mut()),
+            Kind::Procedure(procedure) => Some(procedure),
+            Kind::Decode(_) | Kind::Encode(_) => None,
+        }
+    }
 }
 
 // The entry owns the lookahead the scanner may need, so a `readstring` or
@@ -102,18 +196,9 @@ struct Saved {
     handle: Handle,
     pushback: Vec<u8>,
     position: usize,
-    layer: Option<LayerState>,
+    layer: Option<Layer>,
     /// Bytes taken from the stream since the snapshot.
     taken: Vec<u8>,
-}
-
-/// A layer's decrypting state, as saved and restored.
-struct LayerState {
-    cipher: Decryptor,
-    form: Option<Form>,
-    skip: u8,
-    lookahead: Vec<u8>,
-    before: Decryptor,
 }
 
 /// Open and closed file entries. Handles are never reused, so a file object
@@ -122,6 +207,8 @@ struct LayerState {
 pub struct FileTable {
     entries: Vec<Option<Entry>>,
     saved: Vec<Saved>,
+    /// The procedure entry whose empty buffer failed the latest read.
+    wanted: Option<Handle>,
 }
 
 impl fmt::Debug for FileTable {
@@ -162,29 +249,127 @@ impl FileTable {
         self.push(Kind::Stream(stream))
     }
 
+    /// Opens a read-only entry over `data`.
+    pub fn open_bytes(&mut self, data: Vec<u8>) -> Handle {
+        self.push(Kind::Stream(Box::new(Bytes { data, at: 0 })))
+    }
+
+    /// Opens an entry whose bytes `body`, a procedure, delivers when run
+    /// (see [`FileTable::take_wanted_procedure`]).
+    pub fn open_procedure(&mut self, body: Object) -> Handle {
+        self.push(Kind::Procedure(Procedure {
+            body,
+            buffer: VecDeque::new(),
+            exhausted: false,
+        }))
+    }
+
     /// Opens an `eexec` layer reading `base` from its current position;
     /// `ioerror` if `base` is not open.
     pub fn open_layer(&mut self, base: Handle) -> Result<Handle, VmError> {
+        self.open_decoder(base, Decoder::eexec(), false)
+    }
+
+    /// Opens a decode layer reading `base` from its current position;
+    /// `ioerror` if `base` is not open. With `close_source`, closing the
+    /// layer closes `base` too.
+    pub(crate) fn open_decoder(
+        &mut self,
+        base: Handle,
+        decoder: Decoder,
+        close_source: bool,
+    ) -> Result<Handle, VmError> {
         self.entry(base)?;
-        let cipher = Decryptor::new(EEXEC_KEY);
-        Ok(self.push(Kind::Layer(Layer {
+        Ok(self.push(Kind::Decode(Layer {
             base,
-            cipher,
-            form: None,
-            skip: 4,
+            decoder,
+            pending: VecDeque::new(),
+            ended: false,
+            raw: Vec::new(),
             lookahead: Vec::new(),
-            before: cipher,
+            close_source,
         })))
+    }
+
+    /// Opens an encode entry writing through `encoder` to `target`;
+    /// `ioerror` if `target` is not open. With `close_target`, closing
+    /// the entry closes `target` too after the final bytes are written.
+    pub(crate) fn open_encoder(
+        &mut self,
+        target: Handle,
+        encoder: Encoder,
+        close_target: bool,
+    ) -> Result<Handle, VmError> {
+        self.entry(target)?;
+        Ok(self.push(Kind::Encode(Writer {
+            target,
+            encoder,
+            close_target,
+        })))
+    }
+
+    fn layer(&self, handle: Handle) -> Option<&Layer> {
+        match self.entries.get(handle.0 as usize) {
+            Some(Some(Entry {
+                kind: Kind::Decode(layer),
+                ..
+            })) => Some(layer),
+            _ => None,
+        }
     }
 
     /// The base of a layer; `None` for a plain entry or a closed one.
     pub fn layer_base(&self, handle: Handle) -> Option<Handle> {
+        self.layer(handle).map(|layer| layer.base)
+    }
+
+    /// Whether the entry is a decode layer whose decoder is the DCT
+    /// placeholder, so an image reads the encoded bytes from its base.
+    pub fn is_dct_layer(&self, handle: Handle) -> bool {
+        self.layer(handle).is_some_and(|l| l.decoder.is_dct())
+    }
+
+    /// Whether the entry is a filter layer: a decode layer other than
+    /// the `eexec` cipher's.
+    pub fn is_filter(&self, handle: Handle) -> bool {
+        self.layer(handle)
+            .is_some_and(|l| !l.decoder.returns_lookahead())
+    }
+
+    /// Whether closing the entry should first read it to its end: a
+    /// decode layer that has not yet consumed its end-of-data marker,
+    /// so the base continues after the marker.
+    pub fn ends_at_marker(&self, handle: Handle) -> bool {
+        self.layer(handle)
+            .is_some_and(|l| !l.ended && l.decoder.has_marker())
+    }
+
+    /// The procedure entry whose empty buffer failed the latest read,
+    /// with the procedure to run for more; taking it clears the note.
+    pub fn take_wanted_procedure(&mut self) -> Option<(Handle, Object)> {
+        let handle = self.wanted.take()?;
         match self.entries.get(handle.0 as usize) {
             Some(Some(Entry {
-                kind: Kind::Layer(layer),
+                kind: Kind::Procedure(procedure),
                 ..
-            })) => Some(layer.base),
+            })) => Some((handle, procedure.body)),
             _ => None,
+        }
+    }
+
+    /// Delivers the next string of a procedure entry; an empty one ends
+    /// it. A closed entry takes nothing.
+    pub fn feed_procedure(&mut self, handle: Handle, bytes: &[u8]) {
+        if let Some(Some(Entry {
+            kind: Kind::Procedure(procedure),
+            ..
+        })) = self.entries.get_mut(handle.0 as usize)
+        {
+            if bytes.is_empty() {
+                procedure.exhausted = true;
+            } else {
+                procedure.buffer.extend(bytes);
+            }
         }
     }
 
@@ -208,7 +393,11 @@ impl FileTable {
                 ..
             })) => stream.more_may_come(),
             Some(Some(Entry {
-                kind: Kind::Layer(layer),
+                kind: Kind::Procedure(procedure),
+                ..
+            })) => procedure.more_may_come(),
+            Some(Some(Entry {
+                kind: Kind::Decode(layer),
                 ..
             })) => self.may_grow(layer.base),
             _ => false,
@@ -225,14 +414,8 @@ impl FileTable {
             return;
         };
         let layer = match &entry.kind {
-            Kind::Stream(_) => None,
-            Kind::Layer(l) => Some(LayerState {
-                cipher: l.cipher,
-                form: l.form,
-                skip: l.skip,
-                lookahead: l.lookahead.clone(),
-                before: l.before,
-            }),
+            Kind::Stream(_) | Kind::Procedure(_) | Kind::Encode(_) => None,
+            Kind::Decode(layer) => Some(layer.clone()),
         };
         self.saved.push(Saved {
             handle,
@@ -249,6 +432,19 @@ impl FileTable {
         if let Some(saved) = self.saved.iter_mut().find(|s| s.handle == handle) {
             saved.taken.extend_from_slice(bytes);
         }
+    }
+
+    /// A stream read's outcome, noting a procedure entry that starved.
+    fn starving<T>(&mut self, handle: Handle, result: Result<T, VmError>) -> Result<T, VmError> {
+        if let Err(VmError::NeedMore) = result
+            && let Ok(Entry {
+                kind: Kind::Procedure(_),
+                ..
+            }) = self.entry(handle)
+        {
+            self.wanted = Some(handle);
+        }
+        result
     }
 
     /// Forgets the snapshots: the operator that read completed.
@@ -269,21 +465,19 @@ impl FileTable {
             entry.pushback = saved.pushback;
             entry.position = saved.position;
             match (&mut entry.kind, saved.layer) {
-                (Kind::Stream(stream), _) => stream.unread(&saved.taken),
-                (Kind::Layer(layer), Some(saved)) => {
-                    layer.cipher = saved.cipher;
-                    layer.form = saved.form;
-                    layer.skip = saved.skip;
-                    layer.lookahead = saved.lookahead;
-                    layer.before = saved.before;
+                (Kind::Decode(layer), Some(saved)) => *layer = saved,
+                (Kind::Decode(_), None) => {}
+                (kind, _) => {
+                    if let Some(stream) = kind.stream() {
+                        stream.unread(&saved.taken);
+                    }
                 }
-                (Kind::Layer(_), None) => {}
             }
         }
     }
 
-    /// Returns bytes a layer took from its base without producing a
-    /// byte, so a read that must wait for more leaves nothing consumed.
+    /// Returns bytes a layer took from its base that turned out not to
+    /// be its data, so the base reads them next.
     fn give_back(&mut self, base: Handle, raw: &[u8]) -> Result<(), VmError> {
         let entry = self.entry(base)?;
         entry.position -= raw.len();
@@ -297,97 +491,61 @@ impl FileTable {
         Ok((self.read(base, &mut byte)? == 1).then_some(byte[0]))
     }
 
-    /// The next plain byte of the layer at `handle`, decrypted from the
-    /// base; `None` at the end of the section.
+    /// The next decoded byte of the layer at `handle`; `None` at the end
+    /// of its data. A base that must wait fails the read as it would any
+    /// other; the decoder keeps what it was fed, so the next attempt
+    /// continues where this one stopped.
     fn layer_byte(&mut self, handle: Handle) -> Result<Option<u8>, VmError> {
-        let (base, form) = match &self.entry(handle)?.kind {
-            Kind::Layer(layer) => (layer.base, layer.form),
-            Kind::Stream(_) => unreachable!("layer entries only"),
-        };
-        let form = match form {
-            Some(form) => form,
-            None => {
-                let mut first = Vec::with_capacity(4);
-                while first.len() < 4 {
-                    match self.base_byte(base) {
-                        Ok(Some(b)) => first.push(b),
-                        Ok(None) => break,
+        let base = self.layer_base(handle).ok_or(VmError::IoError)?;
+        let mut out = Vec::new();
+        loop {
+            let Kind::Decode(layer) = &mut self.entry(handle)?.kind else {
+                unreachable!("layer entries only");
+            };
+            if let Some(byte) = layer.pending.pop_front() {
+                return Ok(Some(byte));
+            }
+            if layer.ended {
+                return Ok(None);
+            }
+            let byte = self.base_byte(base)?;
+            let Kind::Decode(layer) = &mut self.entry(handle)?.kind else {
+                unreachable!("layer entries only");
+            };
+            let mut foreign = None;
+            let fed = match byte {
+                None => {
+                    layer.decoder.finish(&mut out)?;
+                    Fed::End
+                }
+                Some(byte) => {
+                    if layer.decoder.returns_lookahead() {
+                        layer.raw.push(byte);
+                    }
+                    match layer.decoder.push(byte, &mut out) {
+                        Ok(fed) => fed,
                         Err(e) => {
-                            self.give_back(base, &first)?;
+                            layer.ended = true;
                             return Err(e);
                         }
                     }
                 }
-                let form = if first.len() == 4 && first.iter().all(|&b| hex_value(b).is_some()) {
-                    Form::Hex
-                } else {
-                    Form::Binary
-                };
-                let Kind::Layer(layer) = &mut self.entry(handle)?.kind else {
-                    unreachable!("layer entries only");
-                };
-                layer.form = Some(form);
-                // The four bytes read for the decision are the start of
-                // the section: hand them back so decryption sees them.
-                let base_entry = self.entry(base)?;
-                base_entry.position -= first.len();
-                base_entry.pushback.extend(first.iter().rev());
-                form
-            }
-        };
-        loop {
-            let mut raw = Vec::new();
-            let cipher_byte = match form {
-                Form::Binary => {
-                    let Some(b) = self.base_byte(base)? else {
-                        return Ok(None);
-                    };
-                    raw.push(b);
-                    b
-                }
-                Form::Hex => {
-                    let mut high = None;
-                    loop {
-                        let b = match self.base_byte(base) {
-                            Ok(Some(b)) => b,
-                            Ok(None) => return Ok(None),
-                            Err(e) => {
-                                self.give_back(base, &raw)?;
-                                return Err(e);
-                            }
-                        };
-                        match hex_value(b) {
-                            Some(v) => {
-                                raw.push(b);
-                                match high.take() {
-                                    None => high = Some(v),
-                                    Some(h) => break h << 4 | v,
-                                }
-                            }
-                            None if b.is_ascii_whitespace() => raw.push(b),
-                            None => {
-                                // The section ends at the first byte that
-                                // is neither; it and the whitespace before
-                                // it belong to the base.
-                                raw.push(b);
-                                self.give_back(base, &raw)?;
-                                return Ok(None);
-                            }
-                        }
-                    }
-                }
             };
-            let Kind::Layer(layer) = &mut self.entry(handle)?.kind else {
-                unreachable!("layer entries only");
-            };
-            layer.before = layer.cipher;
-            let plain = layer.cipher.byte(cipher_byte);
-            if layer.skip > 0 {
-                layer.skip -= 1;
-                continue;
+            match fed {
+                Fed::More => {}
+                Fed::End => layer.ended = true,
+                Fed::EndBefore => {
+                    layer.ended = true;
+                    foreign = Some(std::mem::take(&mut layer.raw));
+                }
             }
-            layer.lookahead = raw;
-            return Ok(Some(plain));
+            if !out.is_empty() {
+                layer.lookahead = std::mem::take(&mut layer.raw);
+                layer.pending.extend(out.drain(..));
+            }
+            if let Some(raw) = foreign {
+                self.give_back(base, &raw)?;
+            }
         }
     }
 
@@ -408,9 +566,10 @@ impl FileTable {
             n += 1;
         }
         entry.position += n;
-        if let Kind::Stream(stream) = &mut entry.kind {
-            let got = stream.read(&mut buf[n..])?;
-            entry.position += got;
+        if let Some(stream) = entry.kind.stream() {
+            let result = stream.read(&mut buf[n..]);
+            let got = self.starving(handle, result)?;
+            self.entry(handle)?.position += got;
             if got > 0 {
                 self.note_taken(handle, &buf[n..n + got]);
             }
@@ -424,7 +583,7 @@ impl FileTable {
             n += 1;
             let entry = self.entry(handle)?;
             entry.position += 1;
-            if let Kind::Layer(layer) = &mut entry.kind {
+            if let Kind::Decode(layer) = &mut entry.kind {
                 layer.lookahead.clear();
             }
         }
@@ -438,16 +597,17 @@ impl FileTable {
         if let Some(&byte) = entry.pushback.last() {
             return Ok(Some(byte));
         }
-        let byte = match &mut entry.kind {
-            Kind::Stream(stream) => {
+        let byte = match entry.kind.stream() {
+            Some(stream) => {
                 let mut byte = [0u8; 1];
-                let got = (stream.read(&mut byte)? == 1).then_some(byte[0]);
+                let result = stream.read(&mut byte);
+                let got = (self.starving(handle, result)? == 1).then_some(byte[0]);
                 if got.is_some() {
                     self.note_taken(handle, &byte);
                 }
                 got
             }
-            Kind::Layer(_) => self.layer_byte(handle)?,
+            None => self.layer_byte(handle)?,
         };
         if let Some(byte) = byte {
             self.entry(handle)?.pushback.push(byte);
@@ -462,7 +622,7 @@ impl FileTable {
             let entry = self.entry(handle)?;
             entry.pushback.pop();
             entry.position += 1;
-            if let Kind::Layer(layer) = &mut entry.kind {
+            if let Kind::Decode(layer) = &mut entry.kind {
                 layer.lookahead.clear();
             }
         }
@@ -477,24 +637,63 @@ impl FileTable {
         }
     }
 
+    /// Writes into the entry: a stream takes what it accepts; an encode
+    /// entry takes everything, its encoding written through to the
+    /// target, which must accept it all.
     pub fn write(&mut self, handle: Handle, buf: &[u8]) -> Result<usize, VmError> {
         match &mut self.entry(handle)?.kind {
-            Kind::Stream(stream) => stream.write(buf),
-            Kind::Layer(_) => Err(VmError::IoError),
+            Kind::Encode(writer) => {
+                let target = writer.target;
+                let mut out = Vec::new();
+                writer.encoder.push(buf, &mut out);
+                self.write_all(target, &out)?;
+                Ok(buf.len())
+            }
+            kind => match kind.stream() {
+                Some(stream) => stream.write(buf),
+                None => Err(VmError::IoError),
+            },
         }
     }
 
+    /// Writes all of `bytes` to the entry, however many writes it takes;
+    /// `ioerror` if it stops accepting them.
+    fn write_all(&mut self, handle: Handle, mut bytes: &[u8]) -> Result<(), VmError> {
+        while !bytes.is_empty() {
+            let n = self.write(handle, bytes)?;
+            if n == 0 {
+                return Err(VmError::IoError);
+            }
+            bytes = &bytes[n..];
+        }
+        Ok(())
+    }
+
+    /// Pushes buffered output on: an encode entry writes what its
+    /// encoder can emit short of ending the data, then flushes the
+    /// target.
     pub fn flush(&mut self, handle: Handle) -> Result<(), VmError> {
         match &mut self.entry(handle)?.kind {
-            Kind::Stream(stream) => stream.flush(),
-            Kind::Layer(_) => Ok(()),
+            Kind::Encode(writer) => {
+                let target = writer.target;
+                let mut out = Vec::new();
+                writer.encoder.flush(&mut out);
+                self.write_all(target, &out)?;
+                self.flush(target)
+            }
+            kind => match kind.stream() {
+                Some(stream) => stream.flush(),
+                None => Ok(()),
+            },
         }
     }
 
     /// Closes the entry; closing an already closed or unknown file is not
-    /// an error. Closing a layer returns the byte it read ahead, if any,
-    /// to its base, so the base continues exactly after the last byte the
-    /// layer consumed.
+    /// an error. Closing the cipher layer returns the byte it read ahead,
+    /// if any, to its base, so the base continues exactly after the last
+    /// byte the layer consumed; a layer opened to close its source closes
+    /// it. Closing an encode entry writes the encoding's final bytes and
+    /// marker to the target, then closes the target if asked to.
     pub fn close(&mut self, handle: Handle) -> Result<(), VmError> {
         let Some(entry) = self
             .entries
@@ -505,14 +704,28 @@ impl FileTable {
         };
         match entry.kind {
             Kind::Stream(mut stream) => stream.close(),
-            Kind::Layer(layer) => {
-                if !entry.pushback.is_empty()
+            Kind::Procedure(_) => Ok(()),
+            Kind::Decode(layer) => {
+                if layer.decoder.returns_lookahead()
+                    && !entry.pushback.is_empty()
                     && let Ok(base) = self.entry(layer.base)
                 {
                     base.position -= layer.lookahead.len();
                     base.pushback.extend(layer.lookahead.iter().rev());
                 }
+                if layer.close_source {
+                    self.close(layer.base)?;
+                }
                 Ok(())
+            }
+            Kind::Encode(mut writer) => {
+                let mut out = Vec::new();
+                writer.encoder.finish(&mut out);
+                let written = self.write_all(writer.target, &out);
+                if writer.close_target {
+                    self.close(writer.target)?;
+                }
+                written
             }
         }
     }
@@ -592,7 +805,7 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use ps_fonts::type1::encrypt;
+    use ps_fonts::type1::{EEXEC_KEY, encrypt, hex_value};
 
     use super::testing::Probe;
     use super::*;
@@ -844,6 +1057,202 @@ mod tests {
         t.close(base).unwrap();
         assert_eq!(t.peek(layer), Err(VmError::IoError));
         assert_eq!(t.close(layer), Ok(()));
+    }
+
+    // --- filter layers and their sources ------------------------------------------
+
+    #[test]
+    fn a_bytes_entry_reads_once_and_refuses_writes() {
+        let mut t = FileTable::new();
+        let h = t.open_bytes(b"abc".to_vec());
+        let mut buf = [0u8; 2];
+        assert_eq!(t.read(h, &mut buf), Ok(2));
+        assert_eq!(t.read(h, &mut buf), Ok(1));
+        assert_eq!(t.read(h, &mut buf), Ok(0));
+        assert_eq!(t.write(h, b"x"), Err(VmError::IoError));
+        assert!(!t.is_filter(h));
+        assert!(!t.ends_at_marker(h));
+    }
+
+    #[test]
+    fn a_procedure_entry_starves_until_fed_and_ends_on_an_empty_string() {
+        let mut t = FileTable::new();
+        let body = Object::integer(7);
+        let h = t.open_procedure(body);
+        let mut buf = [0u8; 4];
+        assert_eq!(t.read(h, &mut buf), Err(VmError::NeedMore));
+        let wanted = t.take_wanted_procedure().expect("the procedure is wanted");
+        assert!(wanted.0 == h && wanted.1.eq(body));
+        assert!(t.take_wanted_procedure().is_none());
+        t.feed_procedure(h, b"abcde");
+        assert_eq!(t.read(h, &mut buf), Ok(4));
+        assert_eq!(&buf, b"abcd");
+        assert_eq!(t.peek(h), Ok(Some(b'e')));
+        assert_eq!(t.consume(h), Ok(Some(b'e')));
+        assert_eq!(t.peek(h), Err(VmError::NeedMore));
+        t.feed_procedure(h, b"");
+        assert_eq!(t.peek(h), Ok(None));
+        assert_eq!(t.read(h, &mut buf), Ok(0));
+        assert_eq!(t.write(h, b"x"), Err(VmError::IoError));
+        // A layer over it is starved the same way — a read is all or
+        // nothing, so a longer buffer starves even after a byte came —
+        // and its reads are undone on rollback so the re-run sees the
+        // whole delivery.
+        let h = t.open_procedure(body);
+        let layer = t.open_decoder(h, Decoder::ascii_hex(), false).unwrap();
+        t.feed_procedure(h, b"41");
+        assert_eq!(t.read(layer, &mut buf), Err(VmError::NeedMore));
+        t.rollback();
+        assert_eq!(t.read(layer, &mut buf[..1]), Ok(1));
+        assert_eq!(&buf[..1], b"A");
+        t.commit();
+        assert_eq!(t.read(layer, &mut buf), Err(VmError::NeedMore));
+        let wanted = t.take_wanted_procedure().expect("the procedure is wanted");
+        assert!(wanted.0 == h && wanted.1.eq(body));
+        t.rollback();
+        t.feed_procedure(h, b"42>");
+        assert_eq!(t.read(layer, &mut buf), Ok(1));
+        assert_eq!(&buf[..1], b"B");
+        assert_eq!(t.read(layer, &mut buf), Ok(0));
+        t.feed_procedure(Handle(99), b"ignored");
+    }
+
+    #[test]
+    fn a_filter_layer_ends_at_its_marker_and_can_close_its_source() {
+        let mut t = FileTable::new();
+        let probe = Probe::with_input(b"48 69>tail");
+        let base = t.open(Box::new(probe.clone()));
+        let layer = t.open_decoder(base, Decoder::ascii_hex(), true).unwrap();
+        assert!(t.is_filter(layer));
+        assert!(!t.is_filter(base));
+        assert!(t.ends_at_marker(layer));
+        assert_eq!(t.layer_base(layer), Some(base));
+        let mut buf = [0u8; 8];
+        assert_eq!(t.read(layer, &mut buf), Ok(2));
+        assert_eq!(&buf[..2], b"Hi");
+        assert!(!t.ends_at_marker(layer));
+        assert_eq!(t.peek(layer), Ok(None));
+        assert_eq!(t.position(base), Some(6));
+        t.close(layer).unwrap();
+        assert!(probe.closed());
+        assert!(!t.is_open(base));
+        // Without CloseSource the base stays open after the marker.
+        let mut t = FileTable::new();
+        let base = t.open(Box::new(Probe::with_input(b"BOu!rDZ~>tail")));
+        let layer = t.open_decoder(base, Decoder::ascii85(), false).unwrap();
+        assert_eq!(t.read(layer, &mut buf), Ok(5));
+        t.close(layer).unwrap();
+        let n = t.read(base, &mut buf).unwrap();
+        assert_eq!(&buf[..n], b"tail");
+        // The DCT placeholder is detectable and unreadable.
+        let base = t.open(Box::new(Probe::with_input(b"\xFF\xD8")));
+        let dct = t.open_decoder(base, Decoder::Dct, false).unwrap();
+        assert!(t.is_dct_layer(dct));
+        assert!(!t.is_dct_layer(base));
+        assert_eq!(t.read(dct, &mut buf), Err(VmError::Undefined));
+        assert_eq!(
+            t.open_decoder(Handle(77), Decoder::Dct, false),
+            Err(VmError::IoError)
+        );
+    }
+
+    #[test]
+    fn an_encode_entry_writes_through_and_ends_the_data_on_close() {
+        let mut t = FileTable::new();
+        let probe = Probe::default();
+        let target = t.open(Box::new(probe.clone()));
+        let hex = t.open_encoder(target, Encoder::ascii_hex(), false).unwrap();
+        assert!(!t.is_filter(hex));
+        assert!(!t.ends_at_marker(hex));
+        assert_eq!(t.layer_base(hex), None);
+        assert_eq!(t.write(hex, b"Hi"), Ok(2));
+        assert_eq!(probe.output(), b"4869");
+        assert_eq!(t.flush(hex), Ok(()));
+        let mut buf = [0u8; 4];
+        assert_eq!(t.read(hex, &mut buf), Err(VmError::IoError));
+        assert_eq!(t.peek(hex), Err(VmError::IoError));
+        t.close(hex).unwrap();
+        assert_eq!(probe.output(), b"4869>");
+        assert!(!probe.closed());
+        assert!(t.is_open(target));
+        // A chain: the outer encoder's bytes go through the inner one,
+        // and closing with the target flag closes down the chain.
+        let base85 = t.open_encoder(target, Encoder::ascii85(), true).unwrap();
+        let run = t
+            .open_encoder(base85, Encoder::run_length(0), true)
+            .unwrap();
+        assert_eq!(t.write(run, b"aaaab"), Ok(5));
+        t.close(run).unwrap();
+        assert!(probe.closed());
+        assert!(!t.is_open(base85));
+        assert!(!t.is_open(target));
+        let text = String::from_utf8(probe.output()).unwrap();
+        assert!(text.starts_with("4869>"));
+        assert!(text.ends_with("~>"));
+        // The target closed first: writes fail, and so does the close
+        // that would write the marker.
+        let target = t.open(Box::new(Probe::default()));
+        let hex = t.open_encoder(target, Encoder::ascii_hex(), false).unwrap();
+        t.close(target).unwrap();
+        assert_eq!(t.write(hex, b"x"), Err(VmError::IoError));
+        assert_eq!(t.close(hex), Err(VmError::IoError));
+        assert_eq!(
+            t.open_encoder(Handle(99), Encoder::ascii_hex(), false),
+            Err(VmError::IoError)
+        );
+        // A target that accepts nothing is an error too.
+        struct Full;
+        impl Stream for Full {
+            fn read(&mut self, _: &mut [u8]) -> Result<usize, VmError> {
+                Ok(0)
+            }
+            fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+                Ok(0)
+            }
+        }
+        let full = t.open(Box::new(Full));
+        let hex = t.open_encoder(full, Encoder::ascii_hex(), false).unwrap();
+        assert_eq!(t.write(hex, b"x"), Err(VmError::IoError));
+    }
+
+    #[test]
+    fn a_layer_over_a_growing_base_rolls_back_its_decoder() {
+        struct Growing(Vec<u8>, usize);
+        impl Stream for Growing {
+            fn read(&mut self, buf: &mut [u8]) -> Result<usize, VmError> {
+                if self.1 == self.0.len() {
+                    return Err(VmError::NeedMore);
+                }
+                let n = buf.len().min(self.0.len() - self.1);
+                buf[..n].copy_from_slice(&self.0[self.1..self.1 + n]);
+                self.1 += n;
+                Ok(n)
+            }
+            fn write(&mut self, _: &[u8]) -> Result<usize, VmError> {
+                Ok(0)
+            }
+            fn more_may_come(&self) -> bool {
+                true
+            }
+            fn unread(&mut self, bytes: &[u8]) {
+                self.1 -= bytes.len();
+            }
+        }
+        let mut t = FileTable::new();
+        let base = t.open(Box::new(Growing(b"4142 4".to_vec(), 0)));
+        let layer = t.open_decoder(base, Decoder::ascii_hex(), false).unwrap();
+        let mut buf = [0u8; 3];
+        // Two bytes come, the third is half there: the read fails and is
+        // undone, so the next attempt starts from the first byte again.
+        assert_eq!(t.read(layer, &mut buf), Err(VmError::NeedMore));
+        t.rollback();
+        assert_eq!(t.position(layer), Some(0));
+        assert_eq!(t.position(base), Some(0));
+        assert_eq!(t.read(layer, &mut buf), Err(VmError::NeedMore));
+        t.rollback();
+        t.commit();
+        assert_eq!(t.read(layer, &mut buf[..2]), Ok(2));
+        assert_eq!(&buf[..2], b"AB");
     }
 
     #[test]

@@ -232,13 +232,13 @@ fn implicit_members_cannot_be_changed_and_other_key_types_are_absent() {
         { /Foo 1 dict /Generic defineresource } stopped pop $error /errorname get = \
         (42) /FontType resourcestatus = \
         /DeviceRGB /FontType resourcestatus = \
-        (*) { = } 8 string /Filter resourceforall \
+        (Null*) { = } 16 string /Filter resourceforall \
         (*) { = } 8 string /Generic resourceforall \
         (Device*) { = } 32 string /ColorSpaceFamily resourceforall";
     assert_eq!(run(&mut interp, program), Outcome::Ok);
     assert_eq!(
         out.text(),
-        "invalidaccess\ninvalidaccess\nfalse\nfalse\nDeviceCMYK\nDeviceGray\nDeviceN\nDeviceRGB\n"
+        "invalidaccess\ninvalidaccess\nfalse\nfalse\nNullEncode\nDeviceCMYK\nDeviceGray\nDeviceN\nDeviceRGB\n"
     );
 }
 

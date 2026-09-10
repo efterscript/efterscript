@@ -357,4 +357,23 @@ fn gray_downsampling_averages_or_subsamples_as_the_type_says() {
     let (report, _, _) = run(two_bit, &Options::compress(false));
     assert_eq!(report.downsampled, 0);
     assert_eq!(report.notes, ["page 1: image 0 (2-bit) is not downsampled"]);
+
+    // An image carried as a DCT stream has no samples to reduce: it is
+    // noted and written as it came, whatever its resolution.
+    let dct = "<< /DownsampleGrayImages true /GrayImageResolution 72 >> setdistillerparams \
+               72 72 translate << /ImageType 1 /Width 16 /Height 16 /BitsPerComponent 8 \
+               /ImageMatrix [16 0 0 -16 0 16] \
+               /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >> image\n\
+               FFD8FFDB0004AABBFFDA0003011234FF00FFD9>\nshowpage\n";
+    let (report, pdf, _) = run(dct, &Options::compress(false));
+    assert_eq!(report.downsampled, 0);
+    assert_eq!(
+        report.notes,
+        ["page 1: image 0 (DCT-encoded) is not downsampled"]
+    );
+    let pdf = check(&pdf);
+    let xobject = xobject(&pdf, 0, "Im0");
+    assert_eq!(xobject.get("Filter").unwrap().as_name(), b"DCTDecode");
+    assert_eq!(xobject.get("Width").unwrap().as_int(), 16);
+    assert_eq!(xobject.stream_data().len(), 19);
 }

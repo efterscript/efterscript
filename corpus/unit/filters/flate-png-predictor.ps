@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: 10
+% expect-output: 20
+% expect-output: 30
+% expect-output: 40
+% expect-output: 11
+% expect-output: 21
+% expect-output: 31
+% expect-output: 41
+% Scenario: Flate with a PNG predictor. Two rows of four 8-bit samples
+% were filtered before compression, the first with the sub filter and
+% the second with the up filter, each row led by its tag byte; the
+% predictor parameters undo that after decompression.
+% Expect: 10 20 30 40 11 21 31 41.
+<780163E40202264620000001540030>
+<< /Predictor 12 /Columns 4 /Colors 1 /BitsPerComponent 8 >>
+/FlateDecode filter 100 string readstring pop { = } forall

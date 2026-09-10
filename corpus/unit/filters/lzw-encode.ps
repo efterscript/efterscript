@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: 801D0D065101C4EA69319AC4062391BCEE6E10198DE78808>
+% expect-output: 801D0D065101C4EA69319AC4062391BCEE6E10198DE78808>
+% expect-output: the quick brown fox
+% expect-output: true
+% Scenario: LZWEncode writing through an ASCIIHexEncode filter to
+% standard output. No two-byte sequence of `the quick brown fox`
+% repeats, so the stream is the clear code 256, the nineteen bytes as
+% their own codes, and the end code 257: twenty-one nine-bit codes,
+% packed most-significant bit first into 24 bytes, the last three bits
+% zero. Twenty-one codes never widen the code, so EarlyChange 0 writes
+% the same bytes. The text read back through LZWDecode gives the bytes,
+% and the EarlyChange 0 stream decodes with EarlyChange 0.
+% Expect: the hexadecimal text twice, the decoded bytes, true.
+(%stdout) (w) file /ASCIIHexEncode filter
+<< /CloseTarget true >> /LZWEncode filter
+dup (the quick brown fox) writestring closefile
+(\n) print
+(%stdout) (w) file /ASCIIHexEncode filter
+<< /CloseTarget true /EarlyChange 0 >> /LZWEncode filter
+dup (the quick brown fox) writestring closefile
+(\n) print
+<801D0D065101C4EA69319AC4062391BCEE6E10198DE78808> /LZWDecode filter
+100 string readstring pop =
+<801D0D065101C4EA69319AC4062391BCEE6E10198DE78808>
+<< /EarlyChange 0 >> /LZWDecode filter
+100 string readstring pop (the quick brown fox) eq =

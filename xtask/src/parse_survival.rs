@@ -10,7 +10,10 @@
 //! One operator is understood: an integer followed by the executable name
 //! `StartData` (a FontSet resource) is followed by that many bytes of
 //! binary font data, which the scan steps over, as the interpreter's
-//! operator reads them from the file.
+//! operator reads them from the file. One structuring comment is too: a
+//! `%%BeginData:` line announcing a count of bytes or lines is followed
+//! by that much data the program reads for itself — inline filter data,
+//! say — which the scan steps over as a document manager would.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,8 +27,48 @@ struct Cursor<'a> {
     position: usize,
 }
 
+impl Cursor<'_> {
+    /// At the start of a `%%BeginData:` line, jumps past the line and
+    /// the data it announces: `<n> ASCII|Binary Bytes|Lines`.
+    fn skip_data_section(&mut self) {
+        let at_line_start =
+            self.position == 0 || matches!(self.bytes.get(self.position - 1), Some(b'\n' | b'\r'));
+        let rest = &self.bytes[self.position..];
+        if !at_line_start || !rest.starts_with(b"%%BeginData:") {
+            return;
+        }
+        let line_end = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
+        let fields: Vec<&str> = std::str::from_utf8(&rest[b"%%BeginData:".len()..line_end])
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        let Some(count) = fields.first().and_then(|n| n.parse::<usize>().ok()) else {
+            return;
+        };
+        let data_start = (line_end + 1).min(rest.len());
+        let data = &rest[data_start..];
+        let skipped = if fields.get(2) == Some(&"Lines") {
+            let mut at = 0;
+            for _ in 0..count {
+                match data[at..].iter().position(|&b| b == b'\n') {
+                    Some(n) => at += n + 1,
+                    None => {
+                        at = data.len();
+                        break;
+                    }
+                }
+            }
+            at
+        } else {
+            count.min(data.len())
+        };
+        self.position += data_start + skipped;
+    }
+}
+
 impl Source for Cursor<'_> {
     fn peek(&mut self, _: &mut Memory) -> Result<Option<u8>, VmError> {
+        self.skip_data_section();
         Ok(self.bytes.get(self.position).copied())
     }
 
@@ -225,6 +268,31 @@ mod tests {
             Outcome::Error { kind, .. } => assert_eq!(kind, "BinaryEncoding"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_data_section_is_stepped_over_by_bytes_or_lines() {
+        assert_eq!(
+            scan(b"1\n%%BeginData: 5 ASCII Bytes\n>>>>\n%%EndData\n2"),
+            Outcome::Ok { tokens: 2 }
+        );
+        assert_eq!(
+            scan(b"1\n%%BeginData: 2 ASCII Lines\nx exec\n41>\n%%EndData\n2"),
+            Outcome::Ok { tokens: 2 }
+        );
+        assert_eq!(
+            scan(b"%%BeginData: 9 Binary Lines\n>"),
+            Outcome::Ok { tokens: 0 }
+        );
+        // Not at a line start, or without a count, the comment is only a comment.
+        assert_eq!(
+            scan(b"1 %%BeginData: 5 ASCII Bytes\n2"),
+            Outcome::Ok { tokens: 2 }
+        );
+        assert!(matches!(
+            scan(b"%%BeginData: none\n>"),
+            Outcome::Error { .. }
+        ));
     }
 
     #[test]

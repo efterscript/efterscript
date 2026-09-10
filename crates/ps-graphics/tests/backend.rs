@@ -541,6 +541,7 @@ fn images_carry_a_unit_square_matrix_and_masks_take_the_colour() {
         matrix: Matrix([4.0, 0.0, 0.0, -2.0, 0.0, 2.0]),
         interpolate: false,
         is_mask: false,
+        encoded: None,
     };
     g.image(&spec, &[0; 24]).unwrap();
     let mask = ImageSpec {
@@ -552,6 +553,7 @@ fn images_carry_a_unit_square_matrix_and_masks_take_the_colour() {
         matrix: Matrix([2.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
         interpolate: false,
         is_mask: true,
+        encoded: None,
     };
     g.set_color_space(&SpaceSpec::DeviceRGB).unwrap();
     g.set_color(&[1.0, 0.0, 0.0]).unwrap();

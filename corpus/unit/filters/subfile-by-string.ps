@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: ab
+% Scenario: SubFileDecode ends at its string. With a count of 0 the data
+% ends at the first occurrence of the string, which is consumed but not
+% passed.
+% Expect: ab.
+(ab*EOD*cd) << /EODString (*EOD*) /EODCount 0 >> /SubFileDecode filter
+100 string readstring pop =

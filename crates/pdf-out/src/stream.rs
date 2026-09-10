@@ -11,11 +11,14 @@ use std::borrow::Cow;
 use crate::obj::DictBuilder;
 
 /// Stream encoding. `Flate` emits a zlib container holding a real DEFLATE
-/// stream (see [`crate::flate`]); the variant set is the stable API surface.
+/// stream (see [`crate::flate`]); `Dct` declares data that already is a
+/// JPEG stream and writes it as given; the variant set is the stable API
+/// surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
     None,
     Flate,
+    Dct,
 }
 
 impl Filter {
@@ -23,6 +26,7 @@ impl Filter {
         match self {
             Filter::None => None,
             Filter::Flate => Some("FlateDecode"),
+            Filter::Dct => Some("DCTDecode"),
         }
     }
 }
@@ -39,7 +43,7 @@ pub(crate) fn put_stream(
 ) -> bool {
     let mut bad_name = false;
     let encoded: Cow<'_, [u8]> = match filter {
-        Filter::None => Cow::Borrowed(data),
+        Filter::None | Filter::Dct => Cow::Borrowed(data),
         Filter::Flate => Cow::Owned(crate::flate::compress(data)),
     };
     body.extend_from_slice(b"<<");
@@ -82,5 +86,20 @@ mod tests {
         assert!(body.starts_with(head.as_bytes()));
         let data = &body[head.len()..body.len() - b"\nendstream".len()];
         assert_eq!(data, encoded);
+    }
+
+    #[test]
+    fn dct_stream_names_the_filter_and_keeps_the_bytes() {
+        let mut body = Vec::new();
+        assert!(put_stream(
+            &mut body,
+            Filter::Dct,
+            b"\xFF\xD8\xFF\xD9",
+            |_| {}
+        ));
+        assert_eq!(
+            body,
+            b"<< /Length 4 /Filter /DCTDecode >>\nstream\n\xFF\xD8\xFF\xD9\nendstream"
+        );
     }
 }

@@ -9,6 +9,7 @@ mod fuzz_round;
 mod lint_strings;
 mod parse_survival;
 mod sha256;
+mod tiny_jpeg;
 
 use std::process::ExitCode;
 
@@ -27,6 +28,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "  check-wasm        cargo check the session front-end for wasm32-unknown-emscripten"
     );
+    eprintln!("  tiny-jpeg         print the project's own baseline JPEG stream [--corpus]");
     ExitCode::from(2)
 }
 
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
         Some("lint-strings") => lint_strings::run(&args[1..]),
         Some("fuzz-round") => fuzz_round::run(&args[1..]),
         Some("check-wasm") => check_wasm::run(&args[1..]),
+        Some("tiny-jpeg") => tiny_jpeg::run(&args[1..]),
         Some(t) => {
             eprintln!("xtask: unknown task `{t}`");
             usage()
