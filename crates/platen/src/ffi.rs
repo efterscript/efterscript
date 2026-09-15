@@ -480,6 +480,17 @@ pub unsafe extern "C" fn platen_job_free(job: *mut platen_job) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// The tests below share the one last-error buffer, which the
+    /// interface leaves unguarded by contract; they run one at a time.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn new_job() -> *mut platen_job {
         let cfg = platen_config {
@@ -500,6 +511,7 @@ mod tests {
 
     #[test]
     fn a_panic_poisons_the_job_and_every_function_answers_the_failure_code() {
+        let _serial = serial();
         let job = new_job();
         let answer = guarded(job, -9, |_| panic!("boom"));
         assert_eq!(answer, -9);
@@ -523,6 +535,7 @@ mod tests {
 
     #[test]
     fn null_and_wrong_version_are_refused() {
+        let _serial = serial();
         unsafe {
             assert!(platen_job_new(ptr::null()).is_null());
             assert_eq!(
@@ -558,6 +571,7 @@ mod tests {
 
     #[test]
     fn long_messages_are_truncated() {
+        let _serial = serial();
         set_last_error(&"x".repeat(2000));
         let message = unsafe { CStr::from_ptr(platen_last_error()) };
         assert_eq!(message.to_bytes().len(), LAST_ERROR_CAP - 1);
