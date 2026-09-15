@@ -3,7 +3,7 @@
 
 //! Execution-stack frames.
 
-use crate::graphics::Seg;
+use crate::graphics::{FormInfo, Seg};
 use crate::names::Atom;
 use crate::object::{Handle, Object};
 use crate::ops::Num;
@@ -146,6 +146,33 @@ pub enum LoopFrame {
         segs: Vec<Seg>,
         next: usize,
     },
+    /// A tiling pattern's paint procedure running so the backend can
+    /// capture its cell (PLRM3 §4.9.2), on behalf of the painting
+    /// operator `operator`, whose operands stay on the operand stack:
+    /// `body` runs once with `dict` as its operand; then the capture
+    /// ends, the graphics state returns to `depth`, and the operator
+    /// runs again. `started` is set while the capture is open, so a
+    /// frame discarded by an error closes it. While an `uncoloured`
+    /// cell runs, the colour operators are undefined.
+    PatternCell {
+        body: Object,
+        dict: Object,
+        depth: usize,
+        operator: &'static str,
+        uncoloured: bool,
+        started: bool,
+    },
+    /// A form's paint procedure running so the backend can capture its
+    /// body (PLRM3 §4.7): `body` runs once with `dict` as its operand;
+    /// then the capture ends, the graphics state returns to `depth`, and
+    /// the form is placed. `started` as for a pattern cell.
+    FormBody {
+        body: Object,
+        dict: Object,
+        depth: usize,
+        info: FormInfo,
+        started: bool,
+    },
 }
 
 /// A resource instance's key as `resourceforall` enumerates it.
@@ -166,7 +193,9 @@ impl LoopFrame {
             | LoopFrame::ForAll { body, .. }
             | LoopFrame::ImageData { body, .. }
             | LoopFrame::FilterData { body, .. }
-            | LoopFrame::ResourceForAll { body, .. } => *body,
+            | LoopFrame::ResourceForAll { body, .. }
+            | LoopFrame::PatternCell { body, .. }
+            | LoopFrame::FormBody { body, .. } => *body,
             LoopFrame::PathForAll { procs, .. } => procs[0],
             LoopFrame::Show(frame) => frame.procedure(),
         }
@@ -181,6 +210,9 @@ impl LoopFrame {
             LoopFrame::ImageData { acquisition, .. } => objects.extend(&acquisition.sources),
             LoopFrame::PathForAll { procs, .. } => objects.extend(&procs[1..]),
             LoopFrame::Show(frame) => objects.extend(frame.references()),
+            LoopFrame::PatternCell { dict, .. } | LoopFrame::FormBody { dict, .. } => {
+                objects.push(*dict);
+            }
             _ => {}
         }
         objects

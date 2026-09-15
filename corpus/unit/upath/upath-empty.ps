@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: {0.0 0.0 0.0 0.0 setbbox}
+% expect-output: {ucache 0.0 0.0 0.0 0.0 setbbox}
+% expect-output: {5.0 5.0 5.0 5.0 setbbox 5.0 5.0 moveto}
+% Scenario: upath of an empty path is a user path with an all-zero box
+% and nothing after setbbox; true asks for ucache first. A lone moveto
+% is reported with its point as the box.
+newpath false upath ==
+true upath ==
+5 5 moveto false upath ==

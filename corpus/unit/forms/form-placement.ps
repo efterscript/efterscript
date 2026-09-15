@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a form paints where its matrix puts it. Under a CTM scaled
+% by two, a form with Matrix [1 0 0 1 100 100] is placed by the matrix
+% [2 0 0 2 200 200]; its body is captured once, in form space, clipped
+% to the box.
+/F << /FormType 1 /BBox [0 0 10 10] /Matrix [1 0 0 1 100 100]
+  /PaintProc { pop 0 0 1 1 rectfill } >> def
+2 2 scale
+F execform
+showpage

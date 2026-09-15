@@ -28,22 +28,43 @@ use std::io::Write;
 
 use pdf_out::{ArrayBuilder, Document, Filter, Ref};
 use ps_fonts::ResidentFace;
-use ps_graphics::{FontSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, Resources};
+use ps_graphics::{
+    FontSpec, FormSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, PatternSpec, Resources,
+};
 use ps_vm::{Bounds, Matrix, SpaceSpec};
 
 use crate::content::{self, Recode};
 use crate::embedded::EmbeddedTable;
 use crate::resources::Objects;
 
-/// What a font's glyph procedures refer to on their page, by index.
+/// What a content — a glyph procedure, a pattern cell, a form body —
+/// refers to on its page, by index: what its own resource dictionary
+/// must list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Refs {
     pub spaces: BTreeSet<usize>,
     pub images: BTreeSet<usize>,
     pub fonts: BTreeSet<usize>,
+    pub patterns: BTreeSet<usize>,
+    pub forms: BTreeSet<usize>,
 }
 
-fn collect(ops: &[Op], refs: &mut Refs) {
+impl Refs {
+    /// What `ops` name directly: the entries the content's own resource
+    /// dictionary lists (ISO 32000-1 §7.8.3); a pattern or form named
+    /// carries its own dictionary for what it names in turn.
+    pub(crate) fn of(ops: &[Op], resources: &Resources) -> Refs {
+        let mut refs = Refs::default();
+        collect(ops, resources, &mut refs, false);
+        refs
+    }
+}
+
+/// Gathers the indices `ops` refer to; with `deep`, a pattern or form
+/// met for the first time has its own operations gathered too. A
+/// resource is entered before its content is walked, so a cell that
+/// names itself ends the walk.
+fn collect(ops: &[Op], resources: &Resources, refs: &mut Refs, deep: bool) {
     for op in ops {
         match &op.op {
             IrOp::SetColorSpace(space) => {
@@ -55,37 +76,57 @@ fn collect(ops: &[Op], refs: &mut Refs) {
             IrOp::Text { font, .. } => {
                 refs.fonts.insert(font.0);
             }
+            IrOp::SetPattern { pattern, .. } => {
+                if refs.patterns.insert(pattern.0)
+                    && deep
+                    && let Some(spec) = resources.patterns.get(pattern.0)
+                {
+                    collect(&spec.ops, resources, refs, true);
+                }
+            }
+            IrOp::Form { form, .. } => {
+                if refs.forms.insert(form.0)
+                    && deep
+                    && let Some(spec) = resources.forms.get(form.0)
+                {
+                    collect(&spec.ops, resources, refs, true);
+                }
+            }
             _ => {}
         }
     }
 }
 
 /// The page resources `spec`'s glyph procedures name; none for a
-/// resident font.
-pub(crate) fn references(spec: &FontSpec) -> Refs {
+/// resident font. Direct references, or with `deep` the closure through
+/// the patterns and forms they name.
+pub(crate) fn references(spec: &FontSpec, resources: &Resources, deep: bool) -> Refs {
     let mut refs = Refs::default();
     if let FontSpec::Type3 { glyphs, .. } = spec {
         for glyph in glyphs.values() {
-            collect(&glyph.ops, &mut refs);
+            collect(&glyph.ops, resources, &mut refs, deep);
         }
     }
     refs
 }
 
 /// The identity of a font object: the spec and the values of what its
-/// glyphs refer to, so two pages with different resource layouts share
-/// an object only when it means the same thing on both.
+/// glyphs refer to — through the patterns and forms they name, whose
+/// contents refer onward — so two pages with different resource layouts
+/// share an object only when it means the same thing on both.
 #[derive(Clone, Debug, PartialEq)]
 struct Key {
     spec: FontSpec,
     spaces: Vec<SpaceSpec>,
     images: Vec<Image>,
     fonts: Vec<FontSpec>,
+    patterns: Vec<PatternSpec>,
+    forms: Vec<FormSpec>,
 }
 
 impl Key {
     fn of(spec: &FontSpec, resources: &Resources) -> Self {
-        let refs = references(spec);
+        let refs = references(spec, resources, true);
         Key {
             spec: spec.clone(),
             spaces: refs
@@ -102,6 +143,16 @@ impl Key {
                 .fonts
                 .iter()
                 .filter_map(|&i| resources.fonts.get(i).cloned())
+                .collect(),
+            patterns: refs
+                .patterns
+                .iter()
+                .filter_map(|&i| resources.patterns.get(i).cloned())
+                .collect(),
+            forms: refs
+                .forms
+                .iter()
+                .filter_map(|&i| resources.forms.get(i).cloned())
                 .collect(),
         }
     }
@@ -128,7 +179,8 @@ impl FontTable {
 /// returns one reference per font resource, in index order, with the
 /// one-byte codes of every composite font the document writes as a
 /// Type 3 fallback. `objects` holds the page's colour spaces and
-/// images, already written, for the `Resources` of a Type 3 font. With
+/// images, already written, and the ids of its patterns and forms, for
+/// the `Resources` of a Type 3 font. With
 /// `embed_all` a resident face that has outlines in this build is
 /// deferred to the end of the document like an embedded font.
 #[allow(clippy::too_many_arguments)]
@@ -192,7 +244,7 @@ pub(crate) fn write_fonts<W: Write>(
                     font_bbox: *font_bbox,
                     encoding,
                     glyphs,
-                    refs: references(spec),
+                    refs: references(spec, resources, false),
                 };
                 let mut glyph_notes =
                     write_type3(doc, r, &type3, resources, objects, &refs, &recode, filter)?;
@@ -580,6 +632,9 @@ fn write_type3<W: Write>(
 mod tests {
     use super::*;
 
+    use ps_graphics::FillRule;
+    use ps_vm::Seg;
+
     #[test]
     fn to_unicode_maps_known_names_in_code_order_and_skips_the_rest() {
         let entries: [(u8, &[u8]); 4] = [(72, b"H"), (0, b".notdef"), (105, b"i"), (200, b"fi")];
@@ -607,6 +662,90 @@ mod tests {
         assert!(
             two_byte.contains("<0000> <FFFF>\nendcodespacerange\n1 beginbfchar\n<0001> <0041>\n")
         );
+    }
+
+    #[test]
+    fn references_are_direct_and_the_key_looks_through_patterns_and_forms() {
+        use ps_graphics::{FormSpec, PatternSpec};
+        use ps_vm::Point;
+        let mut resources = Resources::default();
+        let rgb = resources.intern_space(&SpaceSpec::DeviceRGB);
+        let helvetica = resources.add_font(FontSpec::Resident {
+            base: ResidentFace::Helvetica,
+            encoding: ps_graphics::glyph_names(&[]),
+        });
+        let cell = resources.add_pattern(PatternSpec {
+            matrix: Matrix::IDENTITY,
+            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            xstep: 1.0,
+            ystep: 1.0,
+            paint_type: 1,
+            tiling_type: 1,
+            ops: vec![
+                IrOp::Text {
+                    font: helvetica,
+                    matrix: Matrix::IDENTITY,
+                    glyphs: Vec::new(),
+                    wmode: 0,
+                }
+                .into(),
+            ],
+        });
+        let body = resources.add_form(FormSpec {
+            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            ops: vec![
+                IrOp::SetColorSpace(rgb).into(),
+                IrOp::SetPattern {
+                    pattern: cell,
+                    components: Vec::new(),
+                }
+                .into(),
+            ],
+        });
+        let ops: Vec<Op> = vec![
+            IrOp::Form {
+                form: body,
+                matrix: Matrix::IDENTITY,
+            }
+            .into(),
+            IrOp::Fill {
+                path: vec![Seg::Move(Point::new(0.0, 0.0))],
+                rule: FillRule::NonZero,
+            }
+            .into(),
+        ];
+        let direct = Refs::of(&ops, &resources);
+        assert_eq!(direct.forms.iter().copied().collect::<Vec<_>>(), [body.0]);
+        assert!(direct.patterns.is_empty() && direct.fonts.is_empty() && direct.spaces.is_empty());
+        let mut deep = Refs::default();
+        collect(&ops, &resources, &mut deep, true);
+        assert_eq!(deep.patterns.iter().copied().collect::<Vec<_>>(), [cell.0]);
+        assert_eq!(
+            deep.fonts.iter().copied().collect::<Vec<_>>(),
+            [helvetica.0]
+        );
+        assert_eq!(deep.spaces.iter().copied().collect::<Vec<_>>(), [rgb.0]);
+        let mut glyphs = std::collections::BTreeMap::new();
+        glyphs.insert(
+            b"a".to_vec(),
+            GlyphProc {
+                ops,
+                width: (1.0, 0.0),
+                bbox: None,
+            },
+        );
+        let type3 = FontSpec::Type3 {
+            font_matrix: Matrix::IDENTITY,
+            font_bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            encoding: ps_graphics::glyph_names(&[]),
+            glyphs,
+        };
+        assert_eq!(references(&type3, &resources, false), direct);
+        let key = Key::of(&type3, &resources);
+        assert_eq!(key.forms.len(), 1);
+        assert_eq!(key.patterns.len(), 1);
+        assert_eq!(key.fonts.len(), 1);
+        assert_eq!(key.spaces, [SpaceSpec::DeviceRGB]);
     }
 
     #[test]

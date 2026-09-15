@@ -1759,3 +1759,295 @@ fn colour_images_are_averaged_per_component_and_masks_are_subsampled() {
     assert_eq!(size("Im3"), (2, 2), "gray downsampling is off");
     assert_eq!(decoded(xobject(&pdf, 0, "Im3")), [1, 2, 3, 4]);
 }
+
+// --- patterns and forms -----------------------------------------------------------
+
+use ps_graphics::{FormSpec, PatternSpec};
+use support::pattern;
+
+fn cell(paint_type: u8, matrix: Matrix, ops: Vec<IrOp>) -> PatternSpec {
+    PatternSpec {
+        matrix,
+        bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
+        xstep: 10.0,
+        ystep: 12.0,
+        paint_type,
+        tiling_type: 2,
+        ops: ops.into_iter().map(Op::from).collect(),
+    }
+}
+
+#[test]
+fn patterns_are_tiling_streams_named_by_the_colour_operators() {
+    let mut page = Page::new(LETTER);
+    let over_gray = page.resources.intern_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(SpaceSpec::DeviceGray)),
+    });
+    let over_spot = page.resources.intern_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(spot())),
+    });
+    let plain = page
+        .resources
+        .intern_space(&SpaceSpec::Pattern { base: None });
+    let font = page.resources.add_font(helvetica());
+    // A coloured cell that shows text and sets its own colour.
+    let coloured = page.resources.add_pattern(cell(
+        1,
+        Matrix([2.0, 0.0, 0.0, 2.0, 5.0, 5.0]),
+        vec![
+            IrOp::SetColor(vec![0.5]),
+            IrOp::Fill {
+                path: square_path(5.0),
+                rule: FillRule::NonZero,
+            },
+            IrOp::Text {
+                font,
+                matrix: Matrix::scaling(0.01, 0.01),
+                glyphs: vec![glyph(72, 722.0, 0.0)],
+                wmode: 0,
+            },
+        ],
+    ));
+    // An uncoloured cell: a stencil, painted in the components given.
+    let uncoloured = page.resources.add_pattern(cell(
+        2,
+        Matrix::IDENTITY,
+        vec![IrOp::Fill {
+            path: square_path(5.0),
+            rule: FillRule::NonZero,
+        }],
+    ));
+    page.ops = vec![
+        IrOp::SetColorSpace(over_gray),
+        IrOp::SetPattern {
+            pattern: coloured,
+            components: Vec::new(),
+        },
+        IrOp::Fill {
+            path: square_path(100.0),
+            rule: FillRule::NonZero,
+        },
+        IrOp::SetColorSpace(over_spot),
+        IrOp::SetPattern {
+            pattern: uncoloured,
+            components: vec![0.6],
+        },
+        IrOp::LineWidth(3.0),
+        IrOp::Stroke {
+            path: line(),
+            ctm: Matrix::IDENTITY,
+        },
+        IrOp::SetColorSpace(plain),
+        IrOp::SetPattern {
+            pattern: coloured,
+            components: Vec::new(),
+        },
+        IrOp::Fill {
+            path: square_path(50.0),
+            rule: FillRule::EvenOdd,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "/CS0 cs\n/CS0 CS\n/P0 scn\n/P0 SCN\n\
+         0 0 m\n100 0 l\n100 100 l\n0 100 l\nh\nf\n\
+         /CS1 cs\n/CS1 CS\n0.6 /P1 scn\n0.6 /P1 SCN\n3 w\n10 10 m\n100 10 l\nS\n\
+         /Pattern cs\n/Pattern CS\n/P0 scn\n/P0 SCN\n\
+         0 0 m\n50 0 l\n50 50 l\n0 50 l\nh\nf*\n"
+    );
+    // The pattern space without a base is selected by name and listed
+    // nowhere; the two with a base are colour-space resources.
+    let spaces = resources(&pdf, 0).get("ColorSpace").unwrap();
+    assert_eq!(array(spaces.get("CS0").unwrap())[0].as_name(), b"Pattern");
+    assert_eq!(
+        array(spaces.get("CS0").unwrap())[1].as_name(),
+        b"DeviceGray"
+    );
+    assert_eq!(
+        array(&array(spaces.get("CS1").unwrap())[1])[0].as_name(),
+        b"Separation"
+    );
+    assert!(spaces.get("CS2").is_none());
+    assert!(resources(&pdf, 0).get("XObject").is_none());
+
+    let p0 = pattern(&pdf, 0, "P0");
+    assert_eq!(p0.get("Type").unwrap().as_name(), b"Pattern");
+    assert_eq!(p0.get("PatternType").unwrap().as_int(), 1);
+    assert_eq!(p0.get("PaintType").unwrap().as_int(), 1);
+    assert_eq!(p0.get("TilingType").unwrap().as_int(), 2);
+    assert_eq!(numbers(p0.get("BBox").unwrap()), [0.0, 0.0, 10.0, 10.0]);
+    assert_eq!(number(p0.get("XStep").unwrap()), 10.0);
+    assert_eq!(number(p0.get("YStep").unwrap()), 12.0);
+    assert_eq!(
+        numbers(p0.get("Matrix").unwrap()),
+        [2.0, 0.0, 0.0, 2.0, 5.0, 5.0]
+    );
+    assert_eq!(
+        String::from_utf8(decoded(p0)).unwrap(),
+        "0.5 g\n0.5 G\n0 0 m\n5 0 l\n5 5 l\n0 5 l\nh\nf\n\
+         BT\n/F0 1 Tf\n10 0 0 10 0 0 Tm\n(H) Tj\nET\n"
+    );
+    // The cell's own resources name the font it shows, and nothing else.
+    let cell_resources = p0.get("Resources").unwrap();
+    assert_eq!(
+        cell_resources
+            .get("Font")
+            .unwrap()
+            .get("F0")
+            .unwrap()
+            .as_reference(),
+        font_ref(&pdf, 0, "F0")
+    );
+    assert!(cell_resources.get("ColorSpace").is_none());
+    assert!(cell_resources.get("Pattern").is_none());
+
+    let p1 = pattern(&pdf, 0, "P1");
+    assert_eq!(p1.get("PaintType").unwrap().as_int(), 2);
+    assert_eq!(
+        numbers(p1.get("Matrix").unwrap()),
+        [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        String::from_utf8(decoded(p1)).unwrap(),
+        "0 0 m\n5 0 l\n5 5 l\n0 5 l\nh\nf\n"
+    );
+    assert_eq!(p1.get("Resources"), Some(&Value::Dict(Vec::new())));
+}
+
+#[test]
+fn forms_are_xobjects_placed_under_their_matrix_with_their_own_resources() {
+    let mut page = Page::new(LETTER);
+    let over_gray = page.resources.intern_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(SpaceSpec::DeviceGray)),
+    });
+    let image = page.resources.add_image(
+        &image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0]),
+        &[0, 85, 170, 255],
+    );
+    // The pattern the inner body paints with, in the inner form's space.
+    let dots = page
+        .resources
+        .add_pattern(cell(1, Matrix::translation(-1.0, -1.0), Vec::new()));
+    let inner = page.resources.add_form(FormSpec {
+        bbox: Bounds::new(0.0, 0.0, 20.0, 20.0),
+        ops: vec![
+            IrOp::SetColorSpace(over_gray).into(),
+            IrOp::SetPattern {
+                pattern: dots,
+                components: Vec::new(),
+            }
+            .into(),
+            IrOp::Fill {
+                path: square_path(20.0),
+                rule: FillRule::NonZero,
+            }
+            .into(),
+            IrOp::Image {
+                image,
+                matrix: Matrix::scaling(4.0, 4.0),
+            }
+            .into(),
+        ],
+    });
+    let outer = page.resources.add_form(FormSpec {
+        bbox: Bounds::new(0.0, 0.0, 100.0, 100.0),
+        ops: vec![
+            IrOp::Form {
+                form: inner,
+                matrix: Matrix::translation(1.0, 1.0),
+            }
+            .into(),
+        ],
+    });
+    page.ops = vec![
+        IrOp::Form {
+            form: outer,
+            matrix: Matrix([1.0, 0.0, 0.0, 1.0, 200.0, 200.0]),
+        }
+        .into(),
+        IrOp::Form {
+            form: outer,
+            matrix: Matrix([2.0, 0.0, 0.0, 2.0, 0.0, 0.0]),
+        }
+        .into(),
+    ];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "q 1 0 0 1 200 200 cm /Fm1 Do Q\nq 2 0 0 2 0 0 cm /Fm1 Do Q\n"
+    );
+    // The page lists every resource it holds, as it does images and
+    // fonts; each form's dictionary lists what that body names.
+    let page_resources = resources(&pdf, 0);
+    let xobjects = page_resources.get("XObject").unwrap();
+    assert!(xobjects.get("Fm1").is_some());
+    assert!(xobjects.get("Fm0").is_some());
+    assert!(xobjects.get("Im0").is_some());
+    assert!(page_resources.get("Pattern").unwrap().get("P0").is_some());
+
+    let fm1 = xobject(&pdf, 0, "Fm1");
+    assert_eq!(fm1.get("Type").unwrap().as_name(), b"XObject");
+    assert_eq!(fm1.get("Subtype").unwrap().as_name(), b"Form");
+    assert_eq!(numbers(fm1.get("BBox").unwrap()), [0.0, 0.0, 100.0, 100.0]);
+    assert_eq!(
+        numbers(fm1.get("Matrix").unwrap()),
+        [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        String::from_utf8(decoded(fm1)).unwrap(),
+        "q 1 0 0 1 1 1 cm /Fm0 Do Q\n"
+    );
+    let fm0_ref = fm1
+        .get("Resources")
+        .unwrap()
+        .get("XObject")
+        .unwrap()
+        .get("Fm0")
+        .unwrap()
+        .as_reference();
+    let fm0 = pdf.resolve(fm0_ref);
+    assert_eq!(numbers(fm0.get("BBox").unwrap()), [0.0, 0.0, 20.0, 20.0]);
+    assert_eq!(
+        String::from_utf8(decoded(fm0)).unwrap(),
+        "/CS0 cs\n/CS0 CS\n/P0 scn\n/P0 SCN\n0 0 m\n20 0 l\n20 20 l\n0 20 l\nh\nf\n\
+         q 4 0 0 4 0 0 cm /Im0 Do Q\n"
+    );
+    let inner_resources = fm0.get("Resources").unwrap();
+    assert_eq!(
+        array(
+            inner_resources
+                .get("ColorSpace")
+                .unwrap()
+                .get("CS0")
+                .unwrap()
+        )[0]
+        .as_name(),
+        b"Pattern"
+    );
+    let p0 = pdf.resolve(
+        inner_resources
+            .get("Pattern")
+            .unwrap()
+            .get("P0")
+            .unwrap()
+            .as_reference(),
+    );
+    assert_eq!(
+        numbers(p0.get("Matrix").unwrap()),
+        [1.0, 0.0, 0.0, 1.0, -1.0, -1.0]
+    );
+    let im0 = pdf.resolve(
+        inner_resources
+            .get("XObject")
+            .unwrap()
+            .get("Im0")
+            .unwrap()
+            .as_reference(),
+    );
+    assert_eq!(im0.get("Subtype").unwrap().as_name(), b"Image");
+    assert_eq!(decoded(im0), [0, 85, 170, 255]);
+}

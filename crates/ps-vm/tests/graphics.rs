@@ -482,8 +482,32 @@ fn bound_tint_transforms_capture_operator_names() {
 #[test]
 fn colour_space_errors() {
     for (program, error) in [
-        ("/Pattern setcolorspace", "undefined"),
         ("[/CIEBasedABC << >>] setcolorspace", "undefined"),
+        ("[/Pattern [/Pattern]] setcolorspace", "typecheck"),
+        (
+            "[/Pattern [/Pattern /DeviceRGB]] setcolorspace",
+            "typecheck",
+        ),
+        (
+            "[/Pattern /DeviceRGB /DeviceGray] setcolorspace",
+            "rangecheck",
+        ),
+        ("[/Pattern 5] setcolorspace", "typecheck"),
+        ("/Pattern setcolorspace 5 setcolor", "typecheck"),
+        (
+            "[/Pattern /DeviceRGB] setcolorspace 1 0 0 setcolor",
+            "typecheck",
+        ),
+        ("[/Pattern] setcolorspace << >> setcolor", "undefined"),
+        (
+            "[/Pattern] setcolorspace << /PatternType 1 >> setcolor",
+            "undefined",
+        ),
+        (
+            "[/Pattern] setcolorspace << /Implementation 0 >> setcolor",
+            "typecheck",
+        ),
+        ("[/Pattern] setcolorspace setcolor", "stackunderflow"),
         ("[/Separation /S /DeviceGray 3] setcolorspace", "typecheck"),
         ("[/Separation /S] setcolorspace", "rangecheck"),
         ("[/Indexed /DeviceRGB 1 (abc)] setcolorspace", "rangecheck"),
@@ -504,6 +528,51 @@ fn colour_space_errors() {
         let run = exec(program);
         assert_eq!(run.error(), Some(error), "{program}");
     }
+}
+
+/// The pattern space is accepted by name and in both array forms; its
+/// initial colour is the base's, and `currentcolor` reports the null
+/// instance of PLRM3 §4.9.1 until an instance exists.
+#[test]
+fn pattern_space_is_selected_and_reported() {
+    let run = exec(
+        "[/Pattern] setcolorspace currentcolorspace == currentcolor == count == \
+         /Pattern setcolorspace currentcolorspace == \
+         [/Pattern /DeviceRGB] setcolorspace currentcolorspace == currentcolor == count == \
+         currentrgbcolor == == == \
+         [/Pattern [/Indexed /DeviceRGB 1 <000000ffffff>]] setcolorspace currentcolor == \
+         /Pattern /ColorSpaceFamily resourcestatus pop pop =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(
+        run.output,
+        "[/Pattern]\nnull\n0\n[/Pattern]\n[/Pattern /DeviceRGB]\nnull\n0\n0.0\n0.0\n0.0\nnull\n0\n"
+    );
+    let spaces: Vec<SpaceSpec> = run
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::ColorSpace(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        spaces,
+        [
+            SpaceSpec::Pattern { base: None },
+            SpaceSpec::Pattern { base: None },
+            SpaceSpec::Pattern {
+                base: Some(Box::new(SpaceSpec::DeviceRGB)),
+            },
+            SpaceSpec::Pattern {
+                base: Some(Box::new(SpaceSpec::Indexed {
+                    base: Box::new(SpaceSpec::DeviceRGB),
+                    hival: 1,
+                    lookup: vec![0, 0, 0, 255, 255, 255],
+                })),
+            },
+        ]
+    );
 }
 
 // --- images -------------------------------------------------------------------------

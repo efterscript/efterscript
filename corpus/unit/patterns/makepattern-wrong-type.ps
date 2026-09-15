@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-error: typecheck
+% Scenario: a YStep that is not a number is a typecheck in makepattern.
+<< /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep (10) /PaintProc { pop } >> [1 0 0 1 0 0] makepattern

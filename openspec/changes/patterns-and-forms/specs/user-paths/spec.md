@@ -26,7 +26,7 @@ the declared bounding box SHALL raise `rangecheck`; a path missing
 #### Scenario: A user path round-trips
 
 - **WHEN** `{0 0 100 100 setbbox 10 10 moveto 90 90 lineto closepath} cvlit` is filled with `ufill` and then, after appending it with `uappend`, `false upath` is taken
-- **THEN** the fill matches a `moveto`/`lineto`/`closepath`/`fill` of the same points and the returned user path begins with the bounding box `0 0 100 100` and `setbbox`
+- **THEN** the fill matches a `moveto`/`lineto`/`closepath`/`fill` of the same points and the returned user path begins with the path's own bounding box `10 10 90 90` and `setbbox`
 
 #### Scenario: A stroke through a matrix
 

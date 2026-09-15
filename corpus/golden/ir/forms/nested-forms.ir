@@ -1,0 +1,35 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+form 0 bbox 0 0 60 60 {
+  q
+  m 0 0
+  l 60 0
+  l 60 60
+  l 0 60
+  h
+  W n
+  m 0 0
+  l 60 0
+  l 60 60
+  l 0 60
+  h
+  f
+  Q
+}
+form 1 bbox 0 0 100 100 {
+  q
+  m 0 0
+  l 100 0
+  l 100 100
+  l 0 100
+  h
+  W n
+  form 0 1 0 0 1 20 30
+  Q
+}
+ops:
+form 1 1 0 0 1 200 200

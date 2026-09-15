@@ -1,0 +1,6 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% Scenario: setbbox must come before any construction operator.
+{5 5 moveto 0 0 10 10 setbbox 9 9 lineto} ufill

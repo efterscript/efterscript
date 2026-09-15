@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: the cell is clipped to its box. The paint procedure paints
+% well outside BBox; the captured cell carries the box as its clip and
+% the pattern's steps and box as given.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 12 /YStep 8 /PaintProc { pop -5 -5 20 20 rectfill } >>
+  matrix makepattern def
+P setpattern
+100 100 200 100 rectfill
+showpage

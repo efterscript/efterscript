@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-error: rangecheck
+% oracle: skip the reference implements shading patterns
+% Scenario: a shading pattern is out of range. A PatternType of 2 is
+% refused by makepattern with rangecheck: only tiling patterns exist.
+<< /PatternType 2 /Shading << /ShadingType 2 >> >> [1 0 0 1 0 0] makepattern

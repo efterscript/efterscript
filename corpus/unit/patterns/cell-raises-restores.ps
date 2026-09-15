@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: /undefinedresult
+% expect-output: 3.0
+% expect-output: 6
+% Scenario: an error in the paint procedure propagates as that error
+% and leaves the graphics state as it was before the paint; the
+% painting operator's operands stay on the stack under the ones the
+% failing operator left.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 9 setlinewidth 1 0 div } >>
+  matrix makepattern def
+3 setlinewidth
+P setpattern
+{ 0 0 100 100 rectfill } stopped pop
+$error /errorname get ==
+currentlinewidth =
+count =

@@ -1,0 +1,28 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Pattern base=DeviceGray
+font 0 Helvetica-Bold
+pattern 0 matrix 1 0 0 1 0 0 bbox 0 0 8 8 step 8 8 paint 1 tiling 1 {
+  q
+  m 0 0
+  l 8 0
+  l 8 8
+  l 0 8
+  h
+  W n
+  m 0 0
+  l 4 0
+  l 4 4
+  l 0 4
+  h
+  f
+  Q
+}
+ops:
+cs 0
+pattern 0
+text 0 0.096 0 0 0.096 60 300 (Tiles) 611 0 278 0 278 0 556 0 556 0

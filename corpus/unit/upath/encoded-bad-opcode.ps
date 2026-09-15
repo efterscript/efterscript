@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% oracle: skip the reference interpreter aborts on an operator code outside the table instead of raising typecheck
+% Scenario: an operator code outside the table (12 to 32) is typecheck.
+[ [0 0 10 10 5 5] <00 01 0c> ] ufill

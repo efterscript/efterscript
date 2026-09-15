@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% Scenario: a user path holds numbers and the allowed operators only; a
+% literal name, like arcto or any other operator, is typecheck.
+{0 0 10 10 setbbox 5 5 moveto /lineto} ufill

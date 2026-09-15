@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: /undefinedresult
+% expect-output: 3.0
+% Scenario: an error in the form procedure propagates as that error and
+% leaves the graphics state as it was before execform.
+3 setlinewidth
+{ << /FormType 1 /BBox [0 0 10 10] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 9 setlinewidth 1 0 div } >> execform } stopped pop
+$error /errorname get ==
+currentlinewidth =

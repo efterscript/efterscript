@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: /rangecheck
+% expect-output: /rangecheck
+% expect-output: /typecheck
+% Scenario: a malformed number string. A representation byte outside
+% the assigned ones and a string whose length does not match its
+% header are rangecheck; a string that does not start with the array's
+% type byte is typecheck.
+/try { stopped { $error /errorname get == } { (ok) == } ifelse } def
+{ [ <95400004 0000 0000 000a 000a> <00> ] ufill } try
+{ [ <95200004 0000 0000 000a> <00> ] ufill } try
+{ [ <94200004 0000 0000 000a 000a> <00> ] ufill } try

@@ -13,8 +13,8 @@
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontRef, LineCap, LineJoin, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
-    VmError,
+    Bounds, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg,
+    SpaceSpec, VmError,
 };
 
 /// The inside rule of a fill or clip.
@@ -158,6 +158,12 @@ pub struct GState {
     pub ctm: Matrix,
     pub space: SpaceSpec,
     pub color: Vec<f32>,
+    /// The pattern instance the colour is, when `space` is a pattern
+    /// space and one has been set; `color` then holds the components of
+    /// the underlying space (none for a coloured pattern). A pattern
+    /// space without an instance is the initial null colour of PLRM3
+    /// §4.9.1, which paints nothing.
+    pub pattern: Option<PatternInfo>,
     pub line_width: f32,
     pub line_cap: LineCap,
     pub line_join: LineJoin,
@@ -187,6 +193,7 @@ impl Default for GState {
             ctm: Matrix::IDENTITY,
             space: SpaceSpec::DeviceGray,
             color: vec![0.0],
+            pattern: None,
             line_width: 1.0,
             line_cap: LineCap::Butt,
             line_join: LineJoin::Miter,
@@ -253,15 +260,47 @@ impl GState {
         if components.len() != self.space.components() {
             return Err(VmError::RangeCheck);
         }
-        let limit = match &self.space {
-            SpaceSpec::Indexed { hival, .. } => f32::from(*hival),
+        self.color = self.clamped(components);
+        self.pattern = None;
+        Ok(())
+    }
+
+    /// Makes `pattern` the colour: an uncoloured pattern takes exactly
+    /// the underlying space's components, a coloured one none, whatever
+    /// the space's base.
+    pub fn set_pattern(
+        &mut self,
+        pattern: &PatternInfo,
+        components: &[f32],
+    ) -> Result<(), VmError> {
+        let expected = if pattern.paint_type == 2 {
+            self.space.components()
+        } else {
+            0
+        };
+        if components.len() != expected {
+            return Err(VmError::RangeCheck);
+        }
+        self.color = self.clamped(components);
+        self.pattern = Some(*pattern);
+        Ok(())
+    }
+
+    /// Whether the colour is a pattern space's initial null: painting
+    /// with it makes no marks.
+    pub fn paints_nothing(&self) -> bool {
+        matches!(self.space, SpaceSpec::Pattern { .. }) && self.pattern.is_none()
+    }
+
+    fn clamped(&self, components: &[f32]) -> Vec<f32> {
+        let limit = match self.space.component_space() {
+            Some(SpaceSpec::Indexed { hival, .. }) => f32::from(*hival),
             _ => 1.0,
         };
-        self.color = components
+        components
             .iter()
             .map(|&c| if c.is_nan() { 0.0 } else { c.clamp(0.0, limit) })
-            .collect();
-        Ok(())
+            .collect()
     }
 }
 
@@ -313,6 +352,49 @@ mod tests {
         };
         state.set_color(&[7.0]).unwrap();
         assert_eq!(state.color, vec![3.0]);
+    }
+
+    #[test]
+    fn a_pattern_takes_the_base_components_and_a_numeric_colour_clears_it() {
+        let coloured = PatternInfo {
+            id: 1,
+            matrix: Matrix::IDENTITY,
+            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            xstep: 1.0,
+            ystep: 1.0,
+            paint_type: 1,
+            tiling_type: 1,
+        };
+        let uncoloured = PatternInfo {
+            paint_type: 2,
+            ..coloured
+        };
+        let mut state = GState {
+            space: SpaceSpec::Pattern {
+                base: Some(Box::new(SpaceSpec::DeviceRGB)),
+            },
+            ..GState::default()
+        };
+        assert!(state.paints_nothing());
+        assert_eq!(
+            state.set_pattern(&coloured, &[1.0]),
+            Err(VmError::RangeCheck)
+        );
+        assert_eq!(state.set_pattern(&coloured, &[]), Ok(()));
+        assert_eq!(state.color, Vec::<f32>::new());
+        assert!(!state.paints_nothing());
+        assert_eq!(
+            state.set_pattern(&uncoloured, &[]),
+            Err(VmError::RangeCheck)
+        );
+        assert_eq!(state.set_pattern(&uncoloured, &[2.0, 0.5, -1.0]), Ok(()));
+        assert_eq!(state.color, vec![1.0, 0.5, 0.0]);
+        assert_eq!(state.pattern, Some(uncoloured));
+        state.set_color(&[0.0, 0.0, 0.0]).unwrap();
+        assert_eq!(state.pattern, None);
+        state.space = SpaceSpec::Pattern { base: None };
+        assert_eq!(state.set_pattern(&uncoloured, &[]), Ok(()));
+        assert!(!GState::default().paints_nothing());
     }
 
     #[test]

@@ -195,6 +195,13 @@ pub enum SpaceSpec {
         /// `(hival + 1) × base components` bytes.
         lookup: Vec<u8>,
     },
+    /// The pattern space (PLRM3 §4.9): a colour is a pattern instance,
+    /// given to the backend as a [`PatternInfo`] beside the components of
+    /// `base`, the underlying space an uncoloured pattern is painted in;
+    /// a coloured pattern has no base and no components.
+    Pattern {
+        base: Option<Box<SpaceSpec>>,
+    },
 }
 
 impl SpaceSpec {
@@ -205,6 +212,16 @@ impl SpaceSpec {
             SpaceSpec::DeviceRGB => 3,
             SpaceSpec::DeviceCMYK => 4,
             SpaceSpec::DeviceN { names, .. } => names.len(),
+            SpaceSpec::Pattern { base } => base.as_ref().map_or(0, |b| b.components()),
+        }
+    }
+
+    /// The space the components are in: the base of a pattern space,
+    /// otherwise the space itself.
+    pub fn component_space(&self) -> Option<&SpaceSpec> {
+        match self {
+            SpaceSpec::Pattern { base } => base.as_deref(),
+            other => Some(other),
         }
     }
 
@@ -217,6 +234,7 @@ impl SpaceSpec {
             SpaceSpec::Separation { .. } => "Separation",
             SpaceSpec::DeviceN { .. } => "DeviceN",
             SpaceSpec::Indexed { .. } => "Indexed",
+            SpaceSpec::Pattern { .. } => "Pattern",
         }
     }
 
@@ -231,6 +249,7 @@ impl SpaceSpec {
             SpaceSpec::Separation { .. } | SpaceSpec::DeviceN { .. } => {
                 vec![1.0; self.components()]
             }
+            SpaceSpec::Pattern { base } => base.as_ref().map_or(Vec::new(), |b| b.initial_color()),
         }
     }
 }
@@ -589,6 +608,36 @@ pub enum Seg {
     Close,
 }
 
+/// A tiling pattern instance as the backend sees it (PLRM3 §4.9.2): the
+/// value part of what `makepattern` made. `id` distinguishes instances
+/// for the life of the interpreter; `matrix` maps pattern space to
+/// default user space (the instance's matrix already concatenated with
+/// the CTM at `makepattern`); `bbox` and the steps are in pattern space;
+/// `paint_type` is 1 (coloured) or 2 (uncoloured) and `tiling_type` 1 to
+/// 3. The paint procedure stays with the VM, which runs it under
+/// `begin_pattern_cell`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PatternInfo {
+    pub id: u64,
+    pub matrix: Matrix,
+    pub bbox: Bounds,
+    pub xstep: f32,
+    pub ystep: f32,
+    pub paint_type: u8,
+    pub tiling_type: u8,
+}
+
+/// A form as the backend sees it (PLRM3 §4.7): `id` identifies the form
+/// dictionary, `bbox` is in form space, and `matrix` maps form space to
+/// default user space (the dictionary's `Matrix` concatenated with the
+/// CTM at `execform`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FormInfo {
+    pub id: u64,
+    pub bbox: Bounds,
+    pub matrix: Matrix,
+}
+
 /// What a graphics implementation provides to the VM. Every method maps to
 /// one operator or query; angles are in degrees, coordinates in the
 /// current user space, and the backend applies the CTM.
@@ -748,6 +797,59 @@ pub trait GraphicsBackend {
     /// declared with `setcharwidth`.
     fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError>;
 
+    // --- patterns and forms --------------------------------------------------------
+
+    /// Makes `pattern` the current colour in a pattern space, with the
+    /// components of the underlying space for an uncoloured pattern
+    /// (`pattern.paint_type` 2) and none for a coloured one. Saved and
+    /// restored with the rest of the state. A backend without patterns
+    /// accepts and ignores it.
+    fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {
+        let _ = (pattern, components);
+        Ok(())
+    }
+    /// The instance `set_pattern` made the current colour, while the
+    /// current space is still a pattern space and no other colour has
+    /// replaced it; what `currentcolor` reports and what a painting
+    /// operator asks to capture. A backend without patterns has none.
+    fn current_pattern(&self) -> Option<PatternInfo> {
+        None
+    }
+    /// Starts capturing `pattern`'s cell: until `end_pattern_cell`, marks
+    /// go into the pattern's own resource in pattern space, clipped to
+    /// its box, and page operations are refused. Returns `false` and
+    /// captures nothing when the page already holds the cell, in which
+    /// case the VM does not run the paint procedure and does not call
+    /// `end_pattern_cell`.
+    fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
+        let _ = pattern;
+        Ok(false)
+    }
+    /// Ends the capture begun by `begin_pattern_cell`.
+    fn end_pattern_cell(&mut self) -> Result<(), VmError> {
+        Ok(())
+    }
+    /// Starts capturing `form`'s body: until `end_form`, marks go into
+    /// the form's own resource in form space, clipped to its box, and
+    /// page operations are refused. Returns `false` and captures nothing
+    /// when the page already holds the body, in which case the VM does
+    /// not run the paint procedure and does not call `end_form`.
+    fn begin_form(&mut self, form: &FormInfo) -> Result<bool, VmError> {
+        let _ = form;
+        Ok(false)
+    }
+    /// Ends the capture begun by `begin_form`.
+    fn end_form(&mut self) -> Result<(), VmError> {
+        Ok(())
+    }
+    /// Places `form`'s body on the page (or in the enclosing capture)
+    /// under `form.matrix`; called for every `execform`, after the
+    /// capture when there was one.
+    fn place_form(&mut self, form: &FormInfo) -> Result<(), VmError> {
+        let _ = form;
+        Ok(())
+    }
+
     // --- page and device ---------------------------------------------------------
 
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError>;
@@ -898,6 +1000,221 @@ mod tests {
         };
         assert_eq!(indexed.components(), 1);
         assert_eq!(indexed.initial_color(), vec![0.0]);
+        let coloured = SpaceSpec::Pattern { base: None };
+        assert_eq!(coloured.components(), 0);
+        assert_eq!(coloured.family(), "Pattern");
+        assert_eq!(coloured.initial_color(), Vec::<f32>::new());
+        assert_eq!(coloured.component_space(), None);
+        let uncoloured = SpaceSpec::Pattern {
+            base: Some(Box::new(SpaceSpec::DeviceCMYK)),
+        };
+        assert_eq!(uncoloured.components(), 4);
+        assert_eq!(uncoloured.family(), "Pattern");
+        assert_eq!(uncoloured.initial_color(), vec![0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(uncoloured.component_space(), Some(&SpaceSpec::DeviceCMYK));
+        assert_eq!(indexed.component_space(), Some(&indexed));
+    }
+
+    /// The pattern and form hooks have defaults, so a backend without
+    /// either keeps compiling and answers "nothing captured".
+    #[test]
+    fn pattern_and_form_hooks_default_to_nothing() {
+        struct Bare;
+        impl GraphicsBackend for Bare {
+            fn gsave(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn grestore(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn gstate_depth(&self) -> usize {
+                0
+            }
+            fn grestore_to(&mut self, _: usize) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn initgraphics(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn set_line_width(&mut self, _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn line_width(&self) -> f32 {
+                1.0
+            }
+            fn set_line_cap(&mut self, _: LineCap) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn line_cap(&self) -> LineCap {
+                LineCap::Butt
+            }
+            fn set_line_join(&mut self, _: LineJoin) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn line_join(&self) -> LineJoin {
+                LineJoin::Miter
+            }
+            fn set_miter_limit(&mut self, _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn miter_limit(&self) -> f32 {
+                10.0
+            }
+            fn set_dash(&mut self, _: &[f32], _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn dash(&self) -> (Vec<f32>, f32) {
+                (Vec::new(), 0.0)
+            }
+            fn set_flatness(&mut self, _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn flatness(&self) -> f32 {
+                1.0
+            }
+            fn concat(&mut self, _: Matrix) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn set_matrix(&mut self, _: Matrix) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn current_matrix(&self) -> Matrix {
+                Matrix::IDENTITY
+            }
+            fn default_matrix(&self) -> Matrix {
+                Matrix::IDENTITY
+            }
+            fn set_color_space(&mut self, _: &SpaceSpec) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn set_color(&mut self, _: &[f32]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn current_color_space(&self) -> SpaceSpec {
+                SpaceSpec::DeviceGray
+            }
+            fn current_color(&self) -> Vec<f32> {
+                vec![0.0]
+            }
+            fn newpath(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn moveto(&mut self, _: Point) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn lineto(&mut self, _: Point) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn curveto(&mut self, _: Point, _: Point, _: Point) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn closepath(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn arc(&mut self, _: Point, _: f32, _: f32, _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn arcn(&mut self, _: Point, _: f32, _: f32, _: f32) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn arcto(&mut self, p1: Point, p2: Point, _: f32) -> Result<(Point, Point), VmError> {
+                Ok((p1, p2))
+            }
+            fn current_point(&self) -> Result<Point, VmError> {
+                Err(VmError::NoCurrentPoint)
+            }
+            fn path_bbox(&self) -> Result<Bounds, VmError> {
+                Err(VmError::NoCurrentPoint)
+            }
+            fn fill(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn eofill(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn stroke(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn rectfill(&mut self, _: &[Rect]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn rectstroke(&mut self, _: &[Rect]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn rectclip(&mut self, _: &[Rect]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn clip(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn eoclip(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn initclip(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn clippath(&mut self) -> Result<Vec<Seg>, VmError> {
+                Ok(Vec::new())
+            }
+            fn image(&mut self, _: &ImageSpec, _: &[u8]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn imagemask(&mut self, _: &ImageSpec, _: &[u8]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn set_font(&mut self, _: Option<FontRef>) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn font(&self) -> Option<FontRef> {
+                None
+            }
+            fn show(&mut self, _: &[Glyph]) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn begin_glyph(&mut self, _: FontRef, _: u8, _: &[u8], _: bool) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn end_glyph(&mut self, _: (f32, f32), _: Option<Bounds>) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn set_media_box(&mut self, _: Bounds) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn showpage(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn copypage(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn erasepage(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+            fn nulldevice(&mut self) -> Result<(), VmError> {
+                Ok(())
+            }
+        }
+        let mut bare = Bare;
+        let pattern = PatternInfo {
+            id: 1,
+            matrix: Matrix::IDENTITY,
+            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            xstep: 1.0,
+            ystep: 1.0,
+            paint_type: 1,
+            tiling_type: 1,
+        };
+        assert_eq!(bare.set_pattern(&pattern, &[]), Ok(()));
+        assert_eq!(bare.current_pattern(), None);
+        assert_eq!(bare.begin_pattern_cell(&pattern), Ok(false));
+        assert_eq!(bare.end_pattern_cell(), Ok(()));
+        let form = FormInfo {
+            id: 1,
+            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+            matrix: Matrix::IDENTITY,
+        };
+        assert_eq!(bare.begin_form(&form), Ok(false));
+        assert_eq!(bare.end_form(), Ok(()));
+        assert_eq!(bare.place_form(&form), Ok(()));
     }
 
     #[test]

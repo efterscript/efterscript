@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a stroke through a matrix. The matrix is concatenated after
+% the path is built and before the stroke, so the geometry stays where
+% the user path put it while the line width is read in the doubled
+% space: the stroke's CTM is [2 0 0 2 0 0] and its width 1, exactly as
+% the second page gets by scaling after building the path by hand.
+1 setlinewidth
+{0 0 100 100 setbbox 10 10 moveto 90 50 lineto} [2 0 0 2 0 0] ustroke
+showpage
+newpath 10 10 moveto 90 50 lineto 2 2 scale stroke
+showpage

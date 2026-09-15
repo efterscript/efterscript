@@ -9,6 +9,13 @@
 //! and colour setting is written twice, in its non-stroking and its
 //! stroking form: the program has one current colour, PDF has two.
 //!
+//! A pattern colour (ISO 32000-1 §8.7.3) is the pattern's resource name
+//! given to `scn`/`SCN` in a pattern space: the space is `/Pattern`
+//! itself when it has no underlying space and the `/CSn` resource
+//! holding `[/Pattern base]` when it has, and an uncoloured pattern's
+//! components go before the name. A form placement is the XObject
+//! painted under its matrix, `q … cm /Fmn Do Q`, as an image is.
+//!
 //! A clip with no segments is written as a zero-area rectangle before
 //! `W n`; the clipping operator with no path at all would be ignored.
 //!
@@ -40,10 +47,12 @@
 use std::collections::BTreeMap;
 
 use pdf_out::fmt_real;
-use ps_graphics::{FillRule, FontIndex, FontSpec, IrOp, Op, Page, Resources, SpaceRef};
+use ps_graphics::{
+    FillRule, FontIndex, FontSpec, IrOp, Op, Page, PatternIndex, Resources, SpaceRef,
+};
 use ps_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
-use crate::resources::{font_name, image_name, space_name};
+use crate::resources::{font_name, form_name, image_name, pattern_name, space_name};
 
 /// The one-byte code each CID takes in a composite font written as a
 /// Type 3 fallback, by the page's font index; fonts absent here are
@@ -90,13 +99,15 @@ fn same(a: f64, b: f64) -> bool {
 }
 
 /// Which colour operator the space in effect takes: the device families
-/// have direct operators, everything else is selected by resource name.
+/// have direct operators, everything else takes `scn`, and a pattern
+/// space takes a pattern name with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ColorOp {
     Gray,
     Rgb,
     Cmyk,
     Named,
+    Pattern,
 }
 
 impl ColorOp {
@@ -105,6 +116,7 @@ impl ColorOp {
             SpaceSpec::DeviceGray => ColorOp::Gray,
             SpaceSpec::DeviceRGB => ColorOp::Rgb,
             SpaceSpec::DeviceCMYK => ColorOp::Cmyk,
+            SpaceSpec::Pattern { .. } => ColorOp::Pattern,
             _ => ColorOp::Named,
         }
     }
@@ -114,7 +126,7 @@ impl ColorOp {
             ColorOp::Gray => "g",
             ColorOp::Rgb => "rg",
             ColorOp::Cmyk => "k",
-            ColorOp::Named => "scn",
+            ColorOp::Named | ColorOp::Pattern => "scn",
         }
     }
 
@@ -123,7 +135,7 @@ impl ColorOp {
             ColorOp::Gray => "G",
             ColorOp::Rgb => "RG",
             ColorOp::Cmyk => "K",
-            ColorOp::Named => "SCN",
+            ColorOp::Named | ColorOp::Pattern => "SCN",
         }
     }
 }
@@ -316,6 +328,37 @@ impl Writer<'_> {
         self.line("ET");
     }
 
+    /// `components` as the colour in the space in effect. A pattern space
+    /// takes a pattern name, not components alone: the language never
+    /// delivers this (the null pattern paints nothing), so it is noted
+    /// rather than written.
+    fn color(&mut self, components: &[f32]) {
+        let op = self.color_op();
+        if op == ColorOp::Pattern {
+            self.notes.push(
+                "colour components without a pattern in a pattern space: not written".to_string(),
+            );
+            return;
+        }
+        let components = reals(components);
+        self.line(&format!("{components} {}", op.operator()));
+        self.line(&format!("{components} {}", op.stroking_operator()));
+    }
+
+    /// `pattern` as the colour, with the components of the underlying
+    /// space before its name for an uncoloured pattern.
+    fn pattern(&mut self, pattern: PatternIndex, components: &[f32]) {
+        let op = self.color_op();
+        let name = pattern_name(pattern);
+        let operands = if components.is_empty() {
+            format!("/{name}")
+        } else {
+            format!("{} /{name}", reals(components))
+        };
+        self.line(&format!("{operands} {}", op.operator()));
+        self.line(&format!("{operands} {}", op.stroking_operator()));
+    }
+
     fn color_op(&self) -> ColorOp {
         *self
             .color_ops
@@ -346,8 +389,10 @@ impl Writer<'_> {
     fn set_color_space(&mut self, space: SpaceRef) {
         let spec = &self.resources.color_spaces[space.0];
         let op = ColorOp::of(spec);
-        let name = match op {
-            ColorOp::Named => space_name(space),
+        let name = match (op, spec) {
+            (ColorOp::Named, _) | (ColorOp::Pattern, SpaceSpec::Pattern { base: Some(_) }) => {
+                space_name(space)
+            }
             _ => spec.family().to_string(),
         };
         self.line(&format!("/{name} cs"));
@@ -379,11 +424,13 @@ impl Writer<'_> {
             }
             IrOp::Flatness(f) => self.line(&format!("{} i", fmt_real(*f))),
             IrOp::SetColorSpace(space) => self.set_color_space(*space),
-            IrOp::SetColor(components) => {
-                let op = self.color_op();
-                let components = reals(components);
-                self.line(&format!("{components} {}", op.operator()));
-                self.line(&format!("{components} {}", op.stroking_operator()));
+            IrOp::SetColor(components) => self.color(components),
+            IrOp::SetPattern {
+                pattern,
+                components,
+            } => self.pattern(*pattern, components),
+            IrOp::Form { form, matrix: m } => {
+                self.line(&format!("q {} cm /{} Do Q", matrix(*m), form_name(*form)));
             }
             IrOp::Fill { path, rule } => {
                 self.segments(path, |p| p);
@@ -435,9 +482,9 @@ impl Writer<'_> {
     }
 }
 
-/// `ops` as content-stream text against `resources`: a page's stream or
-/// a glyph procedure's; `recode` names the composite fonts written as
-/// Type 3 fallbacks and their codes.
+/// `ops` as content-stream text against `resources`: a page's stream, a
+/// glyph procedure's, a pattern cell's, or a form body's; `recode` names
+/// the composite fonts written as Type 3 fallbacks and their codes.
 pub(crate) fn render(ops: &[Op], resources: &Resources, recode: &Recode) -> Rendered {
     let mut writer = Writer {
         out: String::new(),
@@ -639,6 +686,72 @@ mod tests {
             text(&page),
             "0.5 g\n0.5 G\n/DeviceRGB cs\n/DeviceRGB CS\n0.2 0.4 0.6 rg\n0.2 0.4 0.6 RG\nq\n/CS1 cs\n/CS1 CS\n0.6 scn\n0.6 SCN\nQ\n1 1 1 rg\n1 1 1 RG\n/DeviceCMYK cs\n/DeviceCMYK CS\n0 0 0 1 k\n0 0 0 1 K\n"
         );
+    }
+
+    #[test]
+    fn a_pattern_colour_names_the_pattern_in_its_space() {
+        use ps_graphics::{FormIndex, PatternSpec};
+        let mut page = page(Vec::new());
+        let plain = page
+            .resources
+            .intern_space(&SpaceSpec::Pattern { base: None });
+        let over_rgb = page.resources.intern_space(&SpaceSpec::Pattern {
+            base: Some(Box::new(SpaceSpec::DeviceRGB)),
+        });
+        let cell = PatternSpec {
+            matrix: Matrix::IDENTITY,
+            bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
+            xstep: 10.0,
+            ystep: 10.0,
+            paint_type: 1,
+            tiling_type: 1,
+            ops: Vec::new(),
+        };
+        let coloured = page.resources.add_pattern(cell.clone());
+        let uncoloured = page.resources.add_pattern(PatternSpec {
+            paint_type: 2,
+            ..cell
+        });
+        let path = vec![Seg::Move(p(0.0, 0.0)), Seg::Line(p(10.0, 0.0))];
+        page.ops = vec![
+            IrOp::SetColorSpace(plain),
+            IrOp::SetPattern {
+                pattern: coloured,
+                components: Vec::new(),
+            },
+            IrOp::Stroke {
+                path: path.clone(),
+                ctm: Matrix::IDENTITY,
+            },
+            IrOp::SetColorSpace(over_rgb),
+            IrOp::SetPattern {
+                pattern: uncoloured,
+                components: vec![1.0, 0.0, 0.5],
+            },
+            IrOp::Fill {
+                path,
+                rule: FillRule::NonZero,
+            },
+            IrOp::SetColor(vec![0.0]),
+        ]
+        .into_iter()
+        .map(Op::from)
+        .collect();
+        let rendered = content(&page, &Recode::default());
+        assert_eq!(
+            String::from_utf8(rendered.bytes).unwrap(),
+            "/Pattern cs\n/Pattern CS\n/P0 scn\n/P0 SCN\n0 0 m\n10 0 l\nS\n\
+             /CS1 cs\n/CS1 CS\n1 0 0.5 /P1 scn\n1 0 0.5 /P1 SCN\n0 0 m\n10 0 l\nf\n"
+        );
+        assert_eq!(
+            rendered.notes,
+            ["colour components without a pattern in a pattern space: not written"]
+        );
+        let placed = self::page(vec![IrOp::Form {
+            form: FormIndex(2),
+            matrix: Matrix([2.0, 0.0, 0.0, 2.0, 100.0, 50.0]),
+        }]);
+        assert_eq!(text(&placed), "q 2 0 0 2 100 50 cm /Fm2 Do Q\n");
     }
 
     #[test]

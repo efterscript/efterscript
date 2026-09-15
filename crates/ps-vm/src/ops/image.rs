@@ -29,6 +29,7 @@ use crate::object::{Access, Handle, Object, Type};
 use crate::ops::array::{bytes, items};
 use crate::ops::file::{drain_to_marker, file_operand};
 use crate::ops::graphics::read_matrix;
+use crate::ops::pattern;
 
 /// Sample data being collected for one image.
 #[derive(Clone, Debug)]
@@ -162,6 +163,17 @@ fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
         (spec, source, 5)
     };
     let operator = if is_mask { "imagemask" } else { "image" };
+    // A mask is painted with the current colour, so a pattern's cell is
+    // captured before any data is read; `image` and `colorimage` carry
+    // their own colours and are undefined inside an uncoloured cell
+    // (PLRM3 §4.9.2).
+    if is_mask {
+        if pattern::capture_cell(i, operator)? {
+            return Ok(());
+        }
+    } else {
+        pattern::colour_allowed(i)?;
+    }
     let acquisition = ImageAcquisition::new(spec, operator)?;
     acquire(i, acquisition, &[source], operands)
 }
@@ -170,6 +182,7 @@ fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
 /// the device space of `ncomp` components, from one source or one per
 /// component.
 pub(crate) fn colorimage(i: &mut Interp) -> Result<(), VmError> {
+    pattern::colour_allowed(i)?;
     let ncomp = i.peek(0)?.as_i32().ok_or(VmError::TypeCheck)?;
     let multi = i.peek(1)?.as_bool().ok_or(VmError::TypeCheck)?;
     let color_space = match ncomp {

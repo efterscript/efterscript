@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: ustroke without a matrix strokes the user path with the
+% current line parameters and leaves nothing behind: the second page,
+% built by hand after showpage reset the line width, dumps the same.
+3 setlinewidth
+{0 0 100 100 setbbox 10 10 moveto 90 50 lineto 50 90 lineto} ustroke
+showpage
+3 setlinewidth
+10 10 moveto 90 50 lineto 50 90 lineto stroke
+showpage

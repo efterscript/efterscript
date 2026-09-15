@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% divergence: resource-instance-shape
+% expect-output: /typecheck
+% expect-output: /typecheck
+% expect-output: /rangecheck
+% expect-output: /typecheck
+% expect-output: /typecheck
+% expect-output: /rangecheck
+% expect-output: /typecheck
+% expect-output: (ok)
+% Scenario: the Form category checks an instance's shape. Not a
+% dictionary, or one missing an entry, is typecheck; a FormType other
+% than 1 is rangecheck; a Matrix that is not six numbers or a BBox that
+% is not four is typecheck; an empty BBox is rangecheck; a PaintProc
+% that is not a procedure is typecheck; a well-formed dictionary is
+% accepted.
+/try { stopped { $error /errorname get == } { (ok) == } ifelse } def
+/base << /FormType 1 /BBox [0 0 1 1] /Matrix [1 0 0 1 0 0] /PaintProc { pop } >> def
+/with { base dup length 1 add dict copy dup 4 2 roll put } def
+{ /A 5 /Form defineresource pop } try
+{ /B << /FormType 1 >> /Form defineresource pop } try
+{ /C /FormType 2 with /Form defineresource pop } try
+{ /D /Matrix [1 0 0 1 0] with /Form defineresource pop } try
+{ /E /BBox [0 0 1] with /Form defineresource pop } try
+{ /F /BBox [1 1 0 0] with /Form defineresource pop } try
+{ /G /PaintProc 5 with /Form defineresource pop } try
+{ /H base /Form defineresource pop } try

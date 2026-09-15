@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: uappend adds the user path to the current path without
+% disturbing what is there: the fill that follows has both subpaths,
+% and the second page draws the same two by hand.
+10 10 moveto 50 10 lineto 30 40 lineto closepath
+{0 0 100 100 setbbox 60 60 moveto 90 60 lineto 75 90 lineto closepath} uappend
+fill
+showpage
+10 10 moveto 50 10 lineto 30 40 lineto closepath
+60 60 moveto 90 60 lineto 75 90 lineto closepath
+fill
+showpage

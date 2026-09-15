@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: encoded and literal agree. The same square as
+% square-literal from an encoded user path: twelve 32-bit fixed-point
+% numbers with eight fraction bits, high-order byte first
+% (representation 8), and an operator string of setbbox, moveto, three
+% linetos, and closepath; the dump is byte-identical to the literal
+% version's.
+[ <9508000c
+   00000000 00000000 00006400 00006400
+   00000a00 00000a00 00005a00 00000a00 00005a00 00005a00 00000a00 00005a00>
+  <00 01 03 03 03 0a> ] ufill
+showpage

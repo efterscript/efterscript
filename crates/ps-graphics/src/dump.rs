@@ -19,6 +19,12 @@
 //! glyph /<name> <wx> <wy> [<llx> <lly> <urx> <ury>] {
 //!   <op>                              the glyph's procedure, indented
 //! }
+//! pattern <n> matrix <a> <b> <c> <d> <tx> <ty> bbox <llx> <lly> <urx> <ury> step <xs> <ys> paint <1|2> tiling <1-3> {
+//!   <op>                              the cell, in pattern space, indented
+//! }
+//! form <n> bbox <llx> <lly> <urx> <ury> {
+//!   <op>                              the body, in form space, indented
+//! }
 //! ops:
 //! <op>                                one per line, in page order
 //! annot link <llx> <lly> <urx> <ury> <target> [border=<bx> <by> <w>] [color=<r> <g> <b>] [contents=(<text>)]
@@ -42,6 +48,12 @@
 //! param /<key> <value>              one line per entry, PostScript syntax
 //! ```
 //!
+//! A pattern resource gives the matrix from pattern space to the space
+//! of the content that names it, its box and steps in pattern space,
+//! its paint type, and its tiling type; a form resource its box in form
+//! space. Both list their captured operations indented, as a glyph
+//! does.
+//!
 //! A resident font lists only the codes whose glyph differs from the
 //! base font's built-in encoding (`/.notdef` where the program removed
 //! one); a Type 3 font lists the codes of the glyphs it captured, then
@@ -56,8 +68,9 @@
 //!
 //! Colour spaces are described by family: `DeviceGray`, `DeviceRGB`,
 //! `DeviceCMYK`, `Separation (<name>) alt=<space> tint=<len> bytes`,
-//! `DeviceN (<name>) (<name>)… alt=<space> tint=<len> bytes`, and
-//! `Indexed base=<space> hival=<n> lookup=<len> bytes`, with nested
+//! `DeviceN (<name>) (<name>)… alt=<space> tint=<len> bytes`,
+//! `Indexed base=<space> hival=<n> lookup=<len> bytes`, and `Pattern`
+//! or `Pattern base=<space>` for a pattern space, with nested
 //! spaces written inline. Names use PostScript string escapes. Sample
 //! data, lookup tables, and tint procedures appear as byte counts only.
 //!
@@ -68,6 +81,9 @@
 //! w <n>  J <0-2>  j <0-2>  M <n>  d [<n>…] <phase>  i <n>
 //! cs <n>                              colour space by resource index
 //! sc <n>…                             components
+//! pattern <n> [<c>…]                  a pattern as the colour, with the
+//!                                     components of an uncoloured one
+//! form <n> <a> <b> <c> <d> <tx> <ty>  a form placed under its matrix
 //! m <x> <y>  l <x> <y>  c <x1> <y1> <x2> <y2> <x3> <y3>  h
 //! f  f*  S                            paint the segments just listed
 //! W n  W* n                           clip to the segments just listed
@@ -93,8 +109,8 @@ use ps_fonts::ProgramKind;
 use ps_vm::{Bounds, Encoded, Glyph, ImageSpec, MarkValue, Matrix, Seg, SpaceSpec};
 
 use crate::ir::{
-    Annot, DocMark, FillRule, FontSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget, Op, Page,
-    PageAttrs, Target, View,
+    Annot, DocMark, FillRule, FontSpec, FormSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget,
+    Op, Page, PageAttrs, PatternSpec, Target, View,
 };
 use crate::real::{fmt_real, fmt_reals};
 
@@ -165,25 +181,53 @@ fn code_names(encoding: &GlyphNames, differs: impl Fn(u8, Option<&[u8]>) -> bool
     parts.join(" ")
 }
 
+/// `header {`, the operations indented by two, and `}`.
+fn block(header: &str, content: &[Op]) -> String {
+    let mut out = format!("{header} {{\n");
+    let mut body = String::new();
+    ops(&mut body, content);
+    for inner in body.lines() {
+        out.push_str("  ");
+        out.push_str(inner);
+        out.push('\n');
+    }
+    out.push_str("}\n");
+    out
+}
+
 fn glyph(name: &[u8], proc_: &GlyphProc) -> String {
-    let mut line = format!(
+    let mut header = format!(
         "glyph {} {}",
         ps_name(name),
         fmt_reals(&[proc_.width.0, proc_.width.1])
     );
     if let Some(b) = proc_.bbox {
-        line.push_str(&format!(" [{}]", fmt_reals(&[b.llx, b.lly, b.urx, b.ury])));
+        header.push_str(&format!(" [{}]", fmt_reals(&[b.llx, b.lly, b.urx, b.ury])));
     }
-    line.push_str(" {\n");
-    let mut body = String::new();
-    ops(&mut body, &proc_.ops);
-    for inner in body.lines() {
-        line.push_str("  ");
-        line.push_str(inner);
-        line.push('\n');
-    }
-    line.push_str("}\n");
-    line
+    block(&header, &proc_.ops)
+}
+
+fn bounds(b: Bounds) -> String {
+    fmt_reals(&[b.llx, b.lly, b.urx, b.ury])
+}
+
+fn pattern(index: usize, spec: &PatternSpec) -> String {
+    let header = format!(
+        "pattern {index} matrix {} bbox {} step {} paint {} tiling {}",
+        matrix(spec.matrix),
+        bounds(spec.bbox),
+        fmt_reals(&[spec.xstep, spec.ystep]),
+        spec.paint_type,
+        spec.tiling_type
+    );
+    block(&header, &spec.ops)
+}
+
+fn form(index: usize, spec: &FormSpec) -> String {
+    block(
+        &format!("form {index} bbox {}", bounds(spec.bbox)),
+        &spec.ops,
+    )
 }
 
 /// The `font` line of a resource and, for a Type 3 font, its glyph
@@ -310,6 +354,10 @@ fn space(spec: &SpaceSpec) -> String {
             hival,
             lookup.len()
         ),
+        SpaceSpec::Pattern { base } => match base {
+            Some(base) => format!("Pattern base={}", space(base)),
+            None => "Pattern".to_string(),
+        },
     }
 }
 
@@ -375,6 +423,19 @@ fn op(out: &mut String, op: &IrOp) {
         IrOp::Flatness(f) => out.push_str(&format!("i {}\n", fmt_real(*f))),
         IrOp::SetColorSpace(r) => out.push_str(&format!("cs {}\n", r.0)),
         IrOp::SetColor(c) => out.push_str(&format!("sc {}\n", fmt_reals(c))),
+        IrOp::SetPattern {
+            pattern,
+            components,
+        } => {
+            out.push_str(&format!("pattern {}", pattern.0));
+            if !components.is_empty() {
+                out.push_str(&format!(" {}", fmt_reals(components)));
+            }
+            out.push('\n');
+        }
+        IrOp::Form { form, matrix: m } => {
+            out.push_str(&format!("form {} {}\n", form.0, matrix(*m)));
+        }
         IrOp::Fill { path, rule } => {
             segments(out, path);
             out.push_str(match rule {
@@ -591,6 +652,12 @@ pub fn page(page: &Page) -> String {
     }
     for (i, spec) in page.resources.fonts.iter().enumerate() {
         out.push_str(&font(i, spec));
+    }
+    for (i, spec) in page.resources.patterns.iter().enumerate() {
+        out.push_str(&pattern(i, spec));
+    }
+    for (i, spec) in page.resources.forms.iter().enumerate() {
+        out.push_str(&form(i, spec));
     }
     out.push_str("ops:\n");
     ops(&mut out, &page.ops);

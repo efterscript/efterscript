@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: arcs in a user path. arc and arcn may open a subpath, and
+% arct takes the place of arcto; the box encloses each arc's figure
+% (its ends and the axis extremes it sweeps through). The second page
+% draws the same shapes by hand.
+{0 0 200 200 setbbox
+ 50 50 40 0 360 arc closepath
+ 150 50 30 180 0 arcn closepath
+ 100 120 moveto 140 120 140 160 20 arct 140 190 lineto} ufill
+showpage
+50 50 40 0 360 arc closepath
+150 50 30 180 0 arcn closepath
+100 120 moveto 140 120 140 160 20 arcto pop pop pop pop 140 190 lineto
+fill
+showpage

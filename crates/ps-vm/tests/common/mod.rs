@@ -8,11 +8,12 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontInfo, FontRef, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, MarkValue,
-    Matrix, Point, Rect, Seg, SpaceSpec, VmError,
+    Bounds, FontInfo, FontRef, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
+    MarkValue, Matrix, PatternInfo, Point, Rect, Seg, SpaceSpec, VmError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +56,12 @@ pub enum Call {
     Show(Vec<Glyph>),
     BeginGlyph(FontRef, u8, Vec<u8>, bool),
     EndGlyph((f32, f32), Option<Bounds>),
+    SetPattern(PatternInfo, Vec<f32>),
+    BeginPatternCell(PatternInfo),
+    EndPatternCell,
+    BeginForm(FormInfo),
+    EndForm,
+    PlaceForm(FormInfo),
     MediaBox(Bounds),
     ShowPage,
     CopyPage,
@@ -75,6 +82,7 @@ pub struct State {
     flat: f32,
     space: SpaceSpec,
     color: Vec<f32>,
+    pattern: Option<PatternInfo>,
     font: Option<FontRef>,
     // The current point in device space, as a real backend would keep it;
     // part of the state, since the path is.
@@ -93,6 +101,7 @@ impl Default for State {
             flat: 1.0,
             space: SpaceSpec::DeviceGray,
             color: vec![0.0],
+            pattern: None,
             font: None,
             current: None,
         }
@@ -108,6 +117,10 @@ pub struct Recording {
     pub fonts: Fonts,
     pub state: State,
     pub stack: Vec<State>,
+    /// The pattern cells and form bodies captured on the current page,
+    /// which `begin_*` answers `false` for; cleared by `showpage`.
+    pub cells: HashSet<u64>,
+    pub bodies: HashSet<u64>,
 }
 
 impl Recording {
@@ -121,6 +134,8 @@ impl Recording {
             fonts,
             state: State::default(),
             stack: Vec::new(),
+            cells: HashSet::new(),
+            bodies: HashSet::new(),
         }
     }
 
@@ -251,12 +266,14 @@ impl GraphicsBackend for Recording {
         self.record(Call::ColorSpace(space.clone()));
         self.state.color = space.initial_color();
         self.state.space = space.clone();
+        self.state.pattern = None;
         Ok(())
     }
 
     fn set_color(&mut self, components: &[f32]) -> Result<(), VmError> {
         self.record(Call::Color(components.to_vec()));
         self.state.color = components.to_vec();
+        self.state.pattern = None;
         Ok(())
     }
 
@@ -436,6 +453,59 @@ impl GraphicsBackend for Recording {
         Ok(())
     }
 
+    fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {
+        self.record(Call::SetPattern(*pattern, components.to_vec()));
+        self.state.color = components.to_vec();
+        self.state.pattern = Some(*pattern);
+        Ok(())
+    }
+
+    fn current_pattern(&self) -> Option<PatternInfo> {
+        self.state.pattern
+    }
+
+    /// Captures each instance once per page, inside a saved state that
+    /// starts from the initial colour, as the real backend does.
+    fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
+        self.record(Call::BeginPatternCell(*pattern));
+        if !self.cells.insert(pattern.id) {
+            return Ok(false);
+        }
+        self.gsave()?;
+        self.state.ctm = pattern.matrix;
+        self.state.current = None;
+        self.state.space = SpaceSpec::DeviceGray;
+        self.state.color = vec![0.0];
+        self.state.pattern = None;
+        Ok(true)
+    }
+
+    fn end_pattern_cell(&mut self) -> Result<(), VmError> {
+        self.record(Call::EndPatternCell);
+        Ok(())
+    }
+
+    fn begin_form(&mut self, form: &FormInfo) -> Result<bool, VmError> {
+        self.record(Call::BeginForm(*form));
+        if !self.bodies.insert(form.id) {
+            return Ok(false);
+        }
+        self.gsave()?;
+        self.state.ctm = form.matrix;
+        self.state.current = None;
+        Ok(true)
+    }
+
+    fn end_form(&mut self) -> Result<(), VmError> {
+        self.record(Call::EndForm);
+        Ok(())
+    }
+
+    fn place_form(&mut self, form: &FormInfo) -> Result<(), VmError> {
+        self.record(Call::PlaceForm(*form));
+        Ok(())
+    }
+
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError> {
         self.record(Call::MediaBox(media_box));
         Ok(())
@@ -444,6 +514,8 @@ impl GraphicsBackend for Recording {
     fn showpage(&mut self) -> Result<(), VmError> {
         self.record(Call::ShowPage);
         self.state.current = None;
+        self.cells.clear();
+        self.bodies.clear();
         Ok(())
     }
 

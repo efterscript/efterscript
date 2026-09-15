@@ -162,6 +162,7 @@ fn copy_global(i: &mut Interp, object: Object, depth: usize) -> Result<Object, V
 }
 
 fn setpagedevice(i: &mut Interp) -> Result<(), VmError> {
+    crate::ops::graphics::page_operator_allowed(i)?;
     let request = i.peek(0)?;
     let entries = i.mem.dict_entries(request)?;
     let dict = i.page_device();

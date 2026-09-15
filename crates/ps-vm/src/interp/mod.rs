@@ -17,7 +17,9 @@ use ps_fonts::{CMap, Program};
 
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
-use crate::graphics::{FontRef, GraphicsBackend, MarkValue, Matrix, ProcRef, Screen};
+use crate::graphics::{
+    Bounds, FontRef, GraphicsBackend, MarkValue, Matrix, PatternInfo, ProcRef, Screen,
+};
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, CompositeRef, Handle, Object, Type};
@@ -207,6 +209,17 @@ pub(crate) struct Category {
     pub global: Object,
 }
 
+/// A pattern instance `makepattern` made (PLRM3 §4.9.2): its read-only
+/// dictionary and the value part the backend paints with. The table of
+/// instances is the interpreter's, not the memory pool's, so `restore`
+/// does not tear it; an entry whose dictionary `restore` discarded is
+/// `invalidaccess` when used.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PatternInstance {
+    pub dict: Object,
+    pub info: PatternInfo,
+}
+
 /// The `$error` contents an uncaught error leaves behind, as text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorSummary {
@@ -267,6 +280,9 @@ pub struct Interp {
     // One entry per live `save`: the graphics-state depth just after the
     // gsave that `save` performed, below which `grestore` must not pop.
     gstate_floors: Vec<usize>,
+    // The box the last `setbbox` outside a user path declared for the
+    // current path, cleared by `newpath`; recorded, not enforced.
+    declared_bbox: Option<Bounds>,
     page_device: Object,
     /// The `currentdistillerparams` dictionary, in global VM.
     distiller_params: Object,
@@ -278,6 +294,8 @@ pub struct Interp {
     pub(crate) fontset_category: Category,
     pub(crate) cmap_category: Category,
     pub(crate) cidfont_category: Category,
+    pub(crate) pattern_category: Category,
+    pub(crate) form_category: Category,
     /// The built-in `FontSetInit` procedure set.
     pub(crate) font_set_init: Object,
     /// The built-in `CIDInit` procedure set.
@@ -336,6 +354,15 @@ pub struct Interp {
     // last: loading a predefined parent runs its program inside.
     pub(crate) cmap_builders: Vec<CMapBuilder>,
     next_fid: u32,
+    // Pattern instances by id, the index; never removed, since ids are
+    // never reused (D2).
+    pattern_instances: Vec<PatternInstance>,
+    // Paint procedures running on the execution stack: pattern cells and
+    // form bodies, inside which the page operators are undefined.
+    paint_procedures: u32,
+    // Those among them that are uncoloured pattern cells, inside which
+    // the colour operators are undefined (PLRM3 §4.9.2).
+    uncoloured_cells: u32,
     substitutions: Vec<FontSubstitution>,
     #[allow(dead_code)]
     pub(crate) quirks: Quirks,
@@ -428,6 +455,8 @@ impl Interp {
         let global_fontsets = mem.new_dict(8);
         let global_cmaps = mem.new_dict(8);
         let global_cidfonts = mem.new_dict(8);
+        let global_patterns = mem.new_dict(8);
+        let global_forms = mem.new_dict(8);
         let font_set_init = ops::fontset::init_dict(&mut mem).expect("fresh dictionary");
         let cid_init = ops::cidinit::init_dict(&mut mem).expect("fresh dictionary");
         let standard_encoding = ops::font::encoding_array(&mut mem, &ps_fonts::STANDARD_ENCODING)
@@ -450,6 +479,8 @@ impl Interp {
         let local_fontsets = mem.new_dict(8);
         let local_cmaps = mem.new_dict(8);
         let local_cidfonts = mem.new_dict(8);
+        let local_patterns = mem.new_dict(8);
+        let local_forms = mem.new_dict(8);
 
         let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
         let atoms = Atoms {
@@ -477,6 +508,7 @@ impl Interp {
             run_buffer,
             graphics: None,
             gstate_floors: Vec::new(),
+            declared_bbox: None,
             page_device,
             distiller_params,
             fonts_config: fonts,
@@ -504,6 +536,14 @@ impl Interp {
                 local: local_cidfonts,
                 global: global_cidfonts,
             },
+            pattern_category: Category {
+                local: local_patterns,
+                global: global_patterns,
+            },
+            form_category: Category {
+                local: local_forms,
+                global: global_forms,
+            },
             font_set_init,
             cid_init,
             loaded_procsets: [false; 2],
@@ -529,6 +569,9 @@ impl Interp {
             predefined_cmaps: HashMap::new(),
             cmap_builders: Vec::new(),
             next_fid: 0,
+            pattern_instances: Vec::new(),
+            paint_procedures: 0,
+            uncoloured_cells: 0,
             substitutions: Vec::new(),
             quirks,
             dicts: StandardDicts {
@@ -720,6 +763,17 @@ impl Interp {
         entries: &[(Vec<u8>, MarkValue)],
     ) -> Result<(), VmError> {
         ops::distiller::put_values(self, entries)
+    }
+
+    /// The bounding box the last `setbbox` outside a user path declared
+    /// for the current path, until the next `newpath`. It is recorded
+    /// for inspection only: the path operators do not check against it.
+    pub fn declared_path_bbox(&self) -> Option<Bounds> {
+        self.declared_bbox
+    }
+
+    pub(crate) fn set_declared_path_bbox(&mut self, bbox: Option<Bounds>) {
+        self.declared_bbox = bbox;
     }
 
     /// The depth `grestore` may not pop below: the state the innermost
@@ -924,6 +978,40 @@ impl Interp {
         let id = self.next_fid;
         self.next_fid += 1;
         Object::font_id(id)
+    }
+
+    // --- patterns and forms ------------------------------------------------
+
+    /// The id the next `makepattern` instance receives.
+    pub(crate) fn next_pattern_id(&self) -> u64 {
+        self.pattern_instances.len() as u64
+    }
+
+    /// Registers an instance under `next_pattern_id`, which `info.id` and
+    /// the dictionary's `Implementation` entry already carry.
+    pub(crate) fn register_pattern(&mut self, instance: PatternInstance) {
+        debug_assert_eq!(instance.info.id, self.next_pattern_id());
+        self.pattern_instances.push(instance);
+    }
+
+    /// The instance behind a pattern id.
+    pub(crate) fn pattern_instance(&self, id: u64) -> Option<PatternInstance> {
+        usize::try_from(id)
+            .ok()
+            .and_then(|i| self.pattern_instances.get(i))
+            .copied()
+    }
+
+    /// Whether a pattern cell or form body is being run for its capture,
+    /// where the page operators are undefined.
+    pub fn in_paint_procedure(&self) -> bool {
+        self.paint_procedures > 0
+    }
+
+    /// Whether an uncoloured pattern cell is being run, where the colour
+    /// operators are undefined (PLRM3 §4.9.2).
+    pub fn in_uncoloured_cell(&self) -> bool {
+        self.uncoloured_cells > 0
     }
 
     // --- state -------------------------------------------------------------
@@ -1246,6 +1334,16 @@ impl Interp {
         if frame.is_counted() {
             self.exec_count += 1;
         }
+        match &frame {
+            Frame::Loop(LoopFrame::PatternCell { uncoloured, .. }) => {
+                self.paint_procedures += 1;
+                if *uncoloured {
+                    self.uncoloured_cells += 1;
+                }
+            }
+            Frame::Loop(LoopFrame::FormBody { .. }) => self.paint_procedures += 1,
+            _ => {}
+        }
         self.estack.push(frame);
     }
 
@@ -1256,6 +1354,33 @@ impl Interp {
         }
         if let Frame::Loop(LoopFrame::Show(show)) = &frame {
             ops::show::abandon(self, show);
+        }
+        // A paint procedure's frame discarded while its capture is open
+        // (an error, `stop`, or `exit` inside it) closes the capture and
+        // restores the graphics state; a frame that finished normally
+        // has cleared `started` first.
+        match &frame {
+            Frame::Loop(LoopFrame::PatternCell {
+                uncoloured,
+                depth,
+                started,
+                ..
+            }) => {
+                self.paint_procedures -= 1;
+                if *uncoloured {
+                    self.uncoloured_cells -= 1;
+                }
+                if *started {
+                    ops::pattern::abandon_cell(self, *depth);
+                }
+            }
+            Frame::Loop(LoopFrame::FormBody { depth, started, .. }) => {
+                self.paint_procedures -= 1;
+                if *started {
+                    ops::form::abandon_body(self, *depth);
+                }
+            }
+            _ => {}
         }
         if let Frame::Marker(Marker::Eexec { layer, dicts }) = &frame {
             self.end_eexec(*layer, *dicts);

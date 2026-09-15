@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a pattern used for a stroke. The stroke's colour is the
+% pattern, so the content stream selects the pattern for the stroking
+% operation as well as the non-stroking one, and the line is tiled
+% with the cell.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+P setpattern
+12 setlinewidth
+100 100 moveto 400 400 lineto stroke
+showpage

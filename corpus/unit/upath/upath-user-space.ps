@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: {ucache 10.0 10.0 60.0 70.0 setbbox 10.0 10.0 moveto 20.0 20.0 lineto 30.0 40.0 50.0 60.0 60.0 20.0 curveto closepath 40.0 70.0 moveto}
+% Scenario: upath reports the path in the current user space, taking
+% the stored coordinates back through the CTM, with the box enclosing
+% every point, a curve's control points and a trailing moveto
+% included.
+100 100 translate 2 2 scale
+10 10 moveto 20 20 lineto 30 40 50 60 60 20 curveto closepath 40 70 moveto
+true upath ==

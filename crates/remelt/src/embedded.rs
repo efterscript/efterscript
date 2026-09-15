@@ -64,9 +64,9 @@ pub(crate) struct EmbeddedTable {
     composites: Vec<CompositeFont>,
 }
 
-/// The CIDs the page shows in font `index`, in its own operations and
-/// in the glyph procedures of its Type 3 fonts; for a simple font the
-/// CID is the code.
+/// The CIDs the page shows in font `index`, in its own operations, in
+/// the glyph procedures of its Type 3 fonts, and in its pattern cells
+/// and form bodies; for a simple font the CID is the code.
 pub(crate) fn cids_used(page: &Page, index: usize) -> BTreeSet<u16> {
     fn collect(ops: &[Op], index: usize, into: &mut BTreeSet<u16>) {
         for op in ops {
@@ -85,6 +85,12 @@ pub(crate) fn cids_used(page: &Page, index: usize) -> BTreeSet<u16> {
                 collect(&glyph.ops, index, &mut cids);
             }
         }
+    }
+    for spec in &page.resources.patterns {
+        collect(&spec.ops, index, &mut cids);
+    }
+    for spec in &page.resources.forms {
+        collect(&spec.ops, index, &mut cids);
     }
     cids
 }

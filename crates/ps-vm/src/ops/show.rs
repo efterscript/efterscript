@@ -36,6 +36,7 @@ use crate::object::{Object, Type};
 use crate::ops::array::items;
 use crate::ops::cidinit;
 use crate::ops::font::{self, entry};
+use crate::ops::pattern;
 
 /// The glyph units of an em in a program's glyph space: a thousand for
 /// charstring programs, one for TrueType after the scale to the unit em.
@@ -401,6 +402,11 @@ fn start(
         let info = describe(i, dict, &kind, encoding, font.matrix)?;
         i.backend()?.define_font(font.instance, &info)?;
         i.mark_font_described(font.instance);
+    }
+    // Text is painted with the current colour: a pattern's cell is
+    // captured first, and the operator runs again over its operands.
+    if !measure && !outline && pattern::capture_cell(i, operator)? {
+        return Ok(());
     }
     for _ in 0..operands {
         i.pop()?;

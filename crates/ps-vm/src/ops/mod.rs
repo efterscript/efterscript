@@ -126,10 +126,12 @@ pub mod file;
 pub mod filter;
 pub mod font;
 pub mod fontset;
+pub mod form;
 pub mod graphics;
 pub mod image;
 pub mod output;
 pub mod pagedevice;
+pub mod pattern;
 pub mod pdfmark;
 pub mod resource;
 pub mod screen;
@@ -137,6 +139,7 @@ pub mod show;
 pub mod stack;
 pub mod status;
 pub mod types;
+pub mod upath;
 pub mod vm;
 
 // Later groups append here; indices of earlier entries never move.
@@ -166,6 +169,10 @@ const MODULES: &[&[OpEntry]] = &[
     screen::OPS,
     graphics::LATER_OPS,
     filter::OPS,
+    upath::OPS,
+    pattern::OPS,
+    pattern::PAINT_OPS,
+    form::OPS,
 ];
 
 /// The complete operator table, built on first use.
@@ -267,6 +274,9 @@ mod tests {
         assert!(find("pathforall", Visibility::Graphics).is_some());
         assert!(find("colorimage", Visibility::Graphics).is_some());
         assert!(find("filter", Visibility::Public).is_some());
+        assert!(find("ufill", Visibility::Graphics).is_some());
+        assert!(find("ufill", Visibility::Public).is_none());
+        assert!(find("arct", Visibility::Graphics).is_some());
     }
 
     #[test]

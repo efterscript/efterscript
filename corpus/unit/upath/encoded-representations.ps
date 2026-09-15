@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: every number representation of a homogeneous number array
+% paints the same square as square-literal, one page each: 16-bit
+% integers high-order first (32) and low-order first (160), 16-bit
+% fixed point with four fraction bits (36), IEEE reals high-order
+% first (48) and low-order first (176), and native reals (49 and 177),
+% which are IEEE reals with the low-order byte first whatever the
+% order flag says.
+/ops <00 01 03 03 03 0a> def
+[ <9520000c 0000 0000 0064 0064 000a 000a 005a 000a 005a 005a 000a 005a> ops ] ufill showpage
+[ <95a00c00 0000 0000 6400 6400 0a00 0a00 5a00 0a00 5a00 5a00 0a00 5a00> ops ] ufill showpage
+[ <9524000c 0000 0000 0640 0640 00a0 00a0 05a0 00a0 05a0 05a0 00a0 05a0> ops ] ufill showpage
+[ <9530000c 00000000 00000000 42c80000 42c80000
+   41200000 41200000 42b40000 41200000 42b40000 42b40000 41200000 42b40000> ops ] ufill showpage
+[ <95b00c00 00000000 00000000 0000c842 0000c842
+   00002041 00002041 0000b442 00002041 0000b442 0000b442 00002041 0000b442> ops ] ufill showpage
+[ <9531000c 00000000 00000000 0000c842 0000c842
+   00002041 00002041 0000b442 00002041 0000b442 0000b442 00002041 0000b442> ops ] ufill showpage
+[ <95b10c00 00000000 00000000 0000c842 0000c842
+   00002041 00002041 0000b442 00002041 0000b442 0000b442 00002041 0000b442> ops ] ufill showpage

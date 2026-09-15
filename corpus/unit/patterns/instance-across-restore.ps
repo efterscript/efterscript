@@ -1,0 +1,27 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: /undefined
+% Scenario: a pattern instance across save and restore. An instance
+% made before save, set and painted with inside it, is the current
+% colour again once set after restore and paints from the cell the
+% page already captured: one pattern resource, two fills. An instance
+% made inside save lives in local VM and is discarded by restore with
+% every reference to it, so the name it was defined under is undefined
+% afterwards.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+save
+P setpattern
+100 100 200 100 rectfill
+restore
+P setpattern
+100 300 200 100 rectfill
+currentcolor P eq =
+save
+/Q << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+restore
+{ Q setpattern } stopped { $error /errorname get == } if
+showpage

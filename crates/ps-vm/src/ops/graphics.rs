@@ -10,11 +10,11 @@
 //! backend is installed.
 
 use crate::error::VmError;
-use crate::graphics::{Bounds, LineCap, LineJoin, Matrix, Point, Rect, SpaceSpec};
+use crate::graphics::{Bounds, GraphicsBackend, LineCap, LineJoin, Matrix, Point, Rect, SpaceSpec};
 use crate::interp::{Frame, Interp, LoopFrame, scan_error};
 use crate::object::{Object, Type};
 use crate::ops::array::{bytes, items};
-use crate::ops::{image, output};
+use crate::ops::{image, output, pattern};
 use crate::scanner::scan_all;
 
 op_table! { graphics OPS {
@@ -104,16 +104,16 @@ op_table! { graphics LATER_OPS {
 // Operands are read in place and popped only after the backend accepted
 // the call, so a failing operator leaves them on the stack.
 
-fn num_at(i: &Interp, n: usize) -> Result<f32, VmError> {
+pub(crate) fn num_at(i: &Interp, n: usize) -> Result<f32, VmError> {
     i.peek(n)?.as_number().ok_or(VmError::TypeCheck)
 }
 
 /// The point whose `y` is `n` below the top and `x` just beneath it.
-fn point_at(i: &Interp, n: usize) -> Result<Point, VmError> {
+pub(crate) fn point_at(i: &Interp, n: usize) -> Result<Point, VmError> {
     Ok(Point::new(num_at(i, n + 1)?, num_at(i, n)?))
 }
 
-fn drop(i: &mut Interp, count: usize) -> Result<(), VmError> {
+pub(crate) fn drop(i: &mut Interp, count: usize) -> Result<(), VmError> {
     for _ in 0..count {
         i.pop()?;
     }
@@ -129,7 +129,7 @@ fn push_point(i: &mut Interp, p: Point) -> Result<(), VmError> {
     push_real(i, p.y)
 }
 
-fn is_array(object: Object) -> bool {
+pub(crate) fn is_array(object: Object) -> bool {
     matches!(object.ty(), Type::Array | Type::PackedArray)
 }
 
@@ -147,6 +147,28 @@ pub(crate) fn read_matrix(i: &Interp, object: Object) -> Result<Matrix, VmError>
         *slot = item.as_number().ok_or(VmError::TypeCheck)?;
     }
     Ok(Matrix(elements))
+}
+
+/// The four numbers of a bounding-box operand (`BBox` entries and the
+/// like): `typecheck` unless an array of four numbers, `rangecheck` when
+/// the upper corner is not above and to the right of the lower one.
+pub(crate) fn read_bounds(i: &Interp, object: Object) -> Result<Bounds, VmError> {
+    if !is_array(object) {
+        return Err(VmError::TypeCheck);
+    }
+    let items = items(i, object)?;
+    if items.len() != 4 {
+        return Err(VmError::TypeCheck);
+    }
+    let mut values = [0.0; 4];
+    for (slot, item) in values.iter_mut().zip(items) {
+        *slot = item.as_number().ok_or(VmError::TypeCheck)?;
+    }
+    let [llx, lly, urx, ury] = values;
+    if !(urx > llx && ury > lly) {
+        return Err(VmError::RangeCheck);
+    }
+    Ok(Bounds::new(llx, lly, urx, ury))
 }
 
 /// Stores `matrix` into the array operand and returns it.
@@ -436,6 +458,7 @@ fn invertmatrix(i: &mut Interp) -> Result<(), VmError> {
 // --- path construction ----------------------------------------------------------------
 
 fn newpath(i: &mut Interp) -> Result<(), VmError> {
+    i.set_declared_path_bbox(None);
     i.backend()?.newpath()
 }
 
@@ -445,17 +468,36 @@ fn moveto(i: &mut Interp) -> Result<(), VmError> {
     drop(i, 2)
 }
 
-fn offset(base: Point, delta: Point) -> Point {
+pub(crate) fn offset(base: Point, delta: Point) -> Point {
     Point::new(base.x + delta.x, base.y + delta.y)
 }
 
 // Relative construction adds to the current point in user space, which
-// is what the backend reports.
+// is what the backend reports. The three `*_by` forms are shared with
+// the user-path walker.
+pub(crate) fn rmoveto_by(backend: &mut dyn GraphicsBackend, delta: Point) -> Result<(), VmError> {
+    let current = backend.current_point()?;
+    backend.moveto(offset(current, delta))
+}
+
+pub(crate) fn rlineto_by(backend: &mut dyn GraphicsBackend, delta: Point) -> Result<(), VmError> {
+    let current = backend.current_point()?;
+    backend.lineto(offset(current, delta))
+}
+
+pub(crate) fn rcurveto_by(
+    backend: &mut dyn GraphicsBackend,
+    c1: Point,
+    c2: Point,
+    p: Point,
+) -> Result<(), VmError> {
+    let current = backend.current_point()?;
+    backend.curveto(offset(current, c1), offset(current, c2), offset(current, p))
+}
+
 fn rmoveto(i: &mut Interp) -> Result<(), VmError> {
     let delta = point_at(i, 0)?;
-    let backend = i.backend()?;
-    let current = backend.current_point()?;
-    backend.moveto(offset(current, delta))?;
+    rmoveto_by(i.backend()?, delta)?;
     drop(i, 2)
 }
 
@@ -467,9 +509,7 @@ fn lineto(i: &mut Interp) -> Result<(), VmError> {
 
 fn rlineto(i: &mut Interp) -> Result<(), VmError> {
     let delta = point_at(i, 0)?;
-    let backend = i.backend()?;
-    let current = backend.current_point()?;
-    backend.lineto(offset(current, delta))?;
+    rlineto_by(i.backend()?, delta)?;
     drop(i, 2)
 }
 
@@ -485,9 +525,7 @@ fn rcurveto(i: &mut Interp) -> Result<(), VmError> {
     let p = point_at(i, 0)?;
     let c2 = point_at(i, 2)?;
     let c1 = point_at(i, 4)?;
-    let backend = i.backend()?;
-    let current = backend.current_point()?;
-    backend.curveto(offset(current, c1), offset(current, c2), offset(current, p))?;
+    rcurveto_by(i.backend()?, c1, c2, p)?;
     drop(i, 6)
 }
 
@@ -540,15 +578,28 @@ fn pathbbox(i: &mut Interp) -> Result<(), VmError> {
 
 // --- painting and clipping ---------------------------------------------------------
 
+// A painting operator first asks whether the pattern it paints with
+// needs its cell captured (`pattern::capture_cell`); when it does, the
+// paint procedure runs and the operator runs again afterwards.
+
 fn fill(i: &mut Interp) -> Result<(), VmError> {
+    if pattern::capture_cell(i, "fill")? {
+        return Ok(());
+    }
     i.backend()?.fill()
 }
 
 fn eofill(i: &mut Interp) -> Result<(), VmError> {
+    if pattern::capture_cell(i, "eofill")? {
+        return Ok(());
+    }
     i.backend()?.eofill()
 }
 
 fn stroke(i: &mut Interp) -> Result<(), VmError> {
+    if pattern::capture_cell(i, "stroke")? {
+        return Ok(());
+    }
     i.backend()?.stroke()
 }
 
@@ -624,12 +675,18 @@ fn rect_operands(i: &Interp) -> Result<(Vec<Rect>, usize), VmError> {
 
 fn rectfill(i: &mut Interp) -> Result<(), VmError> {
     let (rects, operands) = rect_operands(i)?;
+    if pattern::capture_cell(i, "rectfill")? {
+        return Ok(());
+    }
     i.backend()?.rectfill(&rects)?;
     drop(i, operands)
 }
 
 fn rectstroke(i: &mut Interp) -> Result<(), VmError> {
     let (rects, operands) = rect_operands(i)?;
+    if pattern::capture_cell(i, "rectstroke")? {
+        return Ok(());
+    }
     i.backend()?.rectstroke(&rects)?;
     drop(i, operands)
 }
@@ -652,6 +709,7 @@ fn component(color: &[f32], n: usize) -> f32 {
 
 /// The device-space operators set a device space and a colour together.
 fn set_device_color(i: &mut Interp, space: SpaceSpec, count: usize) -> Result<(), VmError> {
+    pattern::colour_allowed(i)?;
     let mut components = Vec::with_capacity(count);
     for k in 0..count {
         components.push(unit(num_at(i, count - 1 - k)?));
@@ -784,6 +842,7 @@ fn currentrgbcolor(i: &mut Interp) -> Result<(), VmError> {
 }
 
 fn sethsbcolor(i: &mut Interp) -> Result<(), VmError> {
+    pattern::colour_allowed(i)?;
     let hsb = [
         unit(num_at(i, 2)?),
         unit(num_at(i, 1)?),
@@ -856,7 +915,10 @@ pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<Sp
     }
     if object.ty() == Type::Name {
         let family = name_bytes(i, object)?;
-        return device_space(&family).ok_or(VmError::Undefined);
+        return match family.as_slice() {
+            b"Pattern" => Ok(SpaceSpec::Pattern { base: None }),
+            _ => device_space(&family).ok_or(VmError::Undefined),
+        };
     }
     if !is_array(object) {
         return Err(VmError::TypeCheck);
@@ -875,6 +937,16 @@ pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<Sp
         };
     }
     match (family.as_slice(), rest) {
+        (b"Pattern", &[]) => Ok(SpaceSpec::Pattern { base: None }),
+        // The underlying space of an uncoloured pattern is any space but
+        // a pattern space, which is `typecheck` as observed in other
+        // interpreters; validity for painting is the instance's concern.
+        (b"Pattern", &[base]) => match parse_space(i, base, depth + 1)? {
+            SpaceSpec::Pattern { .. } => Err(VmError::TypeCheck),
+            base => Ok(SpaceSpec::Pattern {
+                base: Some(Box::new(base)),
+            }),
+        },
         (b"Separation", &[name, alternate, tint]) => Ok(SpaceSpec::Separation {
             name: name_bytes(i, name)?,
             alternate: Box::new(parse_space(i, alternate, depth + 1)?),
@@ -917,7 +989,7 @@ pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<Sp
                 lookup,
             })
         }
-        (b"Separation" | b"DeviceN" | b"Indexed", _) => Err(VmError::RangeCheck),
+        (b"Separation" | b"DeviceN" | b"Indexed" | b"Pattern", _) => Err(VmError::RangeCheck),
         _ => Err(VmError::Undefined),
     }
 }
@@ -978,6 +1050,10 @@ pub(crate) fn space_object(
             Object::integer(i32::from(*hival)),
             i.mem.alloc_string(lookup.clone()),
         ],
+        SpaceSpec::Pattern { base } => match base {
+            Some(base) => vec![family, space_object(i, base, depth + 1)?],
+            None => vec![family],
+        },
     };
     i.mem.alloc_array(items)
 }
@@ -991,6 +1067,7 @@ fn procedure_object(i: &mut Interp, source: &[u8]) -> Result<Object, VmError> {
 }
 
 fn setcolorspace(i: &mut Interp) -> Result<(), VmError> {
+    pattern::colour_allowed(i)?;
     let space = parse_space(i, i.peek(0)?, 0)?;
     i.backend()?.set_color_space(&space)?;
     drop(i, 1)
@@ -1003,9 +1080,16 @@ fn currentcolorspace(i: &mut Interp) -> Result<(), VmError> {
 }
 
 // `setcolor` takes as many numbers as the current space has components;
-// the backend decides what range they must lie in.
+// the backend decides what range they must lie in. In a pattern space
+// the colour is a pattern instance on top of the components.
 fn setcolor(i: &mut Interp) -> Result<(), VmError> {
-    let count = i.backend()?.current_color_space().components();
+    pattern::colour_allowed(i)?;
+    let space = i.backend()?.current_color_space();
+    if let SpaceSpec::Pattern { .. } = space {
+        let instance = pattern::instance_of(i, i.peek(0)?)?;
+        return pattern::set_instance(i, instance, &space);
+    }
+    let count = space.components();
     let mut components = Vec::with_capacity(count);
     for k in 0..count {
         components.push(num_at(i, count - 1 - k)?);
@@ -1014,9 +1098,19 @@ fn setcolor(i: &mut Interp) -> Result<(), VmError> {
     drop(i, count)
 }
 
+/// The components of the current colour, and in a pattern space the
+/// instance above them (PLRM3 §4.9.2) — or the initial null of §4.9.1
+/// alone while no instance has been set.
 fn currentcolor(i: &mut Interp) -> Result<(), VmError> {
     let (space, color) = current_device_color(i)?;
-    let indexed = matches!(space, SpaceSpec::Indexed { .. });
+    let instance = match space {
+        SpaceSpec::Pattern { .. } => match pattern::current_instance_dict(i)? {
+            Some(instance) => Some(instance),
+            None => return i.push(Object::null()),
+        },
+        _ => None,
+    };
+    let indexed = matches!(space.component_space(), Some(SpaceSpec::Indexed { .. }));
     for value in color {
         if indexed {
             i.push(Object::integer(value as i32))?;
@@ -1024,20 +1118,36 @@ fn currentcolor(i: &mut Interp) -> Result<(), VmError> {
             push_real(i, value)?;
         }
     }
-    Ok(())
+    match instance {
+        Some(instance) => i.push(instance),
+        None => Ok(()),
+    }
 }
 
 // --- pages and devices ------------------------------------------------------------------
 
+/// The page operators are undefined inside a pattern cell or form body
+/// (PLRM3 §4.7, §4.9.2).
+pub(crate) fn page_operator_allowed(i: &Interp) -> Result<(), VmError> {
+    if i.in_paint_procedure() {
+        Err(VmError::Undefined)
+    } else {
+        Ok(())
+    }
+}
+
 fn showpage(i: &mut Interp) -> Result<(), VmError> {
+    page_operator_allowed(i)?;
     i.backend()?.showpage()
 }
 
 fn copypage(i: &mut Interp) -> Result<(), VmError> {
+    page_operator_allowed(i)?;
     i.backend()?.copypage()
 }
 
 fn erasepage(i: &mut Interp) -> Result<(), VmError> {
+    page_operator_allowed(i)?;
     i.backend()?.erasepage()
 }
 

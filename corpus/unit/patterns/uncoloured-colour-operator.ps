@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: undefined
+% divergence: uncoloured-cell-colour-operators
+% Scenario: colour operators inside an uncoloured paint procedure raise
+% undefined, per PLRM3 section 4.9.2.
+/U << /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0.5 setgray 0 0 5 5 rectfill } >>
+  matrix makepattern def
+[/Pattern /DeviceGray] setcolorspace
+0 U setcolor
+100 100 200 100 rectfill
+showpage

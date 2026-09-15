@@ -8,9 +8,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ps_graphics::{FillRule, Graphics, IrOp, Page, SpaceRef};
+use ps_graphics::{FillRule, Graphics, IrOp, Page, PatternIndex, SpaceRef};
 use ps_vm::{
-    Bounds, GraphicsBackend, ImageSpec, LineCap, Matrix, Point, Rect, Seg, SpaceSpec, VmError,
+    Bounds, FormInfo, GraphicsBackend, ImageSpec, LineCap, Matrix, PatternInfo, Point, Rect, Seg,
+    SpaceSpec, VmError,
 };
 
 type Pages = Rc<RefCell<Vec<Page>>>;
@@ -1234,4 +1235,297 @@ fn a_simple_descendant_is_recorded_as_its_own_font() {
          text 0 0.012 0 0 0.012 100 700 <0048> 722 0\n\
          text 0 0.012 0 0 0.012 108.664 700 (i) 222 0\n"
     ));
+}
+
+// --- patterns and forms ---------------------------------------------------------
+
+fn pattern(id: u64, matrix: Matrix, paint_type: u8) -> PatternInfo {
+    PatternInfo {
+        id,
+        matrix,
+        bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
+        xstep: 10.0,
+        ystep: 10.0,
+        paint_type,
+        tiling_type: 1,
+    }
+}
+
+fn form(id: u64, matrix: Matrix) -> FormInfo {
+    FormInfo {
+        id,
+        bbox: Bounds::new(0.0, 0.0, 100.0, 100.0),
+        matrix,
+    }
+}
+
+fn square(g: &mut Graphics<Pages>, x: f32, y: f32, size: f32) {
+    g.rectfill(&[Rect {
+        x,
+        y,
+        width: size,
+        height: size,
+    }])
+    .unwrap();
+}
+
+/// Runs a cell that fills a five-unit square, as the VM would: the
+/// backend saves the state at `begin`, the caller restores it after.
+fn capture_cell(g: &mut Graphics<Pages>, info: &PatternInfo) -> bool {
+    let depth = g.gstate_depth();
+    if !g.begin_pattern_cell(info).unwrap() {
+        return false;
+    }
+    square(g, 0.0, 0.0, 5.0);
+    g.end_pattern_cell().unwrap();
+    g.grestore_to(depth).unwrap();
+    true
+}
+
+const CELL: &str = "  q\n  m 0 0\n  l 10 0\n  l 10 10\n  l 0 10\n  h\n  W n\n  m 0 0\n  l 5 0\n  l 5 5\n  l 0 5\n  h\n  f\n  Q\n}\n";
+
+#[test]
+fn a_cell_is_captured_once_per_page_in_pattern_space_and_names_its_fills() {
+    let (mut g, pages) = backend();
+    let info = pattern(7, Matrix([2.0, 0.0, 0.0, 2.0, 30.0, 50.0]), 1);
+    g.concat(Matrix::scaling(3.0, 3.0)).unwrap();
+    g.set_line_width(4.0).unwrap();
+    g.set_color_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(SpaceSpec::DeviceGray)),
+    })
+    .unwrap();
+    g.set_pattern(&info, &[]).unwrap();
+    assert_eq!(g.current_pattern(), Some(info));
+    assert!(capture_cell(&mut g, &info));
+    // The cell ran in pattern space from the initial state; the page's
+    // scale and line width are back afterwards.
+    assert_eq!(g.current_matrix(), Matrix::scaling(3.0, 3.0));
+    assert_eq!(g.line_width(), 4.0);
+    assert_eq!(g.current_pattern(), Some(info));
+    square(&mut g, 0.0, 0.0, 10.0);
+    assert!(!capture_cell(&mut g, &info), "the page holds the cell");
+    square(&mut g, 20.0, 0.0, 10.0);
+    g.showpage().unwrap();
+    assert!(capture_cell(&mut g, &info), "a new page captures again");
+    g.erasepage().unwrap();
+    assert!(capture_cell(&mut g, &info), "and so does an erased one");
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert_eq!(
+        pages[0].dump(),
+        format!(
+            "ir/1\npage 612 792\nresources:\ncs 0 Pattern base=DeviceGray\n\
+             pattern 0 matrix 2 0 0 2 30 50 bbox 0 0 10 10 step 10 10 paint 1 tiling 1 {{\n{CELL}\
+             ops:\ncs 0\npattern 0\nm 0 0\nl 30 0\nl 30 30\nl 0 30\nh\nf\n\
+             m 60 0\nl 90 0\nl 90 30\nl 60 30\nh\nf\n"
+        )
+    );
+    assert_eq!(pages[1].resources.patterns.len(), 1);
+}
+
+#[test]
+fn the_colour_dedup_key_is_the_pattern_and_its_components() {
+    let (mut g, _) = backend();
+    let a = pattern(1, Matrix::IDENTITY, 2);
+    let b = pattern(2, Matrix::IDENTITY, 2);
+    g.set_color_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(SpaceSpec::DeviceRGB)),
+    })
+    .unwrap();
+    g.set_pattern(&a, &[1.0, 0.0, 0.0]).unwrap();
+    capture_cell(&mut g, &a);
+    square(&mut g, 0.0, 0.0, 10.0);
+    g.set_pattern(&a, &[1.0, 0.0, 0.0]).unwrap();
+    square(&mut g, 0.0, 0.0, 10.0);
+    g.set_pattern(&a, &[0.0, 1.0, 0.0]).unwrap();
+    square(&mut g, 0.0, 0.0, 10.0);
+    g.set_pattern(&b, &[0.0, 1.0, 0.0]).unwrap();
+    capture_cell(&mut g, &b);
+    square(&mut g, 0.0, 0.0, 10.0);
+    assert_eq!(g.set_pattern(&a, &[1.0]), Err(VmError::RangeCheck));
+    g.set_color_space(&SpaceSpec::DeviceGray).unwrap();
+    assert_eq!(g.current_pattern(), None);
+    square(&mut g, 0.0, 0.0, 10.0);
+    let colours: Vec<IrOp> = ops(&g)
+        .into_iter()
+        .filter(|op| {
+            matches!(
+                op,
+                IrOp::SetPattern { .. } | IrOp::SetColor(_) | IrOp::SetColorSpace(_)
+            )
+        })
+        .collect();
+    assert_eq!(
+        colours,
+        [
+            IrOp::SetColorSpace(SpaceRef(0)),
+            IrOp::SetPattern {
+                pattern: PatternIndex(0),
+                components: vec![1.0, 0.0, 0.0]
+            },
+            IrOp::SetPattern {
+                pattern: PatternIndex(0),
+                components: vec![0.0, 1.0, 0.0]
+            },
+            IrOp::SetPattern {
+                pattern: PatternIndex(1),
+                components: vec![0.0, 1.0, 0.0]
+            },
+            IrOp::SetColorSpace(SpaceRef(1)),
+        ]
+    );
+}
+
+#[test]
+fn the_null_pattern_paints_nothing() {
+    let (mut g, _) = backend();
+    g.define_font(0, &helvetica()).unwrap();
+    g.set_color_space(&SpaceSpec::Pattern { base: None })
+        .unwrap();
+    square(&mut g, 0.0, 0.0, 10.0);
+    line(&mut g, p(0.0, 0.0), p(10.0, 10.0));
+    g.stroke().unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    g.show(&[glyph(72, 722.0)]).unwrap();
+    let mask = ImageSpec {
+        width: 1,
+        height: 1,
+        bits_per_component: 1,
+        color_space: None,
+        decode: vec![0.0, 1.0],
+        matrix: Matrix::IDENTITY,
+        interpolate: false,
+        is_mask: true,
+        encoded: None,
+    };
+    g.imagemask(&mask, &[0]).unwrap();
+    assert!(ops(&g).is_empty(), "{:?}", ops(&g));
+    // An image carries its own colours.
+    let image = ImageSpec {
+        color_space: Some(SpaceSpec::DeviceGray),
+        bits_per_component: 8,
+        is_mask: false,
+        ..mask
+    };
+    g.image(&image, &[0]).unwrap();
+    assert_eq!(ops(&g).len(), 1);
+    // The current point still advanced under the null pattern.
+    assert!(close(g.current_point().unwrap(), p(7.22, 0.0)));
+}
+
+#[test]
+fn a_pattern_inside_a_form_is_relative_to_form_space() {
+    let (mut g, pages) = backend();
+    let info = pattern(3, Matrix::IDENTITY, 1);
+    let outer = form(11, Matrix::translation(50.0, 50.0));
+    g.set_line_width(2.0).unwrap();
+    let depth = g.gstate_depth();
+    assert!(g.begin_form(&outer).unwrap());
+    assert_eq!(g.current_matrix(), outer.matrix);
+    g.set_color_space(&SpaceSpec::Pattern { base: None })
+        .unwrap();
+    g.set_pattern(&info, &[]).unwrap();
+    assert!(capture_cell(&mut g, &info));
+    square(&mut g, 0.0, 0.0, 100.0);
+    assert!(
+        !g.begin_form(&outer).unwrap(),
+        "a form does not nest itself"
+    );
+    assert_eq!(g.end_pattern_cell(), Err(VmError::InvalidAccess));
+    g.end_form().unwrap();
+    g.grestore_to(depth).unwrap();
+    assert_eq!(g.line_width(), 2.0);
+    g.place_form(&outer).unwrap();
+    assert!(!g.begin_form(&outer).unwrap());
+    // A second execution under a scaled CTM: the VM computes the
+    // placement matrix from the form's matrix and the CTM.
+    g.concat(Matrix::scaling(2.0, 2.0)).unwrap();
+    let scaled = FormInfo {
+        matrix: Matrix::translation(50.0, 50.0).then(g.current_matrix()),
+        ..outer
+    };
+    assert!(!g.begin_form(&scaled).unwrap());
+    g.place_form(&scaled).unwrap();
+    // The same instance on the page: a second resource over the same
+    // cell, with the page's matrix.
+    g.set_color_space(&SpaceSpec::Pattern { base: None })
+        .unwrap();
+    g.set_pattern(&info, &[]).unwrap();
+    assert!(!capture_cell(&mut g, &info));
+    square(&mut g, 0.0, 0.0, 10.0);
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert_eq!(
+        pages[0].dump(),
+        format!(
+            "ir/1\npage 612 792\nresources:\ncs 0 Pattern\n\
+             pattern 0 matrix 1 0 0 1 -50 -50 bbox 0 0 10 10 step 10 10 paint 1 tiling 1 {{\n{CELL}\
+             pattern 1 matrix 1 0 0 1 0 0 bbox 0 0 10 10 step 10 10 paint 1 tiling 1 {{\n{CELL}\
+             form 0 bbox 0 0 100 100 {{\n  q\n  m 0 0\n  l 100 0\n  l 100 100\n  l 0 100\n  h\n  W n\n\
+             \x20 cs 0\n  pattern 0\n  m 0 0\n  l 100 0\n  l 100 100\n  l 0 100\n  h\n  f\n  Q\n}}\n\
+             ops:\nw 2\nform 0 1 0 0 1 50 50\nform 0 2 0 0 2 100 100\ncs 0\npattern 1\n\
+             m 0 0\nl 20 0\nl 20 20\nl 0 20\nh\nf\n"
+        )
+    );
+}
+
+#[test]
+fn forms_nest_and_page_operations_are_refused_inside() {
+    let (mut g, pages) = backend();
+    let inner = form(1, Matrix::translation(20.0, 30.0));
+    let outer = form(2, Matrix::translation(200.0, 200.0));
+    g.set_color_space(&SpaceSpec::DeviceRGB).unwrap();
+    g.set_color(&[1.0, 0.0, 0.0]).unwrap();
+    let depth = g.gstate_depth();
+    assert!(g.begin_form(&outer).unwrap());
+    assert_eq!(g.showpage(), Err(VmError::InvalidAccess));
+    assert_eq!(g.end_pattern_cell(), Err(VmError::InvalidAccess));
+    let inner_depth = g.gstate_depth();
+    g.concat(inner.matrix).unwrap();
+    let placed = inner.matrix.then(g.current_matrix());
+    let placed = FormInfo {
+        matrix: placed,
+        ..inner
+    };
+    assert!(g.begin_form(&placed).unwrap());
+    square(&mut g, 0.0, 0.0, 10.0);
+    g.end_form().unwrap();
+    g.grestore_to(inner_depth).unwrap();
+    g.place_form(&placed).unwrap();
+    g.end_form().unwrap();
+    g.grestore_to(depth).unwrap();
+    g.place_form(&outer).unwrap();
+    assert_eq!(g.end_form(), Err(VmError::InvalidAccess));
+    g.showpage().unwrap();
+    let dump = pages.borrow()[0].dump();
+    assert!(
+        dump.contains("form 1 bbox 0 0 100 100 {\n  q\n  m 0 0\n  l 100 0\n  l 100 100\n  l 0 100\n  h\n  W n\n  form 0 1 0 0 1 40 60\n  Q\n}\n"),
+        "{dump}"
+    );
+    assert!(
+        dump.ends_with("ops:\ncs 0\nsc 1 0 0\nform 1 1 0 0 1 200 200\n"),
+        "{dump}"
+    );
+    // A form placed on a page that never captured it is an empty body;
+    // the null device captures and places nothing.
+    let (mut g, pages) = backend();
+    g.place_form(&outer).unwrap();
+    assert_eq!(ops(&g).len(), 1);
+    g.gsave().unwrap();
+    g.nulldevice().unwrap();
+    assert!(!g.begin_form(&inner).unwrap());
+    assert!(
+        !g.begin_pattern_cell(&pattern(1, Matrix::IDENTITY, 1))
+            .unwrap()
+    );
+    g.place_form(&inner).unwrap();
+    assert_eq!(ops(&g).len(), 1);
+    g.grestore().unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].resources.forms.len(), 1);
+    assert!(pages[0].resources.forms[0].ops.is_empty());
+    assert_eq!(pages[0].ops.len(), 1);
 }

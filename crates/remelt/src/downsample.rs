@@ -14,8 +14,15 @@
 //! the unit square and stays as it is; only the sample grid changes.
 //! Indexed images, every other depth, and images carried in an encoded
 //! form (a DCT stream has no samples to average) are left alone.
+//!
+//! An image inside a form body is painted through the body's matrix
+//! and every placement of the form; one inside a pattern cell through
+//! the pattern's matrix (each tile is a translation of the same
+//! resolution) and the context that paints with it. Both are walked, so
+//! such an image is measured where it lands on the page; only an image
+//! painted solely inside a glyph procedure has no matrix here.
 
-use ps_graphics::{Image, IrOp, Page};
+use ps_graphics::{Image, IrOp, Op, Page, Resources};
 use ps_vm::{Encoded, ImageSpec, Matrix, SpaceSpec};
 
 use crate::params::{Downsample, Params};
@@ -88,19 +95,75 @@ pub(crate) enum Outcome {
     Unsupported(String),
 }
 
-/// The matrices each image of `page` is painted through on the page
-/// itself, by resource index; an image painted only inside a glyph
+/// The matrices each image of `page` is painted through on the page,
+/// directly or inside the forms and patterns the page's operations
+/// reach, by resource index; an image painted only inside a glyph
 /// procedure has none here.
 pub(crate) fn painted(page: &Page) -> Vec<Vec<Matrix>> {
     let mut matrices = vec![Vec::new(); page.resources.images.len()];
-    for op in &page.ops {
-        if let IrOp::Image { image, matrix } = &op.op
-            && let Some(slot) = matrices.get_mut(image.0)
-        {
-            slot.push(*matrix);
+    let mut open = Vec::new();
+    gather(
+        &page.ops,
+        &page.resources,
+        Matrix::IDENTITY,
+        &mut matrices,
+        &mut open,
+    );
+    matrices
+}
+
+/// A resource whose content is being walked, so one that reaches
+/// itself is walked once.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Open {
+    Pattern(usize),
+    Form(usize),
+}
+
+/// Records the matrix of every image `ops` paint, `outer` taking the
+/// content's space to the page, and follows form placements and pattern
+/// colours into their contents.
+fn gather(
+    ops: &[Op],
+    resources: &Resources,
+    outer: Matrix,
+    matrices: &mut [Vec<Matrix>],
+    open: &mut Vec<Open>,
+) {
+    for op in ops {
+        match &op.op {
+            IrOp::Image { image, matrix } => {
+                if let Some(slot) = matrices.get_mut(image.0) {
+                    slot.push(matrix.then(outer));
+                }
+            }
+            IrOp::Form { form, matrix } => {
+                if let Some(spec) = resources.forms.get(form.0)
+                    && !open.contains(&Open::Form(form.0))
+                {
+                    open.push(Open::Form(form.0));
+                    gather(&spec.ops, resources, matrix.then(outer), matrices, open);
+                    open.pop();
+                }
+            }
+            IrOp::SetPattern { pattern, .. } => {
+                if let Some(spec) = resources.patterns.get(pattern.0)
+                    && !open.contains(&Open::Pattern(pattern.0))
+                {
+                    open.push(Open::Pattern(pattern.0));
+                    gather(
+                        &spec.ops,
+                        resources,
+                        spec.matrix.then(outer),
+                        matrices,
+                        open,
+                    );
+                    open.pop();
+                }
+            }
+            _ => {}
         }
     }
-    matrices
 }
 
 /// Samples per inch along the image's two axes on the page, from the
@@ -494,5 +557,86 @@ mod tests {
         let painted = painted(&page);
         assert!(painted[first.0].is_empty());
         assert_eq!(painted[second.0], [INCH, Matrix::IDENTITY]);
+    }
+
+    #[test]
+    fn images_inside_forms_and_patterns_are_measured_where_they_land() {
+        use ps_graphics::{FormSpec, IrOp, PatternSpec};
+        let mut page = Page::new(ps_vm::Bounds::new(0.0, 0.0, 100.0, 100.0));
+        let in_form = page
+            .resources
+            .add_image(&spec(Some(SpaceSpec::DeviceGray), 8, 1, 1), &[0]);
+        let in_cell = page
+            .resources
+            .add_image(&spec(Some(SpaceSpec::DeviceGray), 8, 1, 1), &[0]);
+        let cell = page.resources.add_pattern(PatternSpec {
+            matrix: Matrix::scaling(3.0, 3.0),
+            bbox: ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0),
+            xstep: 1.0,
+            ystep: 1.0,
+            paint_type: 1,
+            tiling_type: 1,
+            ops: vec![
+                IrOp::Image {
+                    image: in_cell,
+                    matrix: Matrix::IDENTITY,
+                }
+                .into(),
+            ],
+        });
+        let inner = page.resources.add_form(FormSpec {
+            bbox: ps_vm::Bounds::new(0.0, 0.0, 10.0, 10.0),
+            ops: vec![
+                IrOp::Image {
+                    image: in_form,
+                    matrix: Matrix::translation(1.0, 1.0),
+                }
+                .into(),
+                IrOp::SetPattern {
+                    pattern: cell,
+                    components: Vec::new(),
+                }
+                .into(),
+            ],
+        });
+        let outer = page.resources.add_form(FormSpec {
+            bbox: ps_vm::Bounds::new(0.0, 0.0, 10.0, 10.0),
+            ops: vec![
+                IrOp::Form {
+                    form: inner,
+                    matrix: Matrix::scaling(2.0, 2.0),
+                }
+                .into(),
+            ],
+        });
+        page.ops = vec![
+            IrOp::Form {
+                form: outer,
+                matrix: Matrix::translation(5.0, 0.0),
+            }
+            .into(),
+            IrOp::Form {
+                form: inner,
+                matrix: Matrix::IDENTITY,
+            }
+            .into(),
+        ];
+        let painted = painted(&page);
+        // Through the inner form's scale and the outer form's shift, then
+        // directly under the identity placement.
+        assert_eq!(
+            painted[in_form.0],
+            [
+                Matrix([2.0, 0.0, 0.0, 2.0, 7.0, 2.0]),
+                Matrix::translation(1.0, 1.0)
+            ]
+        );
+        assert_eq!(
+            painted[in_cell.0],
+            [
+                Matrix([6.0, 0.0, 0.0, 6.0, 5.0, 0.0]),
+                Matrix::scaling(3.0, 3.0)
+            ]
+        );
     }
 }

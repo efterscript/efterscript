@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 5
+% expect-output: (ok)
+% expect-output: /unmatchedmark
+% expect-output: (ok)
+% expect-output: /rangecheck
+% expect-output: /typecheck
+% Scenario: the cache operators. ucachestatus leaves a mark and five
+% integers; setucacheparams consumes everything down to the mark and
+% is unmatchedmark without one; ucache outside a user path does
+% nothing; setbbox outside a user path checks its operands (an
+% inverted box is rangecheck, a string typecheck).
+/try { stopped { $error /errorname get == } { (ok) == } ifelse } def
+ucachestatus counttomark == cleartomark
+{ mark 1000 setucacheparams } try
+{ 1 2 setucacheparams } try
+{ ucache 0 0 10 10 setbbox } try
+{ 10 10 0 0 setbbox } try
+{ 0 0 (a) 10 setbbox } try

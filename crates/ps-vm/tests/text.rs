@@ -651,9 +651,9 @@ fn resource_operators_cover_fonts_and_encodings() {
     let run = exec("/Nothing /Encoding findresource");
     assert_eq!(run.error(), Some("undefined"));
     assert_eq!(run.command(), Some("findresource"));
-    let run = exec("/Helvetica /Pattern findresource");
+    let run = exec("/Helvetica /Halftone findresource");
     assert_eq!(run.error(), Some("undefined"));
-    let run = exec("/Helvetica /Pattern resourcestatus");
+    let run = exec("/Helvetica /Halftone resourcestatus");
     assert_eq!(run.error(), Some("undefined"));
     let run = exec("/Arial /Font findresource");
     assert_eq!(run.error(), Some("undefined"));

@@ -80,6 +80,10 @@ rather than rebuild it.
   the IR, a pattern as paint colour, form placement, and their dump.
 - `remelt`: ADDED requirements for tiling pattern objects, the
   `Pattern` colour space, and form XObjects in the PDF.
+- `expected-divergences`: ADDED slugs for where this interpreter
+  follows the manual and the reference does not (colour operators
+  inside an uncoloured cell), for its own capture limit (page operators
+  inside a captured procedure), and for its instance shape checks.
 
 ## Impact
 

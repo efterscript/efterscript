@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: 1
+% expect-output: true
+% expect-output: 1
+% expect-output: false
+% Scenario: a pattern is defined and found. A pattern dictionary
+% defined as /Dots /Pattern defineresource has status true, is returned
+% by findresource, has status in the Category category and is enumerated by
+% resourceforall, and is gone after undefineresource. The instance is
+% painted with once makepattern exists; this file covers the category.
+/Dots << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> /Pattern defineresource pop
+/Dots /Pattern resourcestatus 3 1 roll pop pop =
+/Dots /Pattern findresource /PatternType get =
+/Pattern /Category resourcestatus 3 1 roll pop pop =
+0 (Dots) { pop 1 add } 32 string /Pattern resourceforall =
+/Dots /Pattern undefineresource
+/Dots /Pattern resourcestatus =

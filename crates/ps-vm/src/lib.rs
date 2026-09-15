@@ -23,6 +23,7 @@ pub mod io;
 pub mod jpeg;
 pub mod memory;
 pub mod names;
+pub(crate) mod numbers;
 pub mod object;
 pub mod ops;
 pub mod scanner;
@@ -32,8 +33,9 @@ pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
-    Bounds, Encoded, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap,
-    LineJoin, MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
+    Bounds, Encoded, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend, ImageSpec,
+    LineCap, LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg,
+    SpaceSpec,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,

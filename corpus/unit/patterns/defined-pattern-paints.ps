@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% Scenario: a pattern is defined and found. The instance under /Dots in
+% the Pattern category is instantiated and painted with, and its status
+% stays true.
+/Dots << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> /Pattern defineresource pop
+/Dots /Pattern findresource matrix makepattern setpattern
+100 100 200 100 rectfill
+showpage
+/Dots /Pattern resourcestatus 3 1 roll pop pop =

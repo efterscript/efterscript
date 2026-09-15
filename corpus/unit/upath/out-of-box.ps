@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: rangecheck
+% Scenario: out of the box. A coordinate outside the box setbbox
+% declared is rangecheck when the user path is painted.
+{0 0 10 10 setbbox 5 5 moveto 20 20 lineto} ufill

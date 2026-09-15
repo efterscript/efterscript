@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: undefined
+% divergence: capture-refuses-page-operators
+% Scenario: page operators inside a form procedure raise undefined.
+<< /FormType 1 /BBox [0 0 10 10] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop showpage } >> execform

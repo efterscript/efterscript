@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a form with text and an image. The body shows a resident
+% font and paints a gray image; the form XObject's own resources name
+% the font and the image, and the page places the form twice.
+/F << /FormType 1 /BBox [0 0 160 80] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop
+    /Helvetica findfont 24 scalefont setfont
+    10 50 moveto (Form) show
+    gsave 100 10 translate 50 50 scale
+    2 2 8 [2 0 0 -2 0 2] <0055AAFF> image grestore } >> def
+100 100 translate F execform
+150 300 translate F execform
+showpage

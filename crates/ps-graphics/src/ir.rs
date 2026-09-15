@@ -32,6 +32,14 @@ pub struct ImageRef(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FontIndex(pub usize);
 
+/// Index into [`Resources::patterns`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PatternIndex(pub usize);
+
+/// Index into [`Resources::forms`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FormIndex(pub usize);
+
 /// A glyph name, as the bytes of the PostScript name.
 pub type GlyphName = Vec<u8>;
 
@@ -61,6 +69,33 @@ pub struct GlyphProc {
     pub ops: Vec<Op>,
     pub width: (f32, f32),
     pub bbox: Option<Bounds>,
+}
+
+/// A captured tiling pattern cell (ISO 32000-1 §8.7.3): the cell's
+/// operations in pattern space, clipped to `bbox`, and the tiling
+/// parameters as the instance gave them. `matrix` maps pattern space to
+/// the default space of the content the pattern is used in — the page,
+/// or the form or cell whose operations name it — so one instance used
+/// in two contexts is two resources sharing their operations.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PatternSpec {
+    pub matrix: Matrix,
+    pub bbox: Bounds,
+    pub xstep: f32,
+    pub ystep: f32,
+    /// 1 for a coloured cell, 2 for an uncoloured one whose paint is
+    /// the components of a `SetPattern`.
+    pub paint_type: u8,
+    pub tiling_type: u8,
+    pub ops: Vec<Op>,
+}
+
+/// A captured form body (ISO 32000-1 §8.10): its operations in form
+/// space, clipped to `bbox`; every placement carries its own matrix.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormSpec {
+    pub bbox: Bounds,
+    pub ops: Vec<Op>,
 }
 
 /// The program snapshot of an embedded font, shared with the VM; two
@@ -295,6 +330,8 @@ pub struct Resources {
     pub color_spaces: Vec<SpaceSpec>,
     pub images: Vec<Image>,
     pub fonts: Vec<FontSpec>,
+    pub patterns: Vec<PatternSpec>,
+    pub forms: Vec<FormSpec>,
 }
 
 impl Resources {
@@ -318,6 +355,16 @@ impl Resources {
         }
         self.color_spaces.push(space.clone());
         SpaceRef(self.color_spaces.len() - 1)
+    }
+
+    pub fn add_pattern(&mut self, spec: PatternSpec) -> PatternIndex {
+        self.patterns.push(spec);
+        PatternIndex(self.patterns.len() - 1)
+    }
+
+    pub fn add_form(&mut self, spec: FormSpec) -> FormIndex {
+        self.forms.push(spec);
+        FormIndex(self.forms.len() - 1)
     }
 
     pub fn add_image(&mut self, spec: &ImageSpec, data: &[u8]) -> ImageRef {
@@ -345,6 +392,14 @@ pub enum IrOp {
     Flatness(f32),
     SetColorSpace(SpaceRef),
     SetColor(Vec<f32>),
+    /// The colour is a tiling pattern, in the pattern space last set:
+    /// `components` are those of the underlying space for an uncoloured
+    /// pattern and empty for a coloured one. Takes the place of
+    /// `SetColor`.
+    SetPattern {
+        pattern: PatternIndex,
+        components: Vec<f32>,
+    },
     Fill {
         path: Vec<Seg>,
         rule: FillRule,
@@ -378,6 +433,13 @@ pub enum IrOp {
         matrix: Matrix,
         glyphs: Vec<Glyph>,
         wmode: u8,
+    },
+    /// Paints a form's body, whose operations are in form space, under
+    /// `matrix` (form space to default user space) and the state in
+    /// effect.
+    Form {
+        form: FormIndex,
+        matrix: Matrix,
     },
 }
 

@@ -1,0 +1,32 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Pattern base=DeviceGray
+pattern 0 matrix 1 0 0 1 0 0 bbox 0 0 10 10 step 10 10 paint 1 tiling 1 {
+  q
+  m 0 0
+  l 10 0
+  l 10 10
+  l 0 10
+  h
+  W n
+  m 0 0
+  l 5 0
+  l 5 5
+  l 0 5
+  h
+  f
+  Q
+}
+ops:
+cs 0
+pattern 0
+m 100 100
+l 300 100
+l 300 200
+l 100 200
+h
+f

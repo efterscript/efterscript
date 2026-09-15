@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: MIT
 
 //! The resource operators (PLRM3 §3.9) over the `Font`, `Encoding`,
-//! `ProcSet`, `FontSet`, `CMap`, and `CIDFont` categories. Each category
-//! has a local and a global instance dictionary selected by the
-//! allocation mode, plus its built-in instances: the resident fonts, the
-//! two encoding arrays in `systemdict`, the `FontSetInit` and `CIDInit`
-//! procedure sets, and the predefined CMaps, loaded on first use. A
-//! built-in instance reports status 2 until it has been loaded — a
-//! resident face materialised, a predefined CMap's program run, a
-//! procedure set found — and 1 from then on; `restore` does not clear
-//! that, the loaded object living in global VM.
+//! `ProcSet`, `FontSet`, `CMap`, `CIDFont`, `Pattern`, and `Form`
+//! categories. Each category has a local and a global instance
+//! dictionary selected by the allocation mode, plus its built-in
+//! instances: the resident fonts, the two encoding arrays in
+//! `systemdict`, the `FontSetInit` and `CIDInit` procedure sets, and the
+//! predefined CMaps, loaded on first use. A built-in instance reports
+//! status 2 until it has been loaded — a resident face materialised, a
+//! predefined CMap's program run, a procedure set found — and 1 from
+//! then on; `restore` does not clear that, the loaded object living in
+//! global VM. `Pattern` and `Form` have no built-in instances; their
+//! `defineresource` checks the dictionary's shape (`pattern::check_dict`
+//! and `form::check_dict`), which other interpreters do not.
 //!
 //! The implicit categories (PLRM3 §3.9.4) — `FontType`, `FMapType`,
 //! `Filter`, `ColorSpaceFamily`, `Category`, `Generic` — describe this
@@ -25,7 +28,7 @@ use crate::interp::{Category, Frame, Interp, LoopFrame, ResourceKey};
 use crate::object::{Access, Object, Type};
 use crate::ops::array::bytes;
 use crate::ops::cidinit::{self, Resolved};
-use crate::ops::font;
+use crate::ops::{font, form, pattern};
 
 op_table! { OPS {
     "findresource" => findresource, [Any, Name];
@@ -43,6 +46,8 @@ enum Kind {
     FontSet,
     CMap,
     CidFont,
+    Pattern,
+    Form,
     Implicit(Implicit),
 }
 
@@ -79,16 +84,17 @@ pub(crate) const FILTERS: [&str; 13] = [
     "SubFileDecode",
 ];
 /// The families the colour boundary carries, sorted.
-pub(crate) const COLOR_SPACE_FAMILIES: [&str; 6] = [
+pub(crate) const COLOR_SPACE_FAMILIES: [&str; 7] = [
     "DeviceCMYK",
     "DeviceGray",
     "DeviceN",
     "DeviceRGB",
     "Indexed",
+    "Pattern",
     "Separation",
 ];
 /// Every category name, the implicit ones included, sorted.
-pub(crate) const CATEGORIES: [&str; 12] = [
+pub(crate) const CATEGORIES: [&str; 14] = [
     "CIDFont",
     "CMap",
     "Category",
@@ -99,7 +105,9 @@ pub(crate) const CATEGORIES: [&str; 12] = [
     "Font",
     "FontSet",
     "FontType",
+    "Form",
     "Generic",
+    "Pattern",
     "ProcSet",
 ];
 
@@ -164,6 +172,8 @@ fn kind(i: &Interp, category: Object) -> Result<Kind, VmError> {
         b"FontSet" => Ok(Kind::FontSet),
         b"CMap" => Ok(Kind::CMap),
         b"CIDFont" => Ok(Kind::CidFont),
+        b"Pattern" => Ok(Kind::Pattern),
+        b"Form" => Ok(Kind::Form),
         name => Implicit::from_name(name)
             .map(Kind::Implicit)
             .ok_or(VmError::Undefined),
@@ -179,6 +189,8 @@ fn dicts(i: &Interp, kind: Kind) -> Option<Category> {
         Kind::FontSet => i.fontset_category,
         Kind::CMap => i.cmap_category,
         Kind::CidFont => i.cidfont_category,
+        Kind::Pattern => i.pattern_category,
+        Kind::Form => i.form_category,
         Kind::Implicit(_) => return None,
     })
 }
@@ -219,7 +231,12 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
         }),
         // Predefined CMaps are resolved by `findresource` itself, since
         // loading one runs a program.
-        Kind::FontSet | Kind::CMap | Kind::CidFont | Kind::Implicit(_) => Ok(None),
+        Kind::FontSet
+        | Kind::CMap
+        | Kind::CidFont
+        | Kind::Pattern
+        | Kind::Form
+        | Kind::Implicit(_) => Ok(None),
     }
 }
 
@@ -234,7 +251,12 @@ fn loaded(i: &Interp, kind: Kind, name: &[u8]) -> bool {
             .is_some_and(|face| i.resident_fonts[face.index()].is_some()),
         Kind::ProcSet => procset_index(name).is_some_and(|index| i.loaded_procsets[index]),
         Kind::CMap => i.predefined_cmap(name).is_some(),
-        Kind::Encoding | Kind::FontSet | Kind::CidFont | Kind::Implicit(_) => false,
+        Kind::Encoding
+        | Kind::FontSet
+        | Kind::CidFont
+        | Kind::Pattern
+        | Kind::Form
+        | Kind::Implicit(_) => false,
     }
 }
 
@@ -244,7 +266,7 @@ fn has_builtin(kind: Kind, name: &[u8]) -> bool {
         Kind::Encoding => BUILTIN_ENCODINGS.iter().any(|e| e.as_bytes() == name),
         Kind::ProcSet => BUILTIN_PROCSETS.iter().any(|p| p.as_bytes() == name),
         Kind::CMap => cidinit::is_predefined(name),
-        Kind::FontSet | Kind::CidFont | Kind::Implicit(_) => false,
+        Kind::FontSet | Kind::CidFont | Kind::Pattern | Kind::Form | Kind::Implicit(_) => false,
     }
 }
 
@@ -324,9 +346,16 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
                 return Ok(());
             }
         }
-        Kind::CMap => {
-            if !cidinit::is_cmap_dict(i, instance) {
-                return Err(VmError::TypeCheck);
+        Kind::CMap | Kind::Pattern | Kind::Form => {
+            match kind {
+                Kind::CMap if !cidinit::is_cmap_dict(i, instance) => {
+                    return Err(VmError::TypeCheck);
+                }
+                // An instance missing an entry is not of the category's
+                // type, so `typecheck` (PLRM3 §8.2 `defineresource`).
+                Kind::Pattern => pattern::check_dict(i, instance, VmError::TypeCheck)?,
+                Kind::Form => form::check_dict(i, instance, VmError::TypeCheck)?,
+                _ => {}
             }
             let key = i.mem.dict_key(key)?;
             let category = dicts(i, kind).expect("a defined category");
@@ -373,7 +402,13 @@ fn undefineresource(i: &mut Interp) -> Result<(), VmError> {
     match kind {
         Kind::Implicit(_) => return Err(VmError::InvalidAccess),
         Kind::Font => font::undefine(i, key)?,
-        Kind::Encoding | Kind::ProcSet | Kind::FontSet | Kind::CMap | Kind::CidFont => {
+        Kind::Encoding
+        | Kind::ProcSet
+        | Kind::FontSet
+        | Kind::CMap
+        | Kind::CidFont
+        | Kind::Pattern
+        | Kind::Form => {
             let key = i.mem.dict_key(key)?;
             let category = dicts(i, kind).expect("a defined category");
             i.mem.dict_undef(category.local, key)?;
@@ -411,7 +446,7 @@ fn keys(i: &mut Interp, kind: Kind, template: &[u8]) -> Result<Vec<ResourceKey>,
         Kind::Encoding => BUILTIN_ENCODINGS.to_vec(),
         Kind::ProcSet => BUILTIN_PROCSETS.to_vec(),
         Kind::CMap => cidinit::predefined_names(),
-        Kind::FontSet | Kind::CidFont => Vec::new(),
+        Kind::FontSet | Kind::CidFont | Kind::Pattern | Kind::Form => Vec::new(),
         Kind::Implicit(category) => {
             return Ok(category
                 .members()

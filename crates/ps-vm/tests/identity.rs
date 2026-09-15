@@ -220,7 +220,7 @@ fn every_listed_category_resolves() {
     assert!(matches!(&outcome, Outcome::Error(e) if e.name == "undefined"));
     assert_eq!(
         out.text(),
-        "ok\n".repeat(12) + "0\n/Font\n/Category\ntrue\n0\n0\nfalse\n"
+        "ok\n".repeat(14) + "0\n/Font\n/Category\ntrue\n0\n0\nfalse\n"
     );
 }
 
@@ -239,6 +239,42 @@ fn implicit_members_cannot_be_changed_and_other_key_types_are_absent() {
     assert_eq!(
         out.text(),
         "invalidaccess\ninvalidaccess\nfalse\nfalse\nNullEncode\nDeviceCMYK\nDeviceGray\nDeviceN\nDeviceRGB\n"
+    );
+}
+
+/// The `Pattern` and `Form` categories are regular: an instance is
+/// defined into the dictionary of the allocation mode in effect, found
+/// and listed from either, and checked for shape. The printed
+/// scenarios are corpus files under `corpus/unit/patterns` and
+/// `corpus/unit/forms`.
+#[test]
+fn pattern_and_form_categories_are_regular() {
+    let (mut interp, out) = configured(Vec::new(), None);
+    let program = "\
+        true setglobal \
+        /P << /PatternType 1 /PaintType 2 /TilingType 3 /BBox [0 0 4 4] /XStep 4 /YStep -4 \
+              /PaintProc { pop } >> def \
+        /F << /FormType 1 /BBox [0 0 4 4] /Matrix [1 0 0 1 0 0] /PaintProc { pop } >> def \
+        /G P /Pattern defineresource pop false setglobal \
+        /L P /Pattern defineresource pop \
+        /L F /Form defineresource pop \
+        /G /Pattern resourcestatus 3 1 roll pop pop = \
+        /L /Pattern resourcestatus 3 1 roll pop pop = \
+        /L /Form resourcestatus 3 1 roll pop pop = /G /Form resourcestatus = \
+        (*) { == } 32 string /Pattern resourceforall \
+        /L /Pattern findresource P eq = \
+        P wcheck = \
+        /L /Pattern undefineresource /L /Pattern resourcestatus = \
+        { /X 5 /Form defineresource } stopped pop $error /errorname get == \
+        { /X P /Form defineresource } stopped pop $error /errorname get == \
+        { /X F /Pattern defineresource } stopped pop $error /errorname get == \
+        { /X << /FormType 1 /BBox [0 0 4 4] /Matrix [1 0 0 1 0 0] /PaintProc [1] >> \
+            /Form defineresource } stopped pop $error /errorname get == \
+        { 42 /Pattern findresource } stopped pop $error /errorname get ==";
+    assert_eq!(run(&mut interp, program), Outcome::Ok);
+    assert_eq!(
+        out.text(),
+        "true\ntrue\ntrue\nfalse\n(L)\n(G)\ntrue\nfalse\nfalse\n/typecheck\n/typecheck\n/typecheck\n/typecheck\n/undefined\n"
     );
 }
 

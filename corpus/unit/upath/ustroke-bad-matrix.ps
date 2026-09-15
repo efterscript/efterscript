@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% Scenario: a matrix is an array of exactly six numbers; a five-element
+% array on top of the stack is taken for the user path instead and,
+% having no setbbox, is typecheck.
+{0 0 100 100 setbbox 10 10 moveto 90 50 lineto} [2 0 0 2 0] ustroke

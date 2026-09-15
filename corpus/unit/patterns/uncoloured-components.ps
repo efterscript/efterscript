@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: uncoloured pattern with components. The instance is set
+% through the pattern space over DeviceRGB with red under it; the fill
+% names the pattern with its components, and the cell carries no colour
+% of its own.
+/U << /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+[/Pattern /DeviceRGB] setcolorspace
+1 0 0 U setcolor
+100 100 200 100 rectfill
+showpage

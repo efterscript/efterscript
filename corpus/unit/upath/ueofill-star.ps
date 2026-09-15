@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: ueofill fills a user path with the even-odd rule, so the
+% self-intersecting star keeps its hollow centre; the second page is
+% the same star filled even-odd by hand.
+{0 0 100 100 setbbox 50 90 moveto 20 10 lineto 90 60 lineto 10 60 lineto 80 10 lineto closepath} ueofill
+showpage
+50 90 moveto 20 10 lineto 90 60 lineto 10 60 lineto 80 10 lineto closepath eofill
+showpage

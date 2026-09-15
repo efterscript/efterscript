@@ -2272,6 +2272,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             counts,
             [
                 ("bitshift-zero-fill", 1),
+                ("capture-refuses-page-operators", 2),
                 ("cexec-defined", 1),
                 ("cvrs-negative-unsigned", 1),
                 ("distiller-params-typecheck", 1),
@@ -2287,8 +2288,10 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("radix-without-digits", 1),
                 ("resident-inventory", 9),
                 ("resident-metrics-only", 1),
+                ("resource-instance-shape", 2),
                 ("resource-size-unknown", 5),
                 ("server-password-default", 1),
+                ("uncoloured-cell-colour-operators", 1),
                 ("unspecified-forall-order", 1),
                 ("vertical-default-metrics", 1),
             ]
@@ -2312,8 +2315,10 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 "corpus/unit/graphics/no-backend-moveto-undefined.ps",
                 "corpus/unit/graphics/no-backend-names-unknown.ps",
                 "corpus/unit/interp/deep-recursion.ps",
+                "corpus/unit/patterns/shading-out-of-range.ps",
                 "corpus/unit/pdfmark/guarded-idiom-no-backend.ps",
                 "corpus/unit/text/no-backend-fonts.ps",
+                "corpus/unit/upath/encoded-bad-opcode.ps",
             ]
         );
     }

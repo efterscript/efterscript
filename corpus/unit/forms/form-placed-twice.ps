@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a form placement in the dump. A form executed twice lists
+% one form resource with its box and content, and two placement lines
+% with their matrices.
+/F << /FormType 1 /BBox [0 0 20 10] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 0 0 moveto 20 10 lineto stroke } >> def
+100 100 translate F execform
+200 300 translate F execform
+showpage

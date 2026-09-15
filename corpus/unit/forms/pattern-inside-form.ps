@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: capture nests. A form's procedure fills with a pattern: the
+% pattern resource belongs to the page, its matrix maps pattern space
+% to the form's space, and the fill inside the form resource names it.
+% The same instance then fills on the page itself, which is a second
+% pattern resource over the same cell with the page's matrix.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >>
+  matrix makepattern def
+/F << /FormType 1 /BBox [0 0 100 100] /Matrix [1 0 0 1 50 50]
+  /PaintProc { pop P setpattern 0 0 100 100 rectfill } >> def
+F execform
+P setpattern
+300 300 100 100 rectfill
+showpage

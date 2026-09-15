@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: nested forms. The outer form's procedure executes the
+% inner form: the outer resource contains a placement of the inner one
+% (in outer form space), and the page carries one placement of the
+% outer form.
+/Inner << /FormType 1 /BBox [0 0 60 60] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 0 0 60 60 rectfill } >> def
+/Outer << /FormType 1 /BBox [0 0 100 100] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 20 30 translate Inner execform } >> def
+200 200 translate
+Outer execform
+showpage

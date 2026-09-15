@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% Scenario: a form is defined and found. The instance under /Logo in
+% the Form category is executed, and its status stays true.
+/Logo << /FormType 1 /BBox [0 0 10 10] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 0 0 5 5 rectfill } >> /Form defineresource pop
+/Logo /Form findresource execform
+showpage
+/Logo /Form resourcestatus 3 1 roll pop pop =

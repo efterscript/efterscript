@@ -15,27 +15,38 @@
 //! colour, as PDF's `Q` does. A `gsave`/`grestore` pair that paints
 //! nothing therefore leaves no trace.
 //!
-//! A Type 3 glyph is captured by redirecting emission: between
-//! `begin_glyph` and `end_glyph` the page's operation list is swapped for
-//! the glyph's, geometry is taken back through the CTM in effect at
-//! `begin_glyph` so the procedure is in glyph space, the emitter starts
-//! from the state the glyph inherits (so only the glyph's own settings are
-//! recorded), and only clips established inside the glyph appear in it.
+//! A Type 3 glyph, a pattern cell, and a form body are captured by
+//! redirecting emission: between `begin_*` and `end_*` the page's
+//! operation list is swapped for the target's, geometry is taken back
+//! through the CTM in effect at the beginning so the procedure is in
+//! its own space (glyph, pattern, or form space), only clips
+//! established inside appear in it, and captures nest. A glyph or a
+//! form starts its emitter from the state it inherits, so only its own
+//! settings are recorded; a pattern cell starts from the initial state,
+//! since its stream starts there (ISO 32000-1 §8.7.3.1). A pattern set
+//! inside a capture has its matrix taken back through that capture's CTM
+//! as geometry is, so the resource's matrix maps pattern space to the
+//! enclosing form's or cell's space (§8.7.2); the same instance used in
+//! two contexts is therefore two pattern resources over one captured
+//! cell.
 
 use std::collections::{BTreeMap, HashMap};
 
 use ps_vm::{
-    Bounds, FontInfo, FontRef, FontSource, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    MarkValue, Matrix, Point, ProcRef, Rect, Screen, Seg, SpaceSpec, VmError,
+    Bounds, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap,
+    LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
+    VmError,
 };
 
 use crate::arc;
 use crate::ir::{
-    Annot, DocMark, FillRule, FontIndex, FontSpec, GlyphNames, GlyphProc, IrOp, Op, Page, PageSink,
-    ProgramRef, glyph_names,
+    Annot, DocMark, FillRule, FontIndex, FontSpec, FormIndex, FormSpec, GlyphNames, GlyphProc,
+    IrOp, Op, Page, PageSink, PatternIndex, PatternSpec, ProgramRef, glyph_names,
 };
 use crate::marks::{self, Parsed};
-use crate::state::{ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, rect_segments};
+use crate::state::{
+    ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, bounds_segments, rect_segments,
+};
 
 /// What the IR last set, tracked per open `Save`.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +59,10 @@ struct Emitted {
     flatness: f32,
     space: SpaceSpec,
     color: Vec<f32>,
+    /// The pattern resource the colour last set names, if a pattern.
+    /// A capture inherits none: a pattern colour in effect when it
+    /// began is set again inside, in the resource of that context.
+    pattern: Option<PatternIndex>,
     /// Whether the IR has named the colour space itself. A captured glyph
     /// inherits its space unnamed; a colour set inside it then needs the
     /// space named first, so the procedure stands on its own.
@@ -66,6 +81,7 @@ impl Emitted {
             flatness: state.flatness,
             space: state.space.clone(),
             color: state.color.clone(),
+            pattern: None,
             space_known: true,
         }
     }
@@ -130,18 +146,39 @@ impl Emitter {
     }
 }
 
-/// A glyph procedure being captured: where emission went before it began
-/// and how to bring geometry into glyph space.
+/// What a capture is for.
+enum Target {
+    Glyph {
+        font: FontRef,
+        code: u8,
+        name: Vec<u8>,
+        measure: bool,
+    },
+    Pattern(PatternInfo),
+    Form(FormInfo),
+}
+
+/// A procedure being captured: where emission went before it began and
+/// how to bring geometry into the target's space.
 struct Capture {
-    font: FontRef,
-    name: Vec<u8>,
-    measure: bool,
-    /// Default user space to glyph space, kept in double precision so the
-    /// round trip through the CTM leaves no residue; `None` when the
-    /// glyph's CTM was singular, in which case nothing can be kept.
-    to_glyph: Option<[f64; 6]>,
+    target: Target,
+    /// Default user space to the target's space, kept in double precision
+    /// so the round trip through the CTM leaves no residue; `None` when
+    /// that CTM was singular, in which case nothing can be kept.
+    to_target: Option<[f64; 6]>,
     outer_ops: Vec<Op>,
     outer_emitter: Emitter,
+}
+
+/// Where emission goes: the page, or the resource being captured. A
+/// pattern resource is made per context, since its matrix is relative
+/// to the context's space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Context {
+    Page,
+    Glyph { instance: u32, code: u8 },
+    Pattern(u64),
+    Form(u64),
 }
 
 pub struct Graphics<S> {
@@ -157,6 +194,13 @@ pub struct Graphics<S> {
     page_fonts: HashMap<u32, FontIndex>,
     /// The Type 3 resources of this page by font family (`FID`).
     type3: Vec<(u32, FontIndex)>,
+    /// The cell captured for each pattern instance used on this page, by
+    /// id: the resource whose operations every context shares.
+    page_patterns: HashMap<u64, PatternIndex>,
+    /// The pattern resource each instance resolved to in each context.
+    placed_patterns: HashMap<(u64, Context), PatternIndex>,
+    /// The body captured for each form executed on this page, by id.
+    page_forms: HashMap<u64, FormIndex>,
     captures: Vec<Capture>,
     /// Pages delivered so far; the page under construction is the next
     /// one, which is what a mark without a page key refers to.
@@ -182,6 +226,9 @@ impl<S: PageSink> Graphics<S> {
             fonts: HashMap::new(),
             page_fonts: HashMap::new(),
             type3: Vec::new(),
+            page_patterns: HashMap::new(),
+            placed_patterns: HashMap::new(),
+            page_forms: HashMap::new(),
             captures: Vec::new(),
             delivered: 0,
             pending_annots: BTreeMap::new(),
@@ -228,18 +275,121 @@ impl<S: PageSink> Graphics<S> {
     }
 
     /// Records an operation where emission currently goes: the page, or
-    /// the glyph procedure being captured, whose geometry is taken into
-    /// glyph space on the way. Nothing is kept for a glyph whose CTM had
-    /// no inverse.
+    /// the procedure being captured, whose geometry is taken into the
+    /// target's space on the way. Nothing is kept for a target whose CTM
+    /// had no inverse.
     fn record(&mut self, op: IrOp) {
         let op = match self.captures.last() {
             None => op,
-            Some(capture) => match capture.to_glyph {
-                Some(to_glyph) => transformed(op, to_glyph),
+            Some(capture) => match capture.to_target {
+                Some(to_target) => transformed(op, to_target),
                 None => return,
             },
         };
         self.page.ops.push(op.into());
+    }
+
+    /// The context emission goes to.
+    fn context(&self) -> Context {
+        match self.captures.last().map(|c| &c.target) {
+            None => Context::Page,
+            Some(Target::Glyph { font, code, .. }) => Context::Glyph {
+                instance: font.instance,
+                code: *code,
+            },
+            Some(Target::Pattern(info)) => Context::Pattern(info.id),
+            Some(Target::Form(info)) => Context::Form(info.id),
+        }
+    }
+
+    /// `matrix` (something's space to default user space) taken back
+    /// through the enclosing capture's CTM, so it maps to that capture's
+    /// space; unchanged on the page.
+    fn local_matrix(&self, matrix: Matrix) -> Matrix {
+        match self.captures.last().and_then(|c| c.to_target) {
+            Some(to_target) => then64(matrix, to_target),
+            None => matrix,
+        }
+    }
+
+    /// Whether `target` is being captured, at any depth.
+    fn capturing(&self, wanted: Context) -> bool {
+        self.captures.iter().any(|c| match (&c.target, wanted) {
+            (Target::Pattern(info), Context::Pattern(id)) => info.id == id,
+            (Target::Form(info), Context::Form(id)) => info.id == id,
+            _ => false,
+        })
+    }
+
+    /// The pattern resource `info` names in the current context, made on
+    /// first use from the cell captured for the instance (empty when the
+    /// page holds none) with the matrix relative to the context's space.
+    fn pattern_resource(&mut self, info: &PatternInfo) -> PatternIndex {
+        let context = self.context();
+        if let Some(&index) = self.placed_patterns.get(&(info.id, context)) {
+            return index;
+        }
+        let ops = self
+            .page_patterns
+            .get(&info.id)
+            .map(|index| self.page.resources.patterns[index.0].ops.clone())
+            .unwrap_or_default();
+        let matrix = self.local_matrix(info.matrix);
+        let index = self.page.resources.add_pattern(PatternSpec {
+            matrix,
+            bbox: info.bbox,
+            xstep: info.xstep,
+            ystep: info.ystep,
+            paint_type: info.paint_type,
+            tiling_type: info.tiling_type,
+            ops,
+        });
+        self.placed_patterns.insert((info.id, context), index);
+        index
+    }
+
+    /// Redirects emission into a fresh operation list for `target`,
+    /// whose space is `ctm`, with `emitter` as the starting state.
+    fn begin_capture(&mut self, target: Target, ctm: Matrix, emitter: Emitter) {
+        let outer_ops = std::mem::take(&mut self.page.ops);
+        let outer_emitter = std::mem::replace(&mut self.emitter, emitter);
+        self.captures.push(Capture {
+            target,
+            to_target: inverse64(ctm),
+            outer_ops,
+            outer_emitter,
+        });
+    }
+
+    /// Ends the innermost capture: the operations it recorded (none when
+    /// its CTM had no inverse) and its target, with emission back where
+    /// it was.
+    fn end_capture(&mut self) -> Result<(Target, Vec<Op>), VmError> {
+        let capture = self.captures.pop().ok_or(VmError::InvalidAccess)?;
+        self.close_all();
+        let ops = std::mem::replace(&mut self.page.ops, capture.outer_ops);
+        self.emitter = capture.outer_emitter;
+        let ops = if capture.to_target.is_some() {
+            ops
+        } else {
+            Vec::new()
+        };
+        Ok((capture.target, ops))
+    }
+
+    /// Clips to `bbox`, given in the space `ctm` maps to default user
+    /// space, as a capture's box clip.
+    fn clip_to_box(&mut self, bbox: Bounds, ctm: Matrix) {
+        let path = bounds_segments(bbox)
+            .into_iter()
+            .map(|seg| match seg {
+                Seg::Move(p) => Seg::Move(ctm.apply(p)),
+                Seg::Line(p) => Seg::Line(ctm.apply(p)),
+                Seg::Curve(a, b, c) => Seg::Curve(ctm.apply(a), ctm.apply(b), ctm.apply(c)),
+                Seg::Close => Seg::Close,
+            })
+            .collect();
+        self.intersect_clip(path, FillRule::NonZero);
     }
 
     fn device(&self, p: Point) -> Point {
@@ -292,6 +442,7 @@ impl<S: PageSink> Graphics<S> {
         if needs == Needs::Nothing {
             return;
         }
+        let pattern = self.gstate.pattern.map(|info| self.pattern_resource(&info));
         let state = &self.gstate;
         let mut ops = Vec::new();
         {
@@ -301,16 +452,24 @@ impl<S: PageSink> Graphics<S> {
                 ops.push(IrOp::SetColorSpace(index));
                 emitted.space = state.space.clone();
                 emitted.color = state.space.initial_color();
+                emitted.pattern = None;
                 emitted.space_known = true;
             }
-            if state.color != emitted.color {
+            if state.color != emitted.color || pattern != emitted.pattern {
                 if !emitted.space_known {
                     let index = self.page.resources.intern_space(&state.space);
                     ops.push(IrOp::SetColorSpace(index));
                     emitted.space_known = true;
                 }
-                ops.push(IrOp::SetColor(state.color.clone()));
+                ops.push(match pattern {
+                    Some(pattern) => IrOp::SetPattern {
+                        pattern,
+                        components: state.color.clone(),
+                    },
+                    None => IrOp::SetColor(state.color.clone()),
+                });
                 emitted.color = state.color.clone();
+                emitted.pattern = pattern;
             }
             if matches!(needs, Needs::Fill | Needs::Stroke) && state.flatness != emitted.flatness {
                 ops.push(IrOp::Flatness(state.flatness));
@@ -347,7 +506,7 @@ impl<S: PageSink> Graphics<S> {
     /// Paints `path` (already in default user space) with the current
     /// settings. The current path is not touched.
     fn paint(&mut self, path: Vec<Seg>, make: impl FnOnce(Vec<Seg>, Matrix) -> IrOp, needs: Needs) {
-        if self.gstate.null_device || path.is_empty() {
+        if self.gstate.null_device || self.gstate.paints_nothing() || path.is_empty() {
             return;
         }
         self.sync_clip();
@@ -485,15 +644,18 @@ impl<S: PageSink> Graphics<S> {
         )
     }
 
-    /// Starts a page: the operations and the per-page font tables.
+    /// Starts a page: the operations and the per-page resource tables.
     fn reset_page(&mut self, media_box: Bounds) {
         self.page = Page::new(media_box);
         self.emitter = Emitter::new();
         self.page_fonts.clear();
         self.type3.clear();
+        self.page_patterns.clear();
+        self.placed_patterns.clear();
+        self.page_forms.clear();
     }
 
-    /// Page operations are refused while a glyph is being captured.
+    /// Page operations are refused while a procedure is being captured.
     fn page_operation(&self) -> Result<(), VmError> {
         if self.captures.is_empty() {
             Ok(())
@@ -708,6 +870,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     fn set_color_space(&mut self, space: &SpaceSpec) -> Result<(), VmError> {
         self.gstate.color = space.initial_color();
         self.gstate.space = space.clone();
+        self.gstate.pattern = None;
         Ok(())
     }
 
@@ -922,7 +1085,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         let from = self.gstate.path.current()?;
         let font = self.gstate.font.ok_or(VmError::InvalidFont)?;
         let ctm = self.gstate.ctm;
-        if !self.gstate.null_device && !glyphs.is_empty() {
+        if !self.gstate.null_device && !self.gstate.paints_nothing() && !glyphs.is_empty() {
             let index = self.font_resource(font)?;
             // The font matrix followed by a translation to the current
             // point and the CTM; the current point is taken in device
@@ -963,20 +1126,21 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     fn begin_glyph(
         &mut self,
         font: FontRef,
-        _code: u8,
+        code: u8,
         name: &[u8],
         measure: bool,
     ) -> Result<(), VmError> {
-        let outer_ops = std::mem::take(&mut self.page.ops);
-        let outer_emitter = std::mem::replace(&mut self.emitter, Emitter::for_glyph(&self.gstate));
-        self.captures.push(Capture {
-            font,
-            name: name.to_vec(),
-            measure,
-            to_glyph: inverse64(self.gstate.ctm),
-            outer_ops,
-            outer_emitter,
-        });
+        let emitter = Emitter::for_glyph(&self.gstate);
+        self.begin_capture(
+            Target::Glyph {
+                font,
+                code,
+                name: name.to_vec(),
+                measure,
+            },
+            self.gstate.ctm,
+            emitter,
+        );
         Ok(())
     }
 
@@ -985,21 +1149,159 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     /// (`(0, 0)` and no box: an abandoned procedure). A name already
     /// captured keeps its first procedure.
     fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError> {
-        let capture = self.captures.pop().ok_or(VmError::InvalidAccess)?;
-        self.close_all();
-        let ops = std::mem::replace(&mut self.page.ops, capture.outer_ops);
-        self.emitter = capture.outer_emitter;
+        if !matches!(
+            self.captures.last().map(|c| &c.target),
+            Some(Target::Glyph { .. })
+        ) {
+            return Err(VmError::InvalidAccess);
+        }
+        let (target, ops) = self.end_capture()?;
+        let Target::Glyph {
+            font,
+            name,
+            measure,
+            ..
+        } = target
+        else {
+            unreachable!("checked above");
+        };
         let abandoned = width == (0.0, 0.0) && bbox.is_none();
-        if capture.measure || abandoned || capture.to_glyph.is_none() || self.gstate.null_device {
+        if measure || abandoned || ops.is_empty() || self.gstate.null_device {
             return Ok(());
         }
-        let index = self.font_resource(capture.font)?;
+        let index = self.font_resource(font)?;
         let FontSpec::Type3 { glyphs, .. } = &mut self.page.resources.fonts[index.0] else {
             return Err(VmError::InvalidFont);
         };
-        glyphs
-            .entry(capture.name)
-            .or_insert(GlyphProc { ops, width, bbox });
+        glyphs.entry(name).or_insert(GlyphProc { ops, width, bbox });
+        Ok(())
+    }
+
+    fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {
+        self.gstate.set_pattern(pattern, components)
+    }
+
+    fn current_pattern(&self) -> Option<PatternInfo> {
+        self.gstate.pattern
+    }
+
+    /// The cell runs in a saved state that starts from the initial one —
+    /// what the cell's own stream will start from (ISO 32000-1 §8.7.3.1)
+    /// — with the pattern space as its CTM, the box as its only clip,
+    /// and an empty path; the emitter starts from the initial state
+    /// too. A cell the page holds, or one being captured (a cell that
+    /// paints with its own pattern), is not captured again.
+    fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
+        if self.gstate.null_device
+            || self.page_patterns.contains_key(&pattern.id)
+            || self.capturing(Context::Pattern(pattern.id))
+        {
+            return Ok(false);
+        }
+        self.gsave()?;
+        self.gstate = GState {
+            ctm: pattern.matrix,
+            ..self.gstate.reinitialized()
+        };
+        self.begin_capture(Target::Pattern(*pattern), pattern.matrix, Emitter::new());
+        self.clip_to_box(pattern.bbox, pattern.matrix);
+        Ok(true)
+    }
+
+    /// Stores the cell as the instance's resource for the page and as
+    /// its resource in the enclosing context.
+    fn end_pattern_cell(&mut self) -> Result<(), VmError> {
+        if !matches!(
+            self.captures.last().map(|c| &c.target),
+            Some(Target::Pattern(_))
+        ) {
+            return Err(VmError::InvalidAccess);
+        }
+        let (target, ops) = self.end_capture()?;
+        let Target::Pattern(info) = target else {
+            unreachable!("checked above");
+        };
+        let matrix = self.local_matrix(info.matrix);
+        let index = self.page.resources.add_pattern(PatternSpec {
+            matrix,
+            bbox: info.bbox,
+            xstep: info.xstep,
+            ystep: info.ystep,
+            paint_type: info.paint_type,
+            tiling_type: info.tiling_type,
+            ops,
+        });
+        self.page_patterns.insert(info.id, index);
+        self.placed_patterns
+            .insert((info.id, self.context()), index);
+        Ok(())
+    }
+
+    /// The body runs in a saved state inheriting everything but the CTM
+    /// (the form space), the clip (cut to the box), and the path
+    /// (empty); the emitter starts from the inherited state, so the
+    /// body records only its own settings. A body the page holds, or one
+    /// being captured (a form that executes itself), is not captured
+    /// again.
+    fn begin_form(&mut self, form: &FormInfo) -> Result<bool, VmError> {
+        if self.gstate.null_device
+            || self.page_forms.contains_key(&form.id)
+            || self.capturing(Context::Form(form.id))
+        {
+            return Ok(false);
+        }
+        self.gsave()?;
+        self.gstate.ctm = form.matrix;
+        self.gstate.path = Path::default();
+        let emitter = Emitter::for_glyph(&self.gstate);
+        self.begin_capture(Target::Form(*form), form.matrix, emitter);
+        self.clip_to_box(form.bbox, form.matrix);
+        Ok(true)
+    }
+
+    fn end_form(&mut self) -> Result<(), VmError> {
+        if !matches!(
+            self.captures.last().map(|c| &c.target),
+            Some(Target::Form(_))
+        ) {
+            return Err(VmError::InvalidAccess);
+        }
+        let (target, ops) = self.end_capture()?;
+        let Target::Form(info) = target else {
+            unreachable!("checked above");
+        };
+        let index = self.page.resources.add_form(FormSpec {
+            bbox: info.bbox,
+            ops,
+        });
+        self.page_forms.insert(info.id, index);
+        Ok(())
+    }
+
+    /// Places the form's body under its matrix with every setting the
+    /// body may inherit emitted first; a form being captured places
+    /// nothing inside itself.
+    fn place_form(&mut self, form: &FormInfo) -> Result<(), VmError> {
+        if self.gstate.null_device || self.capturing(Context::Form(form.id)) {
+            return Ok(());
+        }
+        let index = match self.page_forms.get(&form.id) {
+            Some(&index) => index,
+            None => {
+                let index = self.page.resources.add_form(FormSpec {
+                    bbox: form.bbox,
+                    ops: Vec::new(),
+                });
+                self.page_forms.insert(form.id, index);
+                index
+            }
+        };
+        self.sync_clip();
+        self.flush(Needs::Stroke);
+        self.record(IrOp::Form {
+            form: index,
+            matrix: form.matrix,
+        });
         Ok(())
     }
 
@@ -1092,7 +1394,7 @@ impl<S: PageSink> Graphics<S> {
     /// grid, the inverse image matrix, and the CTM.
     fn place_image(&mut self, spec: &ImageSpec, data: &[u8], needs: Needs) -> Result<(), VmError> {
         let grid = spec.matrix.inverse().ok_or(VmError::UndefinedResult)?;
-        if self.gstate.null_device {
+        if self.gstate.null_device || (needs == Needs::Color && self.gstate.paints_nothing()) {
             return Ok(());
         }
         let flip = Matrix([1.0, 0.0, 0.0, -1.0, 0.0, 1.0]);
@@ -1155,8 +1457,8 @@ fn map_segments(path: Vec<Seg>, m: [f64; 6]) -> Vec<Seg> {
 }
 
 /// The operation with its geometry taken from default user space through
-/// `m`: paths point by point, and the matrices a stroke, an image, or a
-/// nested run carry composed with it.
+/// `m`: paths point by point, and the matrices a stroke, an image, a
+/// nested run, or a form placement carry composed with it.
 fn transformed(op: IrOp, m: [f64; 6]) -> IrOp {
     match op {
         IrOp::Fill { path, rule } => IrOp::Fill {
@@ -1185,6 +1487,10 @@ fn transformed(op: IrOp, m: [f64; 6]) -> IrOp {
             matrix: then64(matrix, m),
             glyphs,
             wmode,
+        },
+        IrOp::Form { form, matrix } => IrOp::Form {
+            form,
+            matrix: then64(matrix, m),
         },
         other => other,
     }

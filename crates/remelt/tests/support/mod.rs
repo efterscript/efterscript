@@ -100,6 +100,17 @@ pub fn xobject<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
     pdf.resolve(r)
 }
 
+/// The named tiling pattern of page `index`.
+pub fn pattern<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
+    let r = resources(pdf, index)
+        .get("Pattern")
+        .unwrap_or_else(|| panic!("page {index} declares no patterns"))
+        .get(name)
+        .unwrap_or_else(|| panic!("page {index} has no pattern {name}"))
+        .as_reference();
+    pdf.resolve(r)
+}
+
 pub fn producer(pdf: &Pdf) -> String {
     let info = pdf.trailer_get("Info").unwrap().as_reference();
     match pdf.resolve(info).get("Producer").unwrap() {

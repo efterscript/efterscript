@@ -84,6 +84,9 @@ enum LoopStep {
     },
     /// The image's data is complete: hand it to the backend.
     FinishImage,
+    /// A pattern cell's or form body's procedure has returned: end the
+    /// capture and finish the operator.
+    FinishPaintProcedure,
     Failed(VmError, &'static str),
 }
 
@@ -616,6 +619,46 @@ impl Interp {
                     }
                 }
             }
+            // A paint procedure runs once with its dictionary as the
+            // operand; the frame's `started` marks the capture as open
+            // until the second step takes it over.
+            LoopFrame::PatternCell {
+                body,
+                dict,
+                operator,
+                started,
+                ..
+            } => {
+                if *started {
+                    *started = false;
+                    LoopStep::FinishPaintProcedure
+                } else {
+                    *started = true;
+                    LoopStep::Iterate {
+                        body: *body,
+                        values: one(*dict),
+                        operator,
+                    }
+                }
+            }
+            LoopFrame::FormBody {
+                body,
+                dict,
+                started,
+                ..
+            } => {
+                if *started {
+                    *started = false;
+                    LoopStep::FinishPaintProcedure
+                } else {
+                    *started = true;
+                    LoopStep::Iterate {
+                        body: *body,
+                        values: one(*dict),
+                        operator: "execform",
+                    }
+                }
+            }
             LoopFrame::ImageData { body, acquisition } => {
                 let operator = acquisition.operator_name();
                 if !acquisition.started {
@@ -673,6 +716,15 @@ impl Interp {
                     self.raise(e, command);
                 }
             }
+            LoopStep::FinishPaintProcedure => match self.pop_frame() {
+                Some(Frame::Loop(LoopFrame::PatternCell {
+                    depth, operator, ..
+                })) => ops::pattern::finish_cell(self, depth, operator),
+                Some(Frame::Loop(LoopFrame::FormBody { depth, info, .. })) => {
+                    ops::form::finish_body(self, depth, &info);
+                }
+                _ => unreachable!("frame checked above"),
+            },
             LoopStep::Failed(VmError::NeedMore, _) => {
                 // The frame stays and takes the step again on resume.
                 self.mem.files_mut().rollback();

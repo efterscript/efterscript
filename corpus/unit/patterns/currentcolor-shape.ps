@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 1
+% expect-output: true
+% expect-output: 2
+% expect-output: true
+% expect-output: 0.25
+% expect-output: 4
+% expect-output: true
+% expect-output: 0.5
+% expect-output: 1.0
+% expect-output: 0.0
+% expect-output: 1
+% expect-output: true
+% expect-output: 1
+% expect-output: true
+% Scenario: currentcolor in a pattern space reports the components of
+% the underlying space, then the instance (PLRM3 section 4.9.2): the
+% instance alone for a coloured pattern, whatever the base; a null alone
+% while no instance has been set.
+/P << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+/U << /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 10 10]
+  /XStep 10 /YStep 10 /PaintProc { pop 0 0 5 5 rectfill } >> matrix makepattern def
+P setpattern currentcolor count = P eq = clear
+0.5 setgray 0.25 U setpattern currentcolor count = U eq = = clear
+1 0 0 setrgbcolor 0 1 0.5 U setpattern currentcolor count = U eq = = = = clear
+[/Pattern /DeviceRGB] setcolorspace P setcolor currentcolor count = P eq = clear
+[/Pattern] setcolorspace currentcolor count = null eq = clear

@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: three placements, one body. One form dictionary executed
+% three times at different translations yields one form resource and
+% three placements carrying the three matrices.
+/F << /FormType 1 /BBox [0 0 40 40] /Matrix [1 0 0 1 0 0]
+  /PaintProc { pop 0 0 40 40 rectfill } >> def
+100 100 translate F execform
+80 0 translate F execform
+0 80 translate F execform
+showpage
