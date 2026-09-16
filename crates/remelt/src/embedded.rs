@@ -87,7 +87,7 @@ pub(crate) fn cids_used(page: &Page, index: usize) -> BTreeSet<u16> {
         }
     }
     for spec in &page.resources.patterns {
-        collect(&spec.ops, index, &mut cids);
+        collect(spec.ops(), index, &mut cids);
     }
     for spec in &page.resources.forms {
         collect(&spec.ops, index, &mut cids);

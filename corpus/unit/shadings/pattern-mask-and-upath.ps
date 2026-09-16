@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a shading pattern paints an image mask and a user path.
+% With an axial shading pattern as the colour, the set bits of a
+% two-by-two mask scaled up and the triangle of a user path both take
+% the blend, which runs across the page in pattern space.
+/P << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB
+   /Coords [100 0 300 0]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0.9 0.1 0.1] /C1 [0.1 0.1 0.9] /N 1 >>
+   /Extend [true true] >> >> matrix makepattern def
+P setpattern
+gsave
+100 500 translate 200 100 scale
+2 2 true [2 0 0 -2 0 2] <4080> imagemask
+grestore
+{100 300 300 400 setbbox 100 300 moveto 300 300 lineto 200 400 lineto closepath} ufill
+showpage

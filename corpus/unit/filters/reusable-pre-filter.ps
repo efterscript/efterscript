@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: Hello
+% expect-output: abcxxx
+% expect-output: ab
+% Scenario: pre-filters decode the source. A single filter named by
+% Filter, two filters in an array with a null parameter entry each, and
+% a filter with its parameter dictionary all yield the decoded bytes in
+% the stream; AsyncRead and Intent are accepted.
+% Expect: Hello, abcxxx, ab.
+(48656C6C6F>) << /Filter /ASCIIHexDecode /AsyncRead false /Intent 3 >>
+/ReusableStreamDecode filter 10 string readstring pop =
+(02616263 FE78 80>) << /Filter [/ASCIIHexDecode /RunLengthDecode] /DecodeParms [null null] >>
+/ReusableStreamDecode filter 10 string readstring pop =
+(ab*EOD*cd) << /Filter /SubFileDecode /DecodeParms << /EODCount 0 /EODString (*EOD*) >> >>
+/ReusableStreamDecode filter 10 string readstring pop =

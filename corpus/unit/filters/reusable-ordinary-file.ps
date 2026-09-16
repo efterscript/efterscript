@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: -1
+% expect-error: ioerror
+% oracle: skip the reference reads the job from a positionable file, so the job source can be positioned there
+% Scenario: positioning an ordinary file. The job's source is not
+% positionable: bytesavailable answers -1, resetfile does nothing, and
+% setfileposition raises ioerror.
+% Expect: -1, then ioerror.
+currentfile bytesavailable =
+currentfile resetfile
+currentfile 0 setfileposition

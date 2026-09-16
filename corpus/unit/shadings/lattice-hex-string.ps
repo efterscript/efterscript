@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a lattice mesh from a hexadecimal string. A type 5 shading
+% gives two rows of three vertices at eight bits per coordinate and
+% per component, each vertex x y r g b in five bytes, the coordinates
+% decoded over the byte range; the data goes to the PDF as it was
+% given.
+gsave
+100 300 translate
+<< /ShadingType 5 /ColorSpace /DeviceRGB
+   /BitsPerCoordinate 8 /BitsPerComponent 8 /VerticesPerRow 3
+   /Decode [0 255 0 255 0 1 0 1 0 1]
+   /DataSource <
+     0000 ff0000  640a 00ff00  c800 0000ff
+     0064 ffff00  645a 00ffff  c864 ff00ff > >> shfill
+grestore
+showpage

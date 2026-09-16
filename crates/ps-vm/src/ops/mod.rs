@@ -128,6 +128,7 @@ pub mod filter;
 pub mod font;
 pub mod fontset;
 pub mod form;
+pub mod function;
 pub mod graphics;
 pub mod image;
 pub mod output;
@@ -136,6 +137,7 @@ pub mod pattern;
 pub mod pdfmark;
 pub mod resource;
 pub mod screen;
+pub mod shading;
 pub mod show;
 pub mod stack;
 pub mod status;
@@ -175,6 +177,7 @@ const MODULES: &[&[OpEntry]] = &[
     pattern::PAINT_OPS,
     form::OPS,
     cie::OPS,
+    shading::OPS,
 ];
 
 /// The complete operator table, built on first use.

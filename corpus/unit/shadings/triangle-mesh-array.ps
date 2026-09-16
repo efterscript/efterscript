@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a triangle mesh from an array. A type 4 shading's
+% DataSource array holds three vertices with edge flags 0 0 0 and RGB
+% colours; the page carries a mesh shading of one triangle with those
+% vertices and colours, re-encoded into the packed form with a decode
+% array made from the columns' extents.
+gsave
+100 400 translate
+<< /ShadingType 4 /ColorSpace /DeviceRGB
+   /DataSource [ 0 0 0 1 0 0   0 100 0 0 1 0   0 50 80 0 0 1 ] >> shfill
+grestore
+showpage

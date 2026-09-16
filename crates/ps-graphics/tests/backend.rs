@@ -8,10 +8,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ps_graphics::{FillRule, Graphics, IrOp, Page, PatternIndex, SpaceRef};
+use ps_graphics::{
+    FillRule, Graphics, IrOp, Page, PatternIndex, PatternSpec, ShadingIndex, SpaceRef,
+};
 use ps_vm::{
-    Bounds, FormInfo, GraphicsBackend, ImageSpec, LineCap, Matrix, PatternInfo, Point, Rect, Seg,
-    SpaceSpec, VmError,
+    Bounds, FormInfo, FunctionSpec, GraphicsBackend, ImageSpec, LineCap, Matrix, PatternInfo,
+    PatternKind, Point, Rect, Seg, ShadingKind, ShadingSpec, SpaceSpec, VmError,
 };
 
 type Pages = Rc<RefCell<Vec<Page>>>;
@@ -1243,11 +1245,13 @@ fn pattern(id: u64, matrix: Matrix, paint_type: u8) -> PatternInfo {
     PatternInfo {
         id,
         matrix,
-        bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
-        xstep: 10.0,
-        ystep: 10.0,
-        paint_type,
-        tiling_type: 1,
+        kind: PatternKind::Tiling {
+            bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
+            xstep: 10.0,
+            ystep: 10.0,
+            paint_type,
+            tiling_type: 1,
+        },
     }
 }
 
@@ -1295,13 +1299,13 @@ fn a_cell_is_captured_once_per_page_in_pattern_space_and_names_its_fills() {
     })
     .unwrap();
     g.set_pattern(&info, &[]).unwrap();
-    assert_eq!(g.current_pattern(), Some(info));
+    assert_eq!(g.current_pattern(), Some(info.clone()));
     assert!(capture_cell(&mut g, &info));
     // The cell ran in pattern space from the initial state; the page's
     // scale and line width are back afterwards.
     assert_eq!(g.current_matrix(), Matrix::scaling(3.0, 3.0));
     assert_eq!(g.line_width(), 4.0);
-    assert_eq!(g.current_pattern(), Some(info));
+    assert_eq!(g.current_pattern(), Some(info.clone()));
     square(&mut g, 0.0, 0.0, 10.0);
     assert!(!capture_cell(&mut g, &info), "the page holds the cell");
     square(&mut g, 20.0, 0.0, 10.0);
@@ -1528,4 +1532,115 @@ fn forms_nest_and_page_operations_are_refused_inside() {
     assert_eq!(pages[0].resources.forms.len(), 1);
     assert!(pages[0].resources.forms[0].ops.is_empty());
     assert_eq!(pages[0].ops.len(), 1);
+}
+
+// --- shadings ------------------------------------------------------------------
+
+fn axial(background: Option<Vec<f32>>) -> ShadingSpec {
+    ShadingSpec {
+        kind: ShadingKind::Axial {
+            coords: [0.0, 0.0, 10.0, 0.0],
+            domain: [0.0, 1.0],
+            function: vec![FunctionSpec::Exponential {
+                domain: vec![0.0, 1.0],
+                range: Vec::new(),
+                c0: vec![0.0],
+                c1: vec![1.0],
+                n: 1.0,
+            }],
+            extend: [false, true],
+        },
+        space: SpaceSpec::DeviceGray,
+        background,
+        bbox: None,
+        antialias: false,
+    }
+}
+
+#[test]
+fn shadings_intern_by_value_and_shade_ops_carry_the_ctm_through_captures() {
+    let (mut g, pages) = backend();
+    let shading = axial(Some(vec![0.5]));
+    g.concat(Matrix::translation(10.0, 20.0)).unwrap();
+    g.set_color_space(&SpaceSpec::DeviceRGB).unwrap();
+    g.set_color(&[1.0, 0.0, 0.0]).unwrap();
+    g.moveto(p(1.0, 1.0)).unwrap();
+    // Neither the colour nor the path is touched, and nothing about the
+    // colour is emitted for the shade.
+    g.shade(&shading).unwrap();
+    g.shade(&shading).unwrap();
+    assert_eq!(g.current_point(), Ok(p(1.0, 1.0)));
+    assert_eq!(g.current_color(), vec![1.0, 0.0, 0.0]);
+    g.newpath().unwrap();
+    // A different value is another resource; the same one again is not.
+    g.shade(&axial(None)).unwrap();
+    // Inside a form body the matrix is relative to form space.
+    let outer = form(4, Matrix::scaling(2.0, 2.0));
+    let depth = g.gstate_depth();
+    assert!(g.begin_form(&outer).unwrap());
+    g.concat(Matrix::translation(1.0, 1.0)).unwrap();
+    g.shade(&shading).unwrap();
+    g.end_form().unwrap();
+    g.grestore_to(depth).unwrap();
+    g.place_form(&outer).unwrap();
+    // A shading pattern has no cell; its resource names the shading.
+    let info = PatternInfo {
+        id: 9,
+        matrix: Matrix::scaling(3.0, 3.0),
+        kind: PatternKind::Shading(Rc::new(shading.clone())),
+    };
+    g.set_color_space(&SpaceSpec::Pattern { base: None })
+        .unwrap();
+    g.set_pattern(&info, &[]).unwrap();
+    assert_eq!(g.current_pattern(), Some(info.clone()));
+    assert!(!g.begin_pattern_cell(&info).unwrap());
+    square(&mut g, 0.0, 0.0, 10.0);
+    // Under the null device nothing is recorded.
+    g.gsave().unwrap();
+    g.nulldevice().unwrap();
+    g.shade(&shading).unwrap();
+    g.grestore().unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let page = &pages[0];
+    assert_eq!(page.resources.shadings.len(), 2);
+    assert_eq!(
+        page.resources.patterns,
+        [PatternSpec::Shading {
+            matrix: Matrix::scaling(3.0, 3.0),
+            shading: ShadingIndex(0),
+        }]
+    );
+    // The shades emit nothing about the colour; the form placement is
+    // what flushes the red set before them.
+    assert_eq!(
+        page.dump(),
+        "ir/1\npage 612 792\nresources:\ncs 0 DeviceRGB\ncs 1 Pattern\n\
+         shading 0 type 2 space DeviceGray background [0.5] coords [0 0 10 0] domain [0 1] extend [false true] {\n\
+         \x20 function type 2 domain [0 1] c0 [0] c1 [1] n 1\n}\n\
+         shading 1 type 2 space DeviceGray coords [0 0 10 0] domain [0 1] extend [false true] {\n\
+         \x20 function type 2 domain [0 1] c0 [0] c1 [1] n 1\n}\n\
+         pattern 0 shading 0 matrix 3 0 0 3 0 0\n\
+         form 0 bbox 0 0 100 100 {\n  q\n  m 0 0\n  l 100 0\n  l 100 100\n  l 0 100\n  h\n  W n\n\
+         \x20 sh 0 1 0 0 1 1 1\n  Q\n}\n\
+         ops:\nsh 0 1 0 0 1 10 20\nsh 0 1 0 0 1 10 20\nsh 1 1 0 0 1 10 20\ncs 0\nsc 1 0 0\n\
+         form 0 2 0 0 2 0 0\ncs 1\npattern 0\nm 10 20\nl 20 20\nl 20 30\nl 10 30\nh\nf\n"
+    );
+}
+
+#[test]
+fn smoothness_is_kept_clamped_and_reset_by_initgraphics() {
+    let (mut g, _) = backend();
+    assert_eq!(g.smoothness(), 0.02);
+    g.set_smoothness(0.5).unwrap();
+    g.gsave().unwrap();
+    g.set_smoothness(2.0).unwrap();
+    assert_eq!(g.smoothness(), 1.0);
+    g.set_smoothness(-1.0).unwrap();
+    assert_eq!(g.smoothness(), 0.0);
+    assert_eq!(g.set_smoothness(f32::NAN), Err(VmError::RangeCheck));
+    g.grestore().unwrap();
+    assert_eq!(g.smoothness(), 0.5);
+    g.initgraphics().unwrap();
+    assert_eq!(g.smoothness(), 0.02);
 }

@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a Coons patch mesh from an array. The first patch gives
+% its edge flag of 0, twelve control points around its boundary, and
+% four corner colours; the second is attached with a flag of 2 to the
+% first patch's right edge, so it gives only eight new points and two
+% new colours, the shared edge and its colours implied.
+gsave
+100 450 translate
+<< /ShadingType 6 /ColorSpace /DeviceRGB
+   /DataSource [
+     0   0 0  -10 30  10 70  0 100  30 110  70 90  100 100  110 70  90 30  100 0  70 -10  30 10
+         1 0 0  0 1 0  0 0 1  1 1 0
+     2   130 -10  170 10  200 0  210 30  190 70  200 100  170 110  130 90
+         1 0 1  0 1 1 ] >> shfill
+grestore
+showpage

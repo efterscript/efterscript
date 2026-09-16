@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: (lo)
+% expect-output: 2
+% expect-output: 5
+% expect-output: 0
+% expect-output: 0
+% expect-output: h
+% Scenario: positioning within a stream. After setfileposition to 3 of
+% a five-byte stream two bytes remain, which readstring returns short;
+% flushfile moves to the end, where the position is the length and
+% nothing is available; resetfile returns to the start.
+% Expect: false, (lo), 2, then 5, 0, 0, h.
+(hello) /ReusableStreamDecode filter
+dup 3 setfileposition dup bytesavailable exch 10 string readstring
+== == ==
+(hello) /ReusableStreamDecode filter
+dup flushfile dup fileposition = dup bytesavailable =
+dup resetfile dup fileposition = 1 string readstring pop =

@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: an axial shading is accepted. Inside a rectangular clip,
+% shfill paints a red-to-blue blend along a horizontal line, extended
+% before its start; the page carries one shade operation of type 2 with
+% those coordinates, function, and extension under the CTM at the
+% call, and the current path and colour are left alone.
+gsave
+100 100 translate
+0 0 200 100 rectclip
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>
+   /Extend [true false] >> shfill
+grestore
+showpage

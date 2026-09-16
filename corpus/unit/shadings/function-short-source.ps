@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: sampled-function-short-source
+% expect-error: rangecheck
+% Scenario: a sampled function with a short source. A type 0 function
+% declares four samples of eight bits with one output but its
+% DataSource holds three bytes, so the shading using it raises
+% rangecheck.
+<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 100 0]
+   /Function << /FunctionType 0 /Domain [0 1] /Range [0 1] /Size [4]
+     /BitsPerSample 8 /DataSource <0040ff> >> >> shfill

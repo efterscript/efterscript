@@ -31,7 +31,7 @@ use ps_fonts::ResidentFace;
 use ps_graphics::{
     FontSpec, FormSpec, GlyphNames, GlyphProc, Image, IrOp, Op, Page, PatternSpec, Resources,
 };
-use ps_vm::{Bounds, Matrix, SpaceSpec};
+use ps_vm::{Bounds, Matrix, ShadingSpec, SpaceSpec};
 
 use crate::content::{self, Recode};
 use crate::embedded::EmbeddedTable;
@@ -47,6 +47,7 @@ pub(crate) struct Refs {
     pub fonts: BTreeSet<usize>,
     pub patterns: BTreeSet<usize>,
     pub forms: BTreeSet<usize>,
+    pub shadings: BTreeSet<usize>,
 }
 
 impl Refs {
@@ -61,8 +62,10 @@ impl Refs {
 }
 
 /// Gathers the indices `ops` refer to; with `deep`, a pattern or form
-/// met for the first time has its own operations gathered too. A
-/// resource is entered before its content is walked, so a cell that
+/// met for the first time has its own operations gathered too, and a
+/// shading pattern counts its shading (a pattern object refers to the
+/// shading directly, so the content's own dictionary need not list it).
+/// A resource is entered before its content is walked, so a cell that
 /// names itself ends the walk.
 fn collect(ops: &[Op], resources: &Resources, refs: &mut Refs, deep: bool) {
     for op in ops {
@@ -81,8 +84,14 @@ fn collect(ops: &[Op], resources: &Resources, refs: &mut Refs, deep: bool) {
                     && deep
                     && let Some(spec) = resources.patterns.get(pattern.0)
                 {
-                    collect(&spec.ops, resources, refs, true);
+                    if let PatternSpec::Shading { shading, .. } = spec {
+                        refs.shadings.insert(shading.0);
+                    }
+                    collect(spec.ops(), resources, refs, true);
                 }
+            }
+            IrOp::Shade { shading, .. } => {
+                refs.shadings.insert(shading.0);
             }
             IrOp::Form { form, .. } => {
                 if refs.forms.insert(form.0)
@@ -122,6 +131,7 @@ struct Key {
     fonts: Vec<FontSpec>,
     patterns: Vec<PatternSpec>,
     forms: Vec<FormSpec>,
+    shadings: Vec<ShadingSpec>,
 }
 
 impl Key {
@@ -153,6 +163,11 @@ impl Key {
                 .forms
                 .iter()
                 .filter_map(|&i| resources.forms.get(i).cloned())
+                .collect(),
+            shadings: refs
+                .shadings
+                .iter()
+                .filter_map(|&i| resources.shadings.get(i).cloned())
                 .collect(),
         }
     }
@@ -674,7 +689,7 @@ mod tests {
             base: ResidentFace::Helvetica,
             encoding: ps_graphics::glyph_names(&[]),
         });
-        let cell = resources.add_pattern(PatternSpec {
+        let cell = resources.add_pattern(PatternSpec::Tiling {
             matrix: Matrix::IDENTITY,
             bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
             xstep: 1.0,
@@ -691,12 +706,33 @@ mod tests {
                 .into(),
             ],
         });
+        let axial = resources.intern_shading(&ShadingSpec {
+            kind: ps_vm::ShadingKind::Axial {
+                coords: [0.0, 0.0, 1.0, 0.0],
+                domain: [0.0, 1.0],
+                function: Vec::new(),
+                extend: [false, false],
+            },
+            space: SpaceSpec::DeviceGray,
+            background: None,
+            bbox: None,
+            antialias: false,
+        });
+        let glow = resources.add_pattern(PatternSpec::Shading {
+            matrix: Matrix::IDENTITY,
+            shading: axial,
+        });
         let body = resources.add_form(FormSpec {
             bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
             ops: vec![
                 IrOp::SetColorSpace(rgb).into(),
                 IrOp::SetPattern {
                     pattern: cell,
+                    components: Vec::new(),
+                }
+                .into(),
+                IrOp::SetPattern {
+                    pattern: glow,
                     components: Vec::new(),
                 }
                 .into(),
@@ -717,9 +753,14 @@ mod tests {
         let direct = Refs::of(&ops, &resources);
         assert_eq!(direct.forms.iter().copied().collect::<Vec<_>>(), [body.0]);
         assert!(direct.patterns.is_empty() && direct.fonts.is_empty() && direct.spaces.is_empty());
+        assert!(direct.shadings.is_empty());
         let mut deep = Refs::default();
         collect(&ops, &resources, &mut deep, true);
-        assert_eq!(deep.patterns.iter().copied().collect::<Vec<_>>(), [cell.0]);
+        assert_eq!(
+            deep.patterns.iter().copied().collect::<Vec<_>>(),
+            [cell.0, glow.0]
+        );
+        assert_eq!(deep.shadings.iter().copied().collect::<Vec<_>>(), [axial.0]);
         assert_eq!(
             deep.fonts.iter().copied().collect::<Vec<_>>(),
             [helvetica.0]
@@ -743,7 +784,8 @@ mod tests {
         assert_eq!(references(&type3, &resources, false), direct);
         let key = Key::of(&type3, &resources);
         assert_eq!(key.forms.len(), 1);
-        assert_eq!(key.patterns.len(), 1);
+        assert_eq!(key.patterns.len(), 2);
+        assert_eq!(key.shadings.len(), 1);
         assert_eq!(key.fonts.len(), 1);
         assert_eq!(key.spaces, [SpaceSpec::DeviceRGB]);
     }

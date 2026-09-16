@@ -215,7 +215,7 @@ pub(crate) struct Category {
 /// instances is the interpreter's, not the memory pool's, so `restore`
 /// does not tear it; an entry whose dictionary `restore` discarded is
 /// `invalidaccess` when used.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct PatternInstance {
     pub dict: Object,
     pub info: PatternInfo,
@@ -1078,7 +1078,7 @@ impl Interp {
         usize::try_from(id)
             .ok()
             .and_then(|i| self.pattern_instances.get(i))
-            .copied()
+            .cloned()
     }
 
     /// Whether a pattern cell or form body is being run for its capture,
@@ -1459,6 +1459,9 @@ impl Interp {
                     ops::form::abandon_body(self, *depth);
                 }
             }
+            // The chain a reusable read opened is closed with its frame,
+            // whether the read ended or was abandoned.
+            Frame::Loop(LoopFrame::ReusableRead(read)) => read.abandon(&mut self.mem),
             _ => {}
         }
         if let Frame::Marker(Marker::Eexec { layer, dicts }) = &frame {

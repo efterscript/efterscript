@@ -11,6 +11,10 @@
 //! origin <llx> <lly>                  only when the media box origin is not 0 0
 //! resources:
 //! cs <n> <space>                      one per colour space, in index order
+//! shading <n> type <t> space <space> [background [<c>…]] [bbox [<llx> <lly> <urx> <ury>]] [antialias] <entries> {
+//!   function …                        the function, or one line per function of an array
+//!   data <hex>                        the packed vertex data of a mesh
+//! }
 //! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate] [dct]
 //! font <n> <BaseName> [diff=[<code> /<name>…]]
 //! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
@@ -22,6 +26,7 @@
 //! pattern <n> matrix <a> <b> <c> <d> <tx> <ty> bbox <llx> <lly> <urx> <ury> step <xs> <ys> paint <1|2> tiling <1-3> {
 //!   <op>                              the cell, in pattern space, indented
 //! }
+//! pattern <n> shading <k> matrix <a> <b> <c> <d> <tx> <ty>
 //! form <n> bbox <llx> <lly> <urx> <ury> {
 //!   <op>                              the body, in form space, indented
 //! }
@@ -52,7 +57,22 @@
 //! of the content that names it, its box and steps in pattern space,
 //! its paint type, and its tiling type; a form resource its box in form
 //! space. Both list their captured operations indented, as a glyph
-//! does.
+//! does. A shading pattern names its shading and gives the same matrix.
+//!
+//! A shading resource gives its type, its colour space inline (as a `cs`
+//! line describes one), the optional background, box, and anti-alias
+//! flag, then the type's entries: `domain [<x0> <x1> <y0> <y1>] matrix
+//! <six numbers>` for type 1; `coords [<four or six numbers>] domain
+//! [<t0> <t1>] extend [<bool> <bool>]` for types 2 and 3; `bits <coord>
+//! <component> <flag> decode [<ranges>]` for types 4, 6, and 7 and
+//! `bits <coord> <component> per-row <n> decode [<ranges>]` for type 5.
+//! Its block lists the functions, one line each — `function type 0
+//! domain […] range […] size […] bits <b> order <o> encode […] decode […]
+//! samples <hex>`, `function type 2 domain […] [range […]] c0 […] c1 […]
+//! n <n>`, or `function type 3 domain […] [range […]] bounds […] encode
+//! […] {` with the parts indented inside `}` — and, for a mesh, `data
+//! <hex>` with the packed vertex data. Hexadecimal is lowercase in one
+//! run; an absent `Range` is omitted.
 //!
 //! A resident font lists only the codes whose glyph differs from the
 //! base font's built-in encoding (`/.notdef` where the program removed
@@ -87,6 +107,7 @@
 //! pattern <n> [<c>…]                  a pattern as the colour, with the
 //!                                     components of an uncoloured one
 //! form <n> <a> <b> <c> <d> <tx> <ty>  a form placed under its matrix
+//! sh <n> <a> <b> <c> <d> <tx> <ty>    a shading painted under its matrix
 //! m <x> <y>  l <x> <y>  c <x1> <y1> <x2> <y2> <x3> <y3>  h
 //! f  f*  S                            paint the segments just listed
 //! W n  W* n                           clip to the segments just listed
@@ -109,7 +130,10 @@
 //! its value.
 
 use ps_fonts::ProgramKind;
-use ps_vm::{Bounds, Encoded, Glyph, ImageSpec, MarkValue, Matrix, Seg, SpaceSpec};
+use ps_vm::{
+    Bounds, Encoded, FunctionSpec, Glyph, ImageSpec, MarkValue, Matrix, Seg, ShadingKind,
+    ShadingSpec, SpaceSpec,
+};
 
 use crate::ir::{
     Annot, DocMark, FillRule, FontSpec, FormSpec, GlyphNames, GlyphProc, Image, IrOp, LinkTarget,
@@ -215,15 +239,190 @@ fn bounds(b: Bounds) -> String {
 }
 
 fn pattern(index: usize, spec: &PatternSpec) -> String {
-    let header = format!(
-        "pattern {index} matrix {} bbox {} step {} paint {} tiling {}",
-        matrix(spec.matrix),
-        bounds(spec.bbox),
-        fmt_reals(&[spec.xstep, spec.ystep]),
-        spec.paint_type,
-        spec.tiling_type
+    match spec {
+        PatternSpec::Tiling {
+            matrix: m,
+            bbox: b,
+            xstep,
+            ystep,
+            paint_type,
+            tiling_type,
+            ops,
+        } => {
+            let header = format!(
+                "pattern {index} matrix {} bbox {} step {} paint {} tiling {}",
+                matrix(*m),
+                bounds(*b),
+                fmt_reals(&[*xstep, *ystep]),
+                paint_type,
+                tiling_type
+            );
+            block(&header, ops)
+        }
+        PatternSpec::Shading { matrix: m, shading } => format!(
+            "pattern {index} shading {} matrix {}\n",
+            shading.0,
+            matrix(*m)
+        ),
+    }
+}
+
+/// Space-separated reals in brackets.
+fn list(values: &[f32]) -> String {
+    format!("[{}]", fmt_reals(values))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    hex_string(bytes)
+}
+
+/// The lines of a function at `indent`, every line ending in a newline:
+/// one line for a sampled or exponential function, a block for a
+/// stitching function with its parts inside.
+fn function(out: &mut String, spec: &FunctionSpec, indent: usize) {
+    let pad = " ".repeat(indent);
+    match spec {
+        FunctionSpec::Sampled {
+            domain,
+            range,
+            size,
+            bits,
+            order,
+            encode,
+            decode,
+            samples,
+        } => {
+            let size: Vec<f32> = size.iter().map(|&n| n as f32).collect();
+            out.push_str(&format!(
+                "{pad}function type 0 domain {} range {} size {} bits {bits} order {order} encode {} decode {} samples {}\n",
+                list(domain),
+                list(range),
+                list(&size),
+                list(encode),
+                list(decode),
+                hex(samples)
+            ));
+        }
+        FunctionSpec::Exponential {
+            domain,
+            range,
+            c0,
+            c1,
+            n,
+        } => {
+            out.push_str(&format!(
+                "{pad}function type 2 domain {}{} c0 {} c1 {} n {}\n",
+                list(domain),
+                optional_range(range),
+                list(c0),
+                list(c1),
+                fmt_real(*n)
+            ));
+        }
+        FunctionSpec::Stitching {
+            domain,
+            range,
+            functions,
+            bounds,
+            encode,
+        } => {
+            out.push_str(&format!(
+                "{pad}function type 3 domain {}{} bounds {} encode {} {{\n",
+                list(domain),
+                optional_range(range),
+                list(bounds),
+                list(encode)
+            ));
+            for part in functions {
+                function(out, part, indent + 2);
+            }
+            out.push_str(&format!("{pad}}}\n"));
+        }
+    }
+}
+
+/// ` range […]` when the function declares one.
+fn optional_range(range: &[f32]) -> String {
+    if range.is_empty() {
+        String::new()
+    } else {
+        format!(" range {}", list(range))
+    }
+}
+
+fn shading(index: usize, spec: &ShadingSpec) -> String {
+    let mut header = format!(
+        "shading {index} type {} space {}",
+        spec.kind.shading_type(),
+        space(&spec.space)
     );
-    block(&header, &spec.ops)
+    if let Some(background) = &spec.background {
+        header.push_str(&format!(" background {}", list(background)));
+    }
+    if let Some(b) = spec.bbox {
+        header.push_str(&format!(" bbox {}", list(&[b.llx, b.lly, b.urx, b.ury])));
+    }
+    if spec.antialias {
+        header.push_str(" antialias");
+    }
+    let mut data = None;
+    match &spec.kind {
+        ShadingKind::Function {
+            domain, matrix: m, ..
+        } => {
+            header.push_str(&format!(" domain {} matrix {}", list(domain), matrix(*m)));
+        }
+        ShadingKind::Axial {
+            coords,
+            domain,
+            extend,
+            ..
+        } => header.push_str(&geometry(coords, domain, extend)),
+        ShadingKind::Radial {
+            coords,
+            domain,
+            extend,
+            ..
+        } => header.push_str(&geometry(coords, domain, extend)),
+        ShadingKind::Mesh {
+            bits_per_coordinate,
+            bits_per_component,
+            bits_per_flag,
+            decode,
+            vertices_per_row,
+            data: packed,
+            ..
+        } => {
+            header.push_str(&format!(" bits {bits_per_coordinate} {bits_per_component}"));
+            match vertices_per_row {
+                Some(per_row) => header.push_str(&format!(" per-row {per_row}")),
+                None => header.push_str(&format!(" {bits_per_flag}")),
+            }
+            header.push_str(&format!(" decode {}", list(decode)));
+            data = Some(packed);
+        }
+    }
+    let mut out = format!("{header} {{\n");
+    for f in spec.kind.function() {
+        function(&mut out, f, 2);
+    }
+    if let Some(packed) = data {
+        out.push_str(&format!("  data {}\n", hex(packed)));
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// The `coords`, `domain`, and `extend` entries of an axial or radial
+/// shading.
+fn geometry(coords: &[f32], domain: &[f32; 2], extend: &[bool; 2]) -> String {
+    format!(
+        " coords {} domain {} extend [{} {}]",
+        list(coords),
+        list(domain),
+        extend[0],
+        extend[1]
+    )
 }
 
 fn form(index: usize, spec: &FormSpec) -> String {
@@ -471,6 +670,9 @@ fn op(out: &mut String, op: &IrOp) {
         IrOp::Form { form, matrix: m } => {
             out.push_str(&format!("form {} {}\n", form.0, matrix(*m)));
         }
+        IrOp::Shade { shading, matrix: m } => {
+            out.push_str(&format!("sh {} {}\n", shading.0, matrix(*m)));
+        }
         IrOp::Fill { path, rule } => {
             segments(out, path);
             out.push_str(match rule {
@@ -680,6 +882,9 @@ pub fn page(page: &Page) -> String {
     out.push_str("resources:\n");
     for (i, spec) in page.resources.color_spaces.iter().enumerate() {
         out.push_str(&format!("cs {i} {}\n", space(spec)));
+    }
+    for (i, spec) in page.resources.shadings.iter().enumerate() {
+        out.push_str(&shading(i, spec));
     }
     for (i, img) in page.resources.images.iter().enumerate() {
         out.push_str(&image(i, img));

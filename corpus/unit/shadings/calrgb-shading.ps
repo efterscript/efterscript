@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a shading in a collapsed CIE-based space. A CIEBasedABC
+% dictionary with only its white point collapses to a calibrated RGB
+% space; the shading carries that space, written inline, and its
+% function's colours are the space's components.
+gsave
+100 600 300 80 rectclip
+<< /ShadingType 2 /ColorSpace [/CIEBasedABC << /WhitePoint [0.9505 1 1.089] >>]
+   /Coords [100 0 400 0]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0.9 0.2 0.1] /C1 [0.1 0.3 0.9] /N 1 >>
+   /Extend [true true] >> shfill
+grestore
+showpage

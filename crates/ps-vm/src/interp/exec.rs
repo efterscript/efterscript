@@ -89,6 +89,10 @@ enum LoopStep {
     FinishPaintProcedure,
     /// A CIE conversion has every result it needs: finish its operator.
     FinishCie,
+    /// A reusable stream's source has ended: finish `filter`.
+    FinishReusable,
+    /// The frame stays and takes another step next.
+    Continue,
     Failed(VmError, &'static str),
 }
 
@@ -694,6 +698,11 @@ impl Interp {
                     },
                 }
             }
+            LoopFrame::ReusableRead(read) => match read.step(&mut self.mem) {
+                Ok(true) => LoopStep::FinishReusable,
+                Ok(false) => LoopStep::Continue,
+                Err(e) => LoopStep::Failed(e, "filter"),
+            },
             LoopFrame::ImageData { body, acquisition } => {
                 let operator = acquisition.operator_name();
                 if !acquisition.started {
@@ -761,6 +770,16 @@ impl Interp {
                     self.raise(e, command);
                 }
             }
+            LoopStep::FinishReusable => {
+                let Some(Frame::Loop(LoopFrame::ReusableRead(read))) = self.pop_frame() else {
+                    unreachable!("frame checked above");
+                };
+                if let Err(e) = ops::filter::finish_reusable(self, *read) {
+                    let command = self.operator("filter").unwrap_or(Object::null());
+                    self.raise(e, command);
+                }
+            }
+            LoopStep::Continue => {}
             LoopStep::FinishPaintProcedure => match self.pop_frame() {
                 Some(Frame::Loop(LoopFrame::PatternCell {
                     depth, operator, ..

@@ -12,8 +12,9 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, CieColor, FontInfo, FontRef, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap,
-    LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Seg, SpaceSpec, VmError,
+    Bounds, CieColor, DEFAULT_SMOOTHNESS, FontInfo, FontRef, FormInfo, Glyph, GraphicsBackend,
+    ImageSpec, LineCap, LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Seg,
+    ShadingSpec, SpaceSpec, VmError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +63,8 @@ pub enum Call {
     BeginForm(FormInfo),
     EndForm,
     PlaceForm(FormInfo),
+    Shade(ShadingSpec),
+    Smoothness(f32),
     MediaBox(Bounds),
     ShowPage,
     CopyPage,
@@ -80,6 +83,7 @@ pub struct State {
     miter: f32,
     dash: (Vec<f32>, f32),
     flat: f32,
+    smoothness: f32,
     space: SpaceSpec,
     color: Vec<f32>,
     pattern: Option<PatternInfo>,
@@ -101,6 +105,7 @@ impl Default for State {
             miter: 10.0,
             dash: (Vec::new(), 0.0),
             flat: 1.0,
+            smoothness: DEFAULT_SMOOTHNESS,
             space: SpaceSpec::DeviceGray,
             color: vec![0.0],
             pattern: None,
@@ -464,14 +469,14 @@ impl GraphicsBackend for Recording {
     }
 
     fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {
-        self.record(Call::SetPattern(*pattern, components.to_vec()));
+        self.record(Call::SetPattern(pattern.clone(), components.to_vec()));
         self.state.color = components.to_vec();
-        self.state.pattern = Some(*pattern);
+        self.state.pattern = Some(pattern.clone());
         Ok(())
     }
 
     fn current_pattern(&self) -> Option<PatternInfo> {
-        self.state.pattern
+        self.state.pattern.clone()
     }
 
     fn set_cie_color(&mut self, color: CieColor) -> Result<(), VmError> {
@@ -495,7 +500,7 @@ impl GraphicsBackend for Recording {
     /// Captures each instance once per page, inside a saved state that
     /// starts from the initial colour, as the real backend does.
     fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
-        self.record(Call::BeginPatternCell(*pattern));
+        self.record(Call::BeginPatternCell(pattern.clone()));
         if !self.cells.insert(pattern.id) {
             return Ok(false);
         }
@@ -533,6 +538,21 @@ impl GraphicsBackend for Recording {
     fn place_form(&mut self, form: &FormInfo) -> Result<(), VmError> {
         self.record(Call::PlaceForm(*form));
         Ok(())
+    }
+
+    fn shade(&mut self, shading: &ShadingSpec) -> Result<(), VmError> {
+        self.record(Call::Shade(shading.clone()));
+        Ok(())
+    }
+
+    fn set_smoothness(&mut self, smoothness: f32) -> Result<(), VmError> {
+        self.record(Call::Smoothness(smoothness));
+        self.state.smoothness = smoothness;
+        Ok(())
+    }
+
+    fn smoothness(&self) -> f32 {
+        self.state.smoothness
     }
 
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError> {

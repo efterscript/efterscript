@@ -678,24 +678,243 @@ pub enum Seg {
     Close,
 }
 
-/// A tiling pattern instance as the backend sees it (PLRM3 §4.9.2): the
-/// value part of what `makepattern` made. `id` distinguishes instances
-/// for the life of the interpreter; `matrix` maps pattern space to
-/// default user space (the instance's matrix already concatenated with
-/// the CTM at `makepattern`); `bbox` and the steps are in pattern space;
-/// `paint_type` is 1 (coloured) or 2 (uncoloured) and `tiling_type` 1 to
-/// 3. The paint procedure stays with the VM, which runs it under
-/// `begin_pattern_cell`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A pattern instance as the backend sees it (PLRM3 §4.9): the value
+/// part of what `makepattern` made. `id` distinguishes instances for the
+/// life of the interpreter; `matrix` maps pattern space to default user
+/// space (the instance's matrix already concatenated with the CTM at
+/// `makepattern`); `kind` is what the pattern paints with.
+#[derive(Clone, Debug, PartialEq)]
 pub struct PatternInfo {
     pub id: u64,
     pub matrix: Matrix,
-    pub bbox: Bounds,
-    pub xstep: f32,
-    pub ystep: f32,
-    pub paint_type: u8,
-    pub tiling_type: u8,
+    pub kind: PatternKind,
 }
+
+impl PatternInfo {
+    /// Whether the pattern takes its colour from the components set with
+    /// it: an uncoloured tiling pattern does, a coloured one and a
+    /// shading pattern carry their own.
+    pub fn is_uncoloured(&self) -> bool {
+        matches!(self.kind, PatternKind::Tiling { paint_type: 2, .. })
+    }
+
+    pub fn is_shading(&self) -> bool {
+        matches!(self.kind, PatternKind::Shading(_))
+    }
+}
+
+/// What a pattern paints with.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PatternKind {
+    /// A tiling pattern (PLRM3 §4.9.2): `bbox` and the steps are in
+    /// pattern space; `paint_type` is 1 (coloured) or 2 (uncoloured) and
+    /// `tiling_type` 1 to 3. The paint procedure stays with the VM,
+    /// which runs it under `begin_pattern_cell`.
+    Tiling {
+        bbox: Bounds,
+        xstep: f32,
+        ystep: f32,
+        paint_type: u8,
+        tiling_type: u8,
+    },
+    /// A shading pattern (PLRM3 §4.9.3): the shading in pattern space,
+    /// its `Background` kept for this use. Shared rather than owned so
+    /// the instance table, the graphics state, and its saved copies
+    /// hold one mesh.
+    Shading(Rc<ShadingSpec>),
+}
+
+/// A function dictionary as a value (PLRM3 §3.10.1): what a shading's
+/// `Function` entry carries across the boundary. Nothing here evaluates
+/// it — a viewer does — so every entry is kept as the dictionary gave it,
+/// the manual's defaults filled in. `domain` has two numbers per input;
+/// `range` two per output, empty where a type 2 or 3 dictionary gave
+/// none (a type 0 dictionary always has one).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FunctionSpec {
+    /// Type 0: a table of `size` samples per input dimension, each
+    /// sample `bits` wide (1 to 32), packed most significant bit first
+    /// with no padding, the first input dimension varying fastest and
+    /// the outputs of one sample adjacent; `encode` maps each input to
+    /// the table's index range and `decode` each output from the raw
+    /// sample range; `order` is 1 or 3.
+    Sampled {
+        domain: Vec<f32>,
+        range: Vec<f32>,
+        size: Vec<u32>,
+        bits: u8,
+        order: u8,
+        encode: Vec<f32>,
+        decode: Vec<f32>,
+        samples: Vec<u8>,
+    },
+    /// Type 2: `c0 + x^n × (c1 − c0)` for the one input `x`, with as
+    /// many outputs as `c0` and `c1` have entries.
+    Exponential {
+        domain: Vec<f32>,
+        range: Vec<f32>,
+        c0: Vec<f32>,
+        c1: Vec<f32>,
+        n: f32,
+    },
+    /// Type 3: the one-input `functions` applied over the subdomains
+    /// `bounds` cuts the domain into, `encode` (two numbers per
+    /// function) mapping each subdomain onto its function's domain.
+    Stitching {
+        domain: Vec<f32>,
+        range: Vec<f32>,
+        functions: Vec<FunctionSpec>,
+        bounds: Vec<f32>,
+        encode: Vec<f32>,
+    },
+}
+
+impl FunctionSpec {
+    /// The number of input values.
+    pub fn inputs(&self) -> usize {
+        match self {
+            FunctionSpec::Sampled { size, .. } => size.len(),
+            FunctionSpec::Exponential { .. } | FunctionSpec::Stitching { .. } => 1,
+        }
+    }
+
+    /// The number of output values.
+    pub fn outputs(&self) -> usize {
+        match self {
+            FunctionSpec::Sampled { range, .. } => range.len() / 2,
+            FunctionSpec::Exponential { c0, .. } => c0.len(),
+            FunctionSpec::Stitching {
+                range, functions, ..
+            } => {
+                if range.is_empty() {
+                    functions.first().map_or(0, FunctionSpec::outputs)
+                } else {
+                    range.len() / 2
+                }
+            }
+        }
+    }
+
+    pub fn domain(&self) -> &[f32] {
+        match self {
+            FunctionSpec::Sampled { domain, .. }
+            | FunctionSpec::Exponential { domain, .. }
+            | FunctionSpec::Stitching { domain, .. } => domain,
+        }
+    }
+
+    /// The `FunctionType` value.
+    pub fn function_type(&self) -> u8 {
+        match self {
+            FunctionSpec::Sampled { .. } => 0,
+            FunctionSpec::Exponential { .. } => 2,
+            FunctionSpec::Stitching { .. } => 3,
+        }
+    }
+}
+
+/// The type-specific part of a shading dictionary (PLRM3 §4.9.3, Tables
+/// 4.12–4.19). A `function` vector holds one function of the space's
+/// arity, or one one-output function per component when the dictionary
+/// gave an array; it is empty only for a mesh without a `Function`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShadingKind {
+    /// Type 1: colour as a function of position over `domain` (`[x0 x1
+    /// y0 y1]`), `matrix` mapping that domain into the shading's space.
+    Function {
+        domain: [f32; 4],
+        matrix: Matrix,
+        function: Vec<FunctionSpec>,
+    },
+    /// Type 2: a blend along the axis `coords` (`[x0 y0 x1 y1]`) over
+    /// the parameter `domain`, `extend` continuing the end colours past
+    /// either end.
+    Axial {
+        coords: [f32; 4],
+        domain: [f32; 2],
+        function: Vec<FunctionSpec>,
+        extend: [bool; 2],
+    },
+    /// Type 3: a blend between the circles `coords` (`[x0 y0 r0 x1 y1
+    /// r1]`), otherwise as `Axial`.
+    Radial {
+        coords: [f32; 6],
+        domain: [f32; 2],
+        function: Vec<FunctionSpec>,
+        extend: [bool; 2],
+    },
+    /// Types 4 to 7: a mesh in the packed form the manual describes for
+    /// a string or file source, every vertex (types 4 and 5) or patch
+    /// (6 and 7) starting on a byte boundary; `decode` holds two numbers
+    /// each for x, y, and every colour value carried per vertex (one
+    /// when a function is present); `bits_per_flag` is 0 for type 5,
+    /// which has no flags, and `vertices_per_row` is present for type
+    /// 5 only. An array source has been re-encoded into this form.
+    Mesh {
+        ty: u8,
+        bits_per_coordinate: u8,
+        bits_per_component: u8,
+        bits_per_flag: u8,
+        decode: Vec<f32>,
+        vertices_per_row: Option<u32>,
+        function: Vec<FunctionSpec>,
+        data: Vec<u8>,
+    },
+}
+
+impl ShadingKind {
+    /// The `ShadingType` value.
+    pub fn shading_type(&self) -> u8 {
+        match self {
+            ShadingKind::Function { .. } => 1,
+            ShadingKind::Axial { .. } => 2,
+            ShadingKind::Radial { .. } => 3,
+            ShadingKind::Mesh { ty, .. } => *ty,
+        }
+    }
+
+    pub fn function(&self) -> &[FunctionSpec] {
+        match self {
+            ShadingKind::Function { function, .. }
+            | ShadingKind::Axial { function, .. }
+            | ShadingKind::Radial { function, .. }
+            | ShadingKind::Mesh { function, .. } => function,
+        }
+    }
+}
+
+/// A shading dictionary as a value (PLRM3 §4.9.3, Table 4.11): the
+/// space its colours are in (a device, Separation, DeviceN, Indexed, or
+/// calibrated space — never a pattern space), the optional background
+/// colour of that space's arity, the optional bounding box in the space
+/// the shading is painted in, the anti-aliasing flag, and the type's own
+/// entries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShadingSpec {
+    pub kind: ShadingKind,
+    pub space: SpaceSpec,
+    pub background: Option<Vec<f32>>,
+    pub bbox: Option<Bounds>,
+    pub antialias: bool,
+}
+
+impl ShadingSpec {
+    /// The colour values carried per vertex or corner of a mesh, or
+    /// produced by the functions: one when a function maps a parameter
+    /// to the colour, else the space's component count.
+    pub fn values_per_color(&self) -> usize {
+        if self.kind.function().is_empty() {
+            self.space.components()
+        } else {
+            1
+        }
+    }
+}
+
+/// The smoothness a fresh graphics state carries: what other
+/// interpreters answer for `currentsmoothness` before any
+/// `setsmoothness` (observed).
+pub const DEFAULT_SMOOTHNESS: f32 = 0.02;
 
 /// A form as the backend sees it (PLRM3 §4.7): `id` identifies the form
 /// dictionary, `bbox` is in form space, and `matrix` maps form space to
@@ -871,9 +1090,9 @@ pub trait GraphicsBackend {
 
     /// Makes `pattern` the current colour in a pattern space, with the
     /// components of the underlying space for an uncoloured pattern
-    /// (`pattern.paint_type` 2) and none for a coloured one. Saved and
-    /// restored with the rest of the state. A backend without patterns
-    /// accepts and ignores it.
+    /// (`pattern.is_uncoloured()`) and none for a coloured or shading
+    /// pattern. Saved and restored with the rest of the state. A backend
+    /// without patterns accepts and ignores it.
     fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {
         let _ = (pattern, components);
         Ok(())
@@ -913,8 +1132,9 @@ pub trait GraphicsBackend {
     /// Starts capturing `pattern`'s cell: until `end_pattern_cell`, marks
     /// go into the pattern's own resource in pattern space, clipped to
     /// its box, and page operations are refused. Returns `false` and
-    /// captures nothing when the page already holds the cell, in which
-    /// case the VM does not run the paint procedure and does not call
+    /// captures nothing when the page already holds the cell — or when
+    /// the pattern is a shading, which has no cell — in which case the
+    /// VM does not run the paint procedure and does not call
     /// `end_pattern_cell`.
     fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
         let _ = pattern;
@@ -943,6 +1163,32 @@ pub trait GraphicsBackend {
     fn place_form(&mut self, form: &FormInfo) -> Result<(), VmError> {
         let _ = form;
         Ok(())
+    }
+
+    // --- shadings ------------------------------------------------------------------
+
+    /// Paints `shading` in the current user space, subject to the clip
+    /// (`shfill`, PLRM3 §8.2): the CTM at the call is the shading's
+    /// placement. The current path and colour are neither used nor
+    /// changed; `shading.background` is not painted in this use (the
+    /// entry says so) but is carried, so a backend interning the
+    /// shading holds one value for both uses. A backend without
+    /// shadings accepts and ignores it.
+    fn shade(&mut self, shading: &ShadingSpec) -> Result<(), VmError> {
+        let _ = shading;
+        Ok(())
+    }
+
+    /// The smoothness parameter (`setsmoothness`, PLRM3 §8.2), already
+    /// clamped to the unit interval by the operator; saved and restored
+    /// with the state, reset by `initgraphics`, never applied. A backend
+    /// that keeps nothing accepts it and answers the default.
+    fn set_smoothness(&mut self, smoothness: f32) -> Result<(), VmError> {
+        let _ = smoothness;
+        Ok(())
+    }
+    fn smoothness(&self) -> f32 {
+        DEFAULT_SMOOTHNESS
     }
 
     // --- page and device ---------------------------------------------------------
@@ -1341,16 +1587,40 @@ mod tests {
         let pattern = PatternInfo {
             id: 1,
             matrix: Matrix::IDENTITY,
-            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
-            xstep: 1.0,
-            ystep: 1.0,
-            paint_type: 1,
-            tiling_type: 1,
+            kind: PatternKind::Tiling {
+                bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+                xstep: 1.0,
+                ystep: 1.0,
+                paint_type: 1,
+                tiling_type: 1,
+            },
         };
+        assert!(!pattern.is_uncoloured() && !pattern.is_shading());
         assert_eq!(bare.set_pattern(&pattern, &[]), Ok(()));
         assert_eq!(bare.current_pattern(), None);
         assert_eq!(bare.begin_pattern_cell(&pattern), Ok(false));
         assert_eq!(bare.end_pattern_cell(), Ok(()));
+        let shading = ShadingSpec {
+            kind: ShadingKind::Axial {
+                coords: [0.0; 4],
+                domain: [0.0, 1.0],
+                function: Vec::new(),
+                extend: [false; 2],
+            },
+            space: SpaceSpec::DeviceGray,
+            background: None,
+            bbox: None,
+            antialias: false,
+        };
+        assert_eq!(bare.shade(&shading), Ok(()));
+        assert_eq!(bare.set_smoothness(0.5), Ok(()));
+        assert_eq!(bare.smoothness(), DEFAULT_SMOOTHNESS);
+        let pattern = PatternInfo {
+            id: 2,
+            matrix: Matrix::IDENTITY,
+            kind: PatternKind::Shading(Rc::new(shading)),
+        };
+        assert!(pattern.is_shading() && !pattern.is_uncoloured());
         let form = FormInfo {
             id: 1,
             bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),

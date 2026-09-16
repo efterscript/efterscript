@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a shading pattern in the dump. A pattern made under a
+% translated and scaled CTM fills a rectangle after that CTM is gone:
+% the dump's pattern line names the shading and the instance's matrix,
+% and the fill's colour line names the pattern.
+gsave
+100 100 translate 2 2 scale
+/P << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 50 0]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>
+   /Extend [true true] >> >> matrix makepattern def
+grestore
+P setpattern
+100 100 200 100 rectfill
+showpage

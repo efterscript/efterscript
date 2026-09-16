@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: Extend in every combination. The same blend along an axis
+% shorter than its clip is painted three times: unextended, so only
+% the axis's span is painted; extended at both ends, filling the clip;
+% extended past the end only.
+/F << /FunctionType 2 /Domain [0 1] /C0 [0 0.3 0.8] /C1 [1 0.9 0.2] /N 1 >> def
+gsave
+50 600 300 60 rectclip
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [150 630 250 630] /Function F >> shfill
+grestore
+gsave
+50 500 300 60 rectclip
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [150 530 250 530] /Function F
+   /Extend [true true] >> shfill
+grestore
+gsave
+50 400 300 60 rectclip
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [150 430 250 430] /Function F
+   /Extend [false true] >> shfill
+grestore
+showpage

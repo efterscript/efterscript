@@ -100,7 +100,18 @@ pub fn xobject<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
     pdf.resolve(r)
 }
 
-/// The named tiling pattern of page `index`.
+/// The named shading of page `index`.
+pub fn shading<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
+    let r = resources(pdf, index)
+        .get("Shading")
+        .unwrap_or_else(|| panic!("page {index} declares no shadings"))
+        .get(name)
+        .unwrap_or_else(|| panic!("page {index} has no shading {name}"))
+        .as_reference();
+    pdf.resolve(r)
+}
+
+/// The named pattern of page `index`.
 pub fn pattern<'a>(pdf: &'a Pdf, index: usize, name: &str) -> &'a Value {
     let r = resources(pdf, index)
         .get("Pattern")

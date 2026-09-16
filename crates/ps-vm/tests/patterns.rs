@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use common::{Call, Log, Recording};
-use ps_vm::{Config, Interp, Io, Matrix, Outcome, Rect, SliceSource, SpaceSpec};
+use ps_vm::{Config, Interp, Io, Matrix, Outcome, PatternKind, Rect, SliceSource, SpaceSpec};
 
 struct Run {
     interp: Interp,
@@ -123,8 +123,14 @@ fn makepattern_locks_the_instance_to_user_space() {
         info.matrix,
         Matrix([2.0, 0.0, 0.0, 2.0, 30.0, 50.0])
     ));
-    assert_eq!(info.xstep, 10.0);
-    assert_eq!(info.paint_type, 1);
+    assert!(matches!(
+        info.kind,
+        PatternKind::Tiling {
+            xstep: 10.0,
+            paint_type: 1,
+            ..
+        }
+    ));
     // The instance id is the Implementation entry, and ids are never
     // reused: the third instance made is number 2.
     let run = with_defs("D matrix makepattern /Implementation get =");
@@ -184,7 +190,7 @@ fn makepattern_errors() {
         format!("<< {} >> matrix makepattern", dict.join(" "))
     };
     for (program, error) in [
-        (base("/PatternType 2"), "rangecheck"),
+        (base("/PatternType 3"), "rangecheck"),
         (base("/PatternType (1)"), "typecheck"),
         (base("/PaintType 3"), "rangecheck"),
         (base("/TilingType 4"), "rangecheck"),
@@ -247,12 +253,16 @@ fn setpattern_selects_a_pattern_space_over_the_current_one_and_the_colour() {
     assert_eq!(calls[0], Call::ColorSpace(SpaceSpec::DeviceRGB));
     assert_eq!(calls[1], Call::Color(vec![1.0, 0.0, 0.0]));
     assert_eq!(calls[2], Call::ColorSpace(rgb));
-    assert!(matches!(&calls[3], Call::SetPattern(info, c) if info.paint_type == 1 && c.is_empty()));
+    assert!(
+        matches!(&calls[3], Call::SetPattern(info, c) if !info.is_uncoloured() && c.is_empty())
+    );
     // Already a pattern space: the base stays, no space is set.
     assert!(
-        matches!(&calls[4], Call::SetPattern(info, c) if info.paint_type == 2 && *c == vec![0.0, 1.0, 0.5])
+        matches!(&calls[4], Call::SetPattern(info, c) if info.is_uncoloured() && *c == vec![0.0, 1.0, 0.5])
     );
-    assert!(matches!(&calls[5], Call::SetPattern(info, c) if info.paint_type == 1 && c.is_empty()));
+    assert!(
+        matches!(&calls[5], Call::SetPattern(info, c) if !info.is_uncoloured() && c.is_empty())
+    );
     assert_eq!(calls[6], Call::ColorSpace(SpaceSpec::DeviceGray));
     assert_eq!(calls[7], Call::Color(vec![0.5]));
     assert_eq!(calls[8], Call::ColorSpace(gray));
@@ -340,22 +350,22 @@ fn the_first_paint_captures_the_cell_and_the_operator_runs_again() {
         .iter()
         .position(|c| matches!(c, Call::SetPattern(..)))
         .unwrap();
-    let Call::SetPattern(info, _) = calls[at] else {
+    let Call::SetPattern(info, _) = &calls[at] else {
         unreachable!()
     };
     assert_eq!(
         &calls[at + 1..],
         [
-            Call::BeginPatternCell(info),
+            Call::BeginPatternCell(info.clone()),
             Call::GSave,
             cell(0.0, 0.0, 5.0, 5.0),
             Call::EndPatternCell,
             Call::GRestoreTo(0),
             // The operator runs again: it asks once more (the page holds
             // the cell now) and paints.
-            Call::BeginPatternCell(info),
+            Call::BeginPatternCell(info.clone()),
             cell(0.0, 0.0, 100.0, 100.0),
-            Call::BeginPatternCell(info),
+            Call::BeginPatternCell(info.clone()),
             cell(0.0, 0.0, 100.0, 100.0),
         ]
     );
@@ -556,4 +566,79 @@ fn the_pattern_colour_follows_the_graphics_state() {
     );
     assert_eq!(run.outcome, Outcome::Ok);
     assert_eq!(run.output, "true\ntrue\n");
+}
+
+// --- shading patterns ------------------------------------------------------------
+
+const SHADING: &str = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 10 0] \
+     /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >>";
+
+#[test]
+fn a_shading_pattern_is_an_instance_without_a_cell() {
+    let run = exec(&format!(
+        "/S << /PatternType 2 /Shading {SHADING} >> matrix makepattern def \
+         S /PatternType get = S /Implementation known = S setpattern \
+         currentcolor S eq = 0 0 100 100 rectfill 0.5 setgray"
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "2\ntrue\ntrue\n");
+    let calls = run.calls();
+    assert!(
+        !calls.iter().any(|c| matches!(c, Call::BeginPatternCell(_))),
+        "a shading pattern has no cell to capture: {calls:?}"
+    );
+    let (info, components) = calls
+        .iter()
+        .find_map(|c| match c {
+            Call::SetPattern(info, components) => Some((info.clone(), components.clone())),
+            _ => None,
+        })
+        .expect("the instance becomes the colour");
+    assert!(info.is_shading() && !info.is_uncoloured());
+    assert!(components.is_empty());
+    let PatternKind::Shading(spec) = &info.kind else {
+        unreachable!("checked above");
+    };
+    assert_eq!(spec.kind.shading_type(), 2);
+    assert_eq!(spec.space, SpaceSpec::DeviceRGB);
+    assert!(calls.contains(&cell(0.0, 0.0, 100.0, 100.0)));
+    assert!(run.interp.estack().is_empty());
+}
+
+#[test]
+fn a_shading_pattern_dictionary_is_checked_at_makepattern() {
+    let run = exec("<< /PatternType 3 /Shading << >> >> matrix makepattern");
+    assert_eq!(run.error(), Some("rangecheck"));
+    let run = exec("<< /PatternType 2 >> matrix makepattern");
+    assert_eq!(run.error(), Some("undefined"));
+    let run = exec("<< /PatternType 2 /Shading 5 >> matrix makepattern");
+    assert_eq!(run.error(), Some("typecheck"));
+    let run = exec("<< /PatternType 2 /Shading << /ShadingType 2 >> >> matrix makepattern");
+    assert_eq!(run.error(), Some("undefined"));
+    // The instance carries the matrix concatenated with the CTM, as a
+    // tiling pattern's does.
+    let run = exec(&format!(
+        "2 2 scale << /PatternType 2 /Shading {SHADING} >> [1 0 0 1 5 5] makepattern setpattern"
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let info = run
+        .calls()
+        .into_iter()
+        .find_map(|c| match c {
+            Call::SetPattern(info, _) => Some(info),
+            _ => None,
+        })
+        .expect("set");
+    assert!(matrix_approx(
+        info.matrix,
+        Matrix([2.0, 0.0, 0.0, 2.0, 10.0, 10.0])
+    ));
+    // The category accepts the shape without reading the shading.
+    let (outcome, output) = exec_without_backend(&format!(
+        "/X << /PatternType 2 /Shading {SHADING} >> /Pattern defineresource pop (ok) = \
+         {{ /Y << /PatternType 2 /Shading 1 >> /Pattern defineresource }} stopped \
+         {{ $error /errorname get = }} if"
+    ));
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(output, "ok\ntypecheck\n");
 }

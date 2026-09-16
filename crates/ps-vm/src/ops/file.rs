@@ -6,6 +6,14 @@
 //! capability, and without one `file` fails before touching the host.
 //! Reads after `token` see exactly the bytes the scanner left, because the
 //! file table owns the scanner's one byte of lookahead.
+//!
+//! The positioning operators (`fileposition`, `setfileposition`,
+//! `resetfile`, `bytesavailable`, and `flushfile` on an input file) act
+//! on a reusable stream as PLRM3 §3.13.3 lays out; on any other file the
+//! position is unknown and `fileposition` and `setfileposition` are
+//! `ioerror`, `bytesavailable` answers −1, and `resetfile` does nothing:
+//! the bytes an ordinary input file holds unconsumed are the scanner's
+//! lookahead, which belongs to the token stream, so nothing is discarded.
 
 use crate::error::VmError;
 use crate::interp::{Frame, Interp, Marker, SourceFrame, SourceSlot, lookup_in, scan_error};
@@ -30,6 +38,10 @@ op_table! { OPS {
     "currentfile" => currentfile;
     "flush" => flush;
     "flushfile" => flushfile, [Any];
+    "fileposition" => fileposition, [Any];
+    "setfileposition" => setfileposition, [Any, Int];
+    "resetfile" => resetfile, [Any];
+    "bytesavailable" => bytesavailable, [Any];
     "==" => double_equals, [Any];
     "pstack" => pstack;
     "stack" => stack;
@@ -314,20 +326,71 @@ fn flush(i: &mut Interp) -> Result<(), VmError> {
 }
 
 // On an input file the unread remainder is discarded, as the spec
-// describes; on an output file buffered bytes are pushed out.
+// describes — a positionable file moves to its end; on an output file
+// buffered bytes are pushed out.
 fn flushfile(i: &mut Interp) -> Result<(), VmError> {
     let file = i.peek(0)?;
     if file.ty() != Type::File {
         return Err(VmError::TypeCheck);
     }
+    let handle = file.handle().expect("file is composite");
     if file.access().unwrap_or_default() == Access::Unlimited {
         i.mem.flush_file(file)?;
+    } else if i.mem.files().is_positionable(handle) {
+        let length = i.mem.files().length(handle)?;
+        i.mem.files_mut().set_file_position(handle, length)?;
     } else {
         let mut sink = [0u8; 256];
         while i.mem.file_read(file, &mut sink)? > 0 {}
     }
     i.pop()?;
     Ok(())
+}
+
+/// The handle of a file operand of any access.
+fn any_file(object: Object) -> Result<Handle, VmError> {
+    if object.ty() != Type::File {
+        return Err(VmError::TypeCheck);
+    }
+    Ok(object.handle().expect("file is composite"))
+}
+
+fn fileposition(i: &mut Interp) -> Result<(), VmError> {
+    let handle = any_file(i.peek(0)?)?;
+    let position = i.mem.files().file_position(handle)?;
+    let position = i32::try_from(position).map_err(|_| VmError::LimitCheck)?;
+    i.pop()?;
+    i.push(Object::integer(position))
+}
+
+fn setfileposition(i: &mut Interp) -> Result<(), VmError> {
+    let position = i.peek(0)?.as_i32().expect("integer");
+    let handle = any_file(i.peek(1)?)?;
+    let position = usize::try_from(position).map_err(|_| VmError::RangeCheck)?;
+    i.mem.files_mut().set_file_position(handle, position)?;
+    i.pop()?;
+    i.pop()?;
+    Ok(())
+}
+
+// Never an error, a closed file included (PLRM3 §8.2).
+fn resetfile(i: &mut Interp) -> Result<(), VmError> {
+    let handle = any_file(i.peek(0)?)?;
+    if i.mem.files().is_positionable(handle) {
+        i.mem.files_mut().set_file_position(handle, 0)?;
+    }
+    i.pop()?;
+    Ok(())
+}
+
+fn bytesavailable(i: &mut Interp) -> Result<(), VmError> {
+    let handle = file_operand(i.peek(0)?, Access::ReadOnly)?;
+    let count = match i.mem.files().bytes_available(handle)? {
+        Some(count) => i32::try_from(count).map_err(|_| VmError::LimitCheck)?,
+        None => -1,
+    };
+    i.pop()?;
+    i.push(Object::integer(count))
 }
 
 fn double_equals(i: &mut Interp) -> Result<(), VmError> {

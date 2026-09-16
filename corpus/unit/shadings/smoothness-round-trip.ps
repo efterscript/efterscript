@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.02
+% expect-output: 0.05
+% expect-output: 1.0
+% expect-output: 0.0
+% expect-output: 0.05
+% expect-output: 0.02
+% Scenario: smoothness round-trips. The fresh state answers the
+% default; a value set is read back; a value outside the unit interval
+% is replaced by the nearest end without an error; grestore brings the
+% saved value back and initgraphics the default.
+currentsmoothness =
+0.05 setsmoothness currentsmoothness =
+2 setsmoothness currentsmoothness =
+-1 setsmoothness currentsmoothness =
+0.05 setsmoothness gsave 0.7 setsmoothness grestore currentsmoothness =
+initgraphics currentsmoothness =

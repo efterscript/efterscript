@@ -33,9 +33,10 @@ pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
 pub use graphics::{
-    Bounds, CieColor, Encoded, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend,
-    ImageSpec, LineCap, LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen,
-    Seg, SpaceSpec,
+    Bounds, CieColor, DEFAULT_SMOOTHNESS, Encoded, FontInfo, FontRef, FontSource, FormInfo,
+    FunctionSpec, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, MarkValue, Matrix,
+    PatternInfo, PatternKind, Point, ProcRef, Rect, Screen, Seg, ShadingKind, ShadingSpec,
+    SpaceSpec,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,

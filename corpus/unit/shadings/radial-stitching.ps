@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a radial shading with a stitching function. Two exponential
+% parts, joined at 0.6 with the second one reversed by its Encode, run
+% from a point to a circle around it; the outer part is extended so the
+% rest of the clip takes the end colour.
+gsave
+100 400 200 200 rectclip
+<< /ShadingType 3 /ColorSpace /DeviceRGB
+   /Coords [200 500 0 200 500 90]
+   /Function << /FunctionType 3 /Domain [0 1]
+     /Functions [
+       << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0.9 0.2 0.1] /N 1 >>
+       << /FunctionType 2 /Domain [0 1] /C0 [0.1 0.1 0.5] /C1 [0.9 0.2 0.1] /N 2 >> ]
+     /Bounds [0.6] /Encode [0 1 1 0] >>
+   /Extend [false true] >> shfill
+grestore
+showpage

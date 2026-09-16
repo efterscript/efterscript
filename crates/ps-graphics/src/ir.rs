@@ -16,7 +16,10 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use ps_fonts::{Program, ProgramKind, ResidentFace};
-use ps_vm::{Bounds, Glyph, ImageSpec, LineCap, LineJoin, MarkValue, Matrix, Seg, SpaceSpec, Span};
+use ps_vm::{
+    Bounds, Glyph, ImageSpec, LineCap, LineJoin, MarkValue, Matrix, Seg, ShadingSpec, SpaceSpec,
+    Span,
+};
 
 pub use crate::state::FillRule;
 
@@ -39,6 +42,10 @@ pub struct PatternIndex(pub usize);
 /// Index into [`Resources::forms`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FormIndex(pub usize);
+
+/// Index into [`Resources::shadings`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ShadingIndex(pub usize);
 
 /// A glyph name, as the bytes of the PostScript name.
 pub type GlyphName = Vec<u8>;
@@ -71,23 +78,49 @@ pub struct GlyphProc {
     pub bbox: Option<Bounds>,
 }
 
-/// A captured tiling pattern cell (ISO 32000-1 §8.7.3): the cell's
-/// operations in pattern space, clipped to `bbox`, and the tiling
-/// parameters as the instance gave them. `matrix` maps pattern space to
-/// the default space of the content the pattern is used in — the page,
-/// or the form or cell whose operations name it — so one instance used
-/// in two contexts is two resources sharing their operations.
+/// A pattern resource (ISO 32000-1 §8.7). `matrix` maps pattern space
+/// to the default space of the content the pattern is used in — the
+/// page, or the form or cell whose operations name it — so one instance
+/// used in two contexts is two resources sharing what they paint with.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PatternSpec {
-    pub matrix: Matrix,
-    pub bbox: Bounds,
-    pub xstep: f32,
-    pub ystep: f32,
-    /// 1 for a coloured cell, 2 for an uncoloured one whose paint is
-    /// the components of a `SetPattern`.
-    pub paint_type: u8,
-    pub tiling_type: u8,
-    pub ops: Vec<Op>,
+pub enum PatternSpec {
+    /// A captured tiling pattern cell (§8.7.3): the cell's operations in
+    /// pattern space, clipped to `bbox`, and the tiling parameters as
+    /// the instance gave them.
+    Tiling {
+        matrix: Matrix,
+        bbox: Bounds,
+        xstep: f32,
+        ystep: f32,
+        /// 1 for a coloured cell, 2 for an uncoloured one whose paint is
+        /// the components of a `SetPattern`.
+        paint_type: u8,
+        tiling_type: u8,
+        ops: Vec<Op>,
+    },
+    /// A shading pattern (§8.7.4): the shading in pattern space, its
+    /// background honoured.
+    Shading {
+        matrix: Matrix,
+        shading: ShadingIndex,
+    },
+}
+
+impl PatternSpec {
+    pub fn matrix(&self) -> Matrix {
+        match self {
+            PatternSpec::Tiling { matrix, .. } | PatternSpec::Shading { matrix, .. } => *matrix,
+        }
+    }
+
+    /// The captured operations of a tiling cell; a shading pattern has
+    /// none.
+    pub fn ops(&self) -> &[Op] {
+        match self {
+            PatternSpec::Tiling { ops, .. } => ops,
+            PatternSpec::Shading { .. } => &[],
+        }
+    }
 }
 
 /// A captured form body (ISO 32000-1 §8.10): its operations in form
@@ -323,8 +356,10 @@ pub struct Image {
     pub data: Vec<u8>,
 }
 
-/// Everything the page's operations refer to by index. Colour spaces are
-/// interned by structural equality, so a space set twice is one resource.
+/// Everything the page's operations refer to by index. Colour spaces
+/// and shadings are interned by structural equality, so a space set
+/// twice, or a shading painted twice or used both directly and through
+/// a pattern, is one resource.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resources {
     pub color_spaces: Vec<SpaceSpec>,
@@ -332,6 +367,10 @@ pub struct Resources {
     pub fonts: Vec<FontSpec>,
     pub patterns: Vec<PatternSpec>,
     pub forms: Vec<FormSpec>,
+    /// Shadings as the VM read them, their colour space inline and their
+    /// `Background` kept: a shade operation ignores it, a shading
+    /// pattern honours it.
+    pub shadings: Vec<ShadingSpec>,
 }
 
 impl Resources {
@@ -355,6 +394,14 @@ impl Resources {
         }
         self.color_spaces.push(space.clone());
         SpaceRef(self.color_spaces.len() - 1)
+    }
+
+    pub fn intern_shading(&mut self, shading: &ShadingSpec) -> ShadingIndex {
+        if let Some(i) = self.shadings.iter().position(|s| s == shading) {
+            return ShadingIndex(i);
+        }
+        self.shadings.push(shading.clone());
+        ShadingIndex(self.shadings.len() - 1)
     }
 
     pub fn add_pattern(&mut self, spec: PatternSpec) -> PatternIndex {
@@ -439,6 +486,13 @@ pub enum IrOp {
     /// effect.
     Form {
         form: FormIndex,
+        matrix: Matrix,
+    },
+    /// Paints a shading's extent under `matrix` (the shading's space to
+    /// default user space) subject to the clip; the colour in effect is
+    /// not used and the shading's background is not painted.
+    Shade {
+        shading: ShadingIndex,
         matrix: Matrix,
     },
 }
@@ -675,6 +729,39 @@ impl<S: PageSink> PageSink for Rc<RefCell<S>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shadings_are_interned_by_value() {
+        let axial = |extend: bool| ShadingSpec {
+            kind: ps_vm::ShadingKind::Axial {
+                coords: [0.0, 0.0, 10.0, 0.0],
+                domain: [0.0, 1.0],
+                function: vec![ps_vm::FunctionSpec::Exponential {
+                    domain: vec![0.0, 1.0],
+                    range: Vec::new(),
+                    c0: vec![0.0],
+                    c1: vec![1.0],
+                    n: 1.0,
+                }],
+                extend: [extend, false],
+            },
+            space: SpaceSpec::DeviceGray,
+            background: Some(vec![0.5]),
+            bbox: None,
+            antialias: false,
+        };
+        let mut resources = Resources::default();
+        assert_eq!(resources.intern_shading(&axial(false)), ShadingIndex(0));
+        assert_eq!(resources.intern_shading(&axial(true)), ShadingIndex(1));
+        assert_eq!(resources.intern_shading(&axial(false)), ShadingIndex(0));
+        assert_eq!(resources.shadings.len(), 2);
+        let pattern = PatternSpec::Shading {
+            matrix: Matrix::scaling(2.0, 2.0),
+            shading: ShadingIndex(1),
+        };
+        assert!(pattern.ops().is_empty());
+        assert_eq!(pattern.matrix(), Matrix::scaling(2.0, 2.0));
+    }
 
     #[test]
     fn spaces_are_interned_by_value() {

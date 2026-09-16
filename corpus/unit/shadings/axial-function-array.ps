@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: an axial shading with an array of functions. Three
+% one-output functions, one per RGB component, replace a single
+% three-output function: red falls, green rises and falls through an
+% exponent of 2, blue rises; the shading names them as an array.
+gsave
+100 600 300 80 rectclip
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [100 0 400 0]
+   /Function [
+     << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>
+     << /FunctionType 2 /Domain [0 1] /C0 [0.2] /C1 [0.8] /N 2 >>
+     << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> ] >> shfill
+grestore
+showpage

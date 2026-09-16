@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a triangle mesh in an Indexed space. Each vertex's one
+% colour value is an index into a four-entry RGB table; a fourth vertex
+% with a flag of 1 continues the first triangle along its second edge.
+gsave
+100 400 translate
+<< /ShadingType 4 /ColorSpace [/Indexed /DeviceRGB 3 <ff0000 00ff00 0000ff ffff00>]
+   /DataSource [ 0 0 0 0   0 100 0 1   0 50 80 2   1 150 80 3 ] >> shfill
+grestore
+showpage

@@ -23,6 +23,13 @@
 //! read from a growing source does, and records which procedure is
 //! wanted so the interpreter runs it and feeds the result back.
 //!
+//! An in-memory entry may be *positionable* — a reusable stream (PLRM3
+//! §3.13.3), whose whole content is at hand — in which case the
+//! positioning operators move its read point anywhere from the start to
+//! the end, and reaching the end leaves it open. Nothing else in the
+//! table is positionable: the entry kinds that read from the embedder or
+//! through a decoder have no length to position within.
+//!
 //! An encode entry is the write-side counterpart of a decode layer: the
 //! bytes written to it go through an [`Encoder`] to another entry, its
 //! target, and closing it writes the encoding's final bytes and marker
@@ -74,10 +81,12 @@ pub trait FileCapability {
     fn open(&mut self, name: &[u8], mode: &[u8]) -> Result<Box<dyn Stream>, VmError>;
 }
 
-/// A read-only stream over bytes held in memory: a string source.
+/// A read-only stream over bytes held in memory: a string source, or a
+/// reusable stream, which is positionable.
 struct Bytes {
     data: Vec<u8>,
     at: usize,
+    positionable: bool,
 }
 
 impl Stream for Bytes {
@@ -164,16 +173,18 @@ struct Writer {
 
 enum Kind {
     Stream(Box<dyn Stream>),
+    Bytes(Bytes),
     Procedure(Procedure),
     Decode(Layer),
     Encode(Writer),
 }
 
 impl Kind {
-    /// The stream of a plain or procedure entry.
+    /// The stream of a plain, in-memory, or procedure entry.
     fn stream(&mut self) -> Option<&mut dyn Stream> {
         match self {
             Kind::Stream(stream) => Some(stream.as_mut()),
+            Kind::Bytes(bytes) => Some(bytes),
             Kind::Procedure(procedure) => Some(procedure),
             Kind::Decode(_) | Kind::Encode(_) => None,
         }
@@ -249,9 +260,85 @@ impl FileTable {
         self.push(Kind::Stream(stream))
     }
 
-    /// Opens a read-only entry over `data`.
+    /// Opens a read-only entry over `data`, read once from start to end.
     pub fn open_bytes(&mut self, data: Vec<u8>) -> Handle {
-        self.push(Kind::Stream(Box::new(Bytes { data, at: 0 })))
+        self.push(Kind::Bytes(Bytes {
+            data,
+            at: 0,
+            positionable: false,
+        }))
+    }
+
+    /// Opens a positionable read-only entry over `data`: a reusable
+    /// stream, which stays open at its end and answers the positioning
+    /// methods below.
+    pub fn open_reusable(&mut self, data: Vec<u8>) -> Handle {
+        self.push(Kind::Bytes(Bytes {
+            data,
+            at: 0,
+            positionable: true,
+        }))
+    }
+
+    /// Whether the entry is open and positionable.
+    pub fn is_positionable(&self, handle: Handle) -> bool {
+        self.positionable(handle).is_some()
+    }
+
+    /// The in-memory bytes of an open positionable entry.
+    fn positionable(&self, handle: Handle) -> Option<&Bytes> {
+        match self.entries.get(handle.0 as usize) {
+            Some(Some(Entry {
+                kind: Kind::Bytes(bytes),
+                ..
+            })) if bytes.positionable => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// The length of a positionable entry; `ioerror` for any other.
+    pub fn length(&self, handle: Handle) -> Result<usize, VmError> {
+        self.positionable(handle)
+            .map(|bytes| bytes.data.len())
+            .ok_or(VmError::IoError)
+    }
+
+    /// The read position of a positionable entry, peeked bytes excluded;
+    /// `ioerror` for any other, a closed one included.
+    pub fn file_position(&self, handle: Handle) -> Result<usize, VmError> {
+        self.positionable(handle).ok_or(VmError::IoError)?;
+        self.position(handle).ok_or(VmError::IoError)
+    }
+
+    /// Moves the read position of a positionable entry to `position`,
+    /// dropping any peeked byte; `rangecheck` beyond its length,
+    /// `ioerror` for an entry that is not positionable.
+    pub fn set_file_position(&mut self, handle: Handle, position: usize) -> Result<(), VmError> {
+        let entry = self.entry(handle)?;
+        let Kind::Bytes(bytes) = &mut entry.kind else {
+            return Err(VmError::IoError);
+        };
+        if !bytes.positionable {
+            return Err(VmError::IoError);
+        }
+        if position > bytes.data.len() {
+            return Err(VmError::RangeCheck);
+        }
+        bytes.at = position;
+        entry.pushback.clear();
+        entry.position = position;
+        Ok(())
+    }
+
+    /// Bytes left before the end of a positionable entry; `None` when the
+    /// count is unknown (any other kind), `ioerror` for a closed entry.
+    pub fn bytes_available(&self, handle: Handle) -> Result<Option<usize>, VmError> {
+        if !self.is_open(handle) {
+            return Err(VmError::IoError);
+        }
+        Ok(self
+            .positionable(handle)
+            .map(|bytes| bytes.data.len() - self.position(handle).unwrap_or(0)))
     }
 
     /// Opens an entry whose bytes `body`, a procedure, delivers when run
@@ -414,7 +501,7 @@ impl FileTable {
             return;
         };
         let layer = match &entry.kind {
-            Kind::Stream(_) | Kind::Procedure(_) | Kind::Encode(_) => None,
+            Kind::Stream(_) | Kind::Bytes(_) | Kind::Procedure(_) | Kind::Encode(_) => None,
             Kind::Decode(layer) => Some(layer.clone()),
         };
         self.saved.push(Saved {
@@ -704,7 +791,7 @@ impl FileTable {
         };
         match entry.kind {
             Kind::Stream(mut stream) => stream.close(),
-            Kind::Procedure(_) => Ok(()),
+            Kind::Bytes(_) | Kind::Procedure(_) => Ok(()),
             Kind::Decode(layer) => {
                 if layer.decoder.returns_lookahead()
                     && !entry.pushback.is_empty()
@@ -1072,6 +1159,56 @@ mod tests {
         assert_eq!(t.write(h, b"x"), Err(VmError::IoError));
         assert!(!t.is_filter(h));
         assert!(!t.ends_at_marker(h));
+        // A one-shot entry is not positionable, nor is a stream.
+        assert!(!t.is_positionable(h));
+        assert_eq!(t.file_position(h), Err(VmError::IoError));
+        assert_eq!(t.set_file_position(h, 0), Err(VmError::IoError));
+        assert_eq!(t.length(h), Err(VmError::IoError));
+        assert_eq!(t.bytes_available(h), Ok(None));
+        let s = t.open(Box::new(Probe::with_input(b"xyz")));
+        assert_eq!(t.set_file_position(s, 0), Err(VmError::IoError));
+        assert_eq!(t.bytes_available(s), Ok(None));
+        t.close(s).unwrap();
+        assert_eq!(t.bytes_available(s), Err(VmError::IoError));
+    }
+
+    #[test]
+    fn a_reusable_entry_is_positionable_and_stays_open_at_its_end() {
+        let mut t = FileTable::new();
+        let h = t.open_reusable(b"hello".to_vec());
+        assert!(t.is_positionable(h));
+        assert_eq!(t.length(h), Ok(5));
+        assert_eq!(t.file_position(h), Ok(0));
+        assert_eq!(t.bytes_available(h), Ok(Some(5)));
+        let mut buf = [0u8; 8];
+        assert_eq!(t.read(h, &mut buf), Ok(5));
+        assert_eq!(&buf[..5], b"hello");
+        assert_eq!(t.read(h, &mut buf), Ok(0));
+        assert!(t.is_open(h));
+        assert_eq!(t.file_position(h), Ok(5));
+        assert_eq!(t.bytes_available(h), Ok(Some(0)));
+        assert_eq!(t.set_file_position(h, 3), Ok(()));
+        assert_eq!(t.bytes_available(h), Ok(Some(2)));
+        assert_eq!(t.read(h, &mut buf), Ok(2));
+        assert_eq!(&buf[..2], b"lo");
+        assert_eq!(t.set_file_position(h, 6), Err(VmError::RangeCheck));
+        assert_eq!(t.set_file_position(h, 5), Ok(()));
+        assert_eq!(t.read(h, &mut buf), Ok(0));
+        // A peeked byte is dropped by positioning and excluded from the
+        // position.
+        assert_eq!(t.set_file_position(h, 0), Ok(()));
+        assert_eq!(t.peek(h), Ok(Some(b'h')));
+        assert_eq!(t.file_position(h), Ok(0));
+        assert_eq!(t.set_file_position(h, 4), Ok(()));
+        assert_eq!(t.consume(h), Ok(Some(b'o')));
+        assert_eq!(t.file_position(h), Ok(5));
+        assert_eq!(t.write(h, b"x"), Err(VmError::IoError));
+        assert!(!t.is_filter(h));
+        t.close(h).unwrap();
+        assert!(!t.is_positionable(h));
+        assert_eq!(t.file_position(h), Err(VmError::IoError));
+        assert_eq!(t.set_file_position(h, 0), Err(VmError::IoError));
+        assert_eq!(t.bytes_available(h), Err(VmError::IoError));
     }
 
     #[test]

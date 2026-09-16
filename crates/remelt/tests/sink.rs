@@ -1928,7 +1928,7 @@ use ps_graphics::{FormSpec, PatternSpec};
 use support::pattern;
 
 fn cell(paint_type: u8, matrix: Matrix, ops: Vec<IrOp>) -> PatternSpec {
-    PatternSpec {
+    PatternSpec::Tiling {
         matrix,
         bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
         xstep: 10.0,
@@ -2212,4 +2212,500 @@ fn forms_are_xobjects_placed_under_their_matrix_with_their_own_resources() {
     );
     assert_eq!(im0.get("Subtype").unwrap().as_name(), b"Image");
     assert_eq!(decoded(im0), [0, 85, 170, 255]);
+}
+
+// --- shadings --------------------------------------------------------------------------
+
+use ps_vm::ops::shading::{MeshElement, mesh_elements};
+use ps_vm::{FunctionSpec, ShadingKind, ShadingSpec};
+use support::shading;
+
+fn exponential(c0: Vec<f32>, c1: Vec<f32>) -> FunctionSpec {
+    FunctionSpec::Exponential {
+        domain: vec![0.0, 1.0],
+        range: Vec::new(),
+        c0,
+        c1,
+        n: 1.0,
+    }
+}
+
+fn axial(function: Vec<FunctionSpec>, extend: [bool; 2]) -> ShadingSpec {
+    ShadingSpec {
+        kind: ShadingKind::Axial {
+            coords: [0.0, 0.0, 100.0, 0.0],
+            domain: [0.0, 1.0],
+            function,
+            extend,
+        },
+        space: SpaceSpec::DeviceRGB,
+        background: None,
+        bbox: None,
+        antialias: false,
+    }
+}
+
+fn bools(value: &Value) -> Vec<bool> {
+    array(value)
+        .iter()
+        .map(|v| match v {
+            Value::Bool(b) => *b,
+            other => panic!("expected a boolean, got {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn a_shading_is_a_dictionary_painted_with_sh_and_selected_as_a_pattern() {
+    let mut page = Page::new(LETTER);
+    let stitched = FunctionSpec::Stitching {
+        domain: vec![0.0, 1.0],
+        range: vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        functions: vec![
+            exponential(vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]),
+            exponential(vec![0.0, 1.0, 0.0], vec![0.0, 0.0, 1.0]),
+        ],
+        bounds: vec![0.25],
+        encode: vec![0.0, 1.0, 1.0, 0.0],
+    };
+    let sh0 = page.resources.intern_shading(&ShadingSpec {
+        kind: ShadingKind::Radial {
+            coords: [50.0, 50.0, 0.0, 50.0, 50.0, 40.0],
+            domain: [0.0, 2.0],
+            function: vec![stitched],
+            extend: [true, false],
+        },
+        space: SpaceSpec::DeviceRGB,
+        background: Some(vec![0.5, 0.5, 0.5]),
+        bbox: Some(Bounds::new(10.0, 10.0, 90.0, 90.0)),
+        antialias: true,
+    });
+    // Every default in place: nothing but the required entries is written.
+    let sh1 = page.resources.intern_shading(&axial(
+        vec![exponential(vec![0.0], vec![1.0])],
+        [false, false],
+    ));
+    let over_gray = page.resources.intern_space(&SpaceSpec::Pattern {
+        base: Some(Box::new(SpaceSpec::DeviceGray)),
+    });
+    let glow = page.resources.add_pattern(PatternSpec::Shading {
+        matrix: Matrix([2.0, 0.0, 0.0, 2.0, 5.0, 7.0]),
+        shading: sh0,
+    });
+    let body = page.resources.add_form(FormSpec {
+        bbox: Bounds::new(0.0, 0.0, 100.0, 100.0),
+        ops: vec![
+            IrOp::Shade {
+                shading: sh1,
+                matrix: Matrix::IDENTITY,
+            }
+            .into(),
+        ],
+    });
+    page.ops = vec![
+        IrOp::Shade {
+            shading: sh0,
+            matrix: Matrix([1.0, 0.0, 0.0, 1.0, 100.0, 200.0]),
+        },
+        IrOp::SetColorSpace(over_gray),
+        IrOp::SetPattern {
+            pattern: glow,
+            components: Vec::new(),
+        },
+        IrOp::Fill {
+            path: square_path(100.0),
+            rule: FillRule::NonZero,
+        },
+        IrOp::Form {
+            form: body,
+            matrix: Matrix::IDENTITY,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "q 1 0 0 1 100 200 cm /Sh0 sh Q\n/CS0 cs\n/CS0 CS\n/P0 scn\n/P0 SCN\n\
+         0 0 m\n100 0 l\n100 100 l\n0 100 l\nh\nf\nq 1 0 0 1 0 0 cm /Fm0 Do Q\n"
+    );
+
+    let sh0 = shading(&pdf, 0, "Sh0");
+    assert_eq!(sh0.get("ShadingType").unwrap().as_int(), 3);
+    assert_eq!(sh0.get("ColorSpace").unwrap().as_name(), b"DeviceRGB");
+    assert_eq!(numbers(sh0.get("Background").unwrap()), [0.5, 0.5, 0.5]);
+    assert_eq!(numbers(sh0.get("BBox").unwrap()), [10.0, 10.0, 90.0, 90.0]);
+    assert_eq!(sh0.get("AntiAlias"), Some(&Value::Bool(true)));
+    assert_eq!(
+        numbers(sh0.get("Coords").unwrap()),
+        [50.0, 50.0, 0.0, 50.0, 50.0, 40.0]
+    );
+    assert_eq!(numbers(sh0.get("Domain").unwrap()), [0.0, 2.0]);
+    assert_eq!(bools(sh0.get("Extend").unwrap()), [true, false]);
+    let stitched = pdf.resolve(sh0.get("Function").unwrap().as_reference());
+    assert_eq!(stitched.get("FunctionType").unwrap().as_int(), 3);
+    assert_eq!(numbers(stitched.get("Domain").unwrap()), [0.0, 1.0]);
+    assert_eq!(
+        numbers(stitched.get("Range").unwrap()),
+        [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+    );
+    assert_eq!(numbers(stitched.get("Bounds").unwrap()), [0.25]);
+    assert_eq!(
+        numbers(stitched.get("Encode").unwrap()),
+        [0.0, 1.0, 1.0, 0.0]
+    );
+    let parts: Vec<&Value> = array(stitched.get("Functions").unwrap())
+        .iter()
+        .map(|part| pdf.resolve(part.as_reference()))
+        .collect();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].get("FunctionType").unwrap().as_int(), 2);
+    assert_eq!(numbers(parts[0].get("C0").unwrap()), [1.0, 0.0, 0.0]);
+    assert_eq!(numbers(parts[0].get("C1").unwrap()), [0.0, 1.0, 0.0]);
+    assert_eq!(number(parts[0].get("N").unwrap()), 1.0);
+    assert!(parts[0].get("Range").is_none());
+    assert_eq!(numbers(parts[1].get("C1").unwrap()), [0.0, 0.0, 1.0]);
+
+    let sh1 = shading(&pdf, 0, "Sh1");
+    assert_eq!(sh1.get("ShadingType").unwrap().as_int(), 2);
+    assert_eq!(numbers(sh1.get("Coords").unwrap()), [0.0, 0.0, 100.0, 0.0]);
+    for absent in ["Domain", "Extend", "Background", "BBox", "AntiAlias"] {
+        assert!(sh1.get(absent).is_none(), "{absent} should be omitted");
+    }
+    let unit = pdf.resolve(sh1.get("Function").unwrap().as_reference());
+    assert_eq!(unit.get("FunctionType").unwrap().as_int(), 2);
+    assert!(unit.get("C0").is_none() && unit.get("C1").is_none());
+
+    // The pattern object refers to the shading's object and carries the
+    // instance's matrix; the page lists it with the tiling patterns.
+    let p0 = pattern(&pdf, 0, "P0");
+    assert_eq!(p0.get("Type").unwrap().as_name(), b"Pattern");
+    assert_eq!(p0.get("PatternType").unwrap().as_int(), 2);
+    assert_eq!(
+        p0.get("Shading").unwrap().as_reference(),
+        resources(&pdf, 0)
+            .get("Shading")
+            .unwrap()
+            .get("Sh0")
+            .unwrap()
+            .as_reference()
+    );
+    assert_eq!(
+        numbers(p0.get("Matrix").unwrap()),
+        [2.0, 0.0, 0.0, 2.0, 5.0, 7.0]
+    );
+
+    // The form's own dictionary names the shading it paints, and only it.
+    let fm0 = xobject(&pdf, 0, "Fm0");
+    assert_eq!(String::from_utf8(decoded(fm0)).unwrap(), "/Sh1 sh\n");
+    let form_resources = fm0.get("Resources").unwrap();
+    let listed = form_resources.get("Shading").unwrap();
+    assert!(listed.get("Sh1").is_some());
+    assert!(listed.get("Sh0").is_none());
+    assert!(form_resources.get("Pattern").is_none());
+}
+
+#[test]
+fn sampled_functions_are_streams_and_function_arrays_are_arrays() {
+    let mut page = Page::new(LETTER);
+    // A 2-in 3-out table of four samples: all defaults, so only the
+    // required entries are written.
+    let plain = FunctionSpec::Sampled {
+        domain: vec![0.0, 1.0, 0.0, 1.0],
+        range: vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        size: vec![2, 2],
+        bits: 8,
+        order: 1,
+        encode: vec![0.0, 1.0, 0.0, 1.0],
+        decode: vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        samples: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0],
+    };
+    let sh0 = page.resources.intern_shading(&ShadingSpec {
+        kind: ShadingKind::Function {
+            domain: [0.0, 1.0, 0.0, 1.0],
+            matrix: Matrix::IDENTITY,
+            function: vec![plain],
+        },
+        space: SpaceSpec::DeviceRGB,
+        background: None,
+        bbox: None,
+        antialias: false,
+    });
+    // One output at four bits, cubic, with its own encode and decode,
+    // over a domain and matrix that are not the defaults.
+    let tuned = FunctionSpec::Sampled {
+        domain: vec![-1.0, 1.0],
+        range: vec![0.0, 1.0],
+        size: vec![5],
+        bits: 4,
+        order: 3,
+        encode: vec![4.0, 0.0],
+        decode: vec![0.0, 0.5],
+        samples: vec![0x01, 0x23, 0x40],
+    };
+    let sh1 = page.resources.intern_shading(&ShadingSpec {
+        kind: ShadingKind::Function {
+            domain: [-1.0, 1.0, 0.0, 2.0],
+            matrix: Matrix([50.0, 0.0, 0.0, 50.0, 100.0, 100.0]),
+            function: vec![tuned],
+        },
+        space: SpaceSpec::DeviceGray,
+        background: None,
+        bbox: None,
+        antialias: false,
+    });
+    let sh2 = page.resources.intern_shading(&axial(
+        vec![
+            exponential(vec![1.0], vec![0.0]),
+            exponential(vec![0.0], vec![1.0]),
+            exponential(vec![0.0], vec![0.0]),
+        ],
+        [true, true],
+    ));
+    page.ops = [sh0, sh1, sh2]
+        .into_iter()
+        .map(|shading| {
+            IrOp::Shade {
+                shading,
+                matrix: Matrix::IDENTITY,
+            }
+            .into()
+        })
+        .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(content(&pdf, 0), "/Sh0 sh\n/Sh1 sh\n/Sh2 sh\n");
+
+    let sh0 = shading(&pdf, 0, "Sh0");
+    assert_eq!(sh0.get("ShadingType").unwrap().as_int(), 1);
+    assert!(sh0.get("Domain").is_none() && sh0.get("Matrix").is_none());
+    let plain = pdf.resolve(sh0.get("Function").unwrap().as_reference());
+    assert_eq!(plain.get("FunctionType").unwrap().as_int(), 0);
+    assert_eq!(numbers(plain.get("Domain").unwrap()), [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(
+        numbers(plain.get("Range").unwrap()),
+        [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+    );
+    assert_eq!(numbers(plain.get("Size").unwrap()), [2.0, 2.0]);
+    assert_eq!(plain.get("BitsPerSample").unwrap().as_int(), 8);
+    for absent in ["Order", "Encode", "Decode"] {
+        assert!(plain.get(absent).is_none(), "{absent} should be omitted");
+    }
+    assert_eq!(plain.get("Filter").unwrap().as_name(), b"FlateDecode");
+    assert_eq!(
+        decoded(plain),
+        [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0]
+    );
+
+    let sh1 = shading(&pdf, 0, "Sh1");
+    assert_eq!(numbers(sh1.get("Domain").unwrap()), [-1.0, 1.0, 0.0, 2.0]);
+    assert_eq!(
+        numbers(sh1.get("Matrix").unwrap()),
+        [50.0, 0.0, 0.0, 50.0, 100.0, 100.0]
+    );
+    let tuned = pdf.resolve(sh1.get("Function").unwrap().as_reference());
+    assert_eq!(numbers(tuned.get("Size").unwrap()), [5.0]);
+    assert_eq!(tuned.get("BitsPerSample").unwrap().as_int(), 4);
+    assert_eq!(tuned.get("Order").unwrap().as_int(), 3);
+    assert_eq!(numbers(tuned.get("Encode").unwrap()), [4.0, 0.0]);
+    assert_eq!(numbers(tuned.get("Decode").unwrap()), [0.0, 0.5]);
+    assert_eq!(decoded(tuned), [0x01, 0x23, 0x40]);
+
+    let sh2 = shading(&pdf, 0, "Sh2");
+    let parts = array(sh2.get("Function").unwrap());
+    assert_eq!(parts.len(), 3);
+    let first = pdf.resolve(parts[0].as_reference());
+    assert_eq!(numbers(first.get("C0").unwrap()), [1.0]);
+    assert_eq!(numbers(first.get("C1").unwrap()), [0.0]);
+    let last = pdf.resolve(parts[2].as_reference());
+    assert!(last.get("C0").is_none());
+    assert_eq!(numbers(last.get("C1").unwrap()), [0.0]);
+    assert_eq!(bools(sh2.get("Extend").unwrap()), [true, true]);
+}
+
+#[test]
+fn a_mesh_is_a_stream_whose_data_decodes_to_its_vertices() {
+    let mut page = Page::new(LETTER);
+    let indexed = SpaceSpec::Indexed {
+        base: Box::new(SpaceSpec::DeviceRGB),
+        hival: 1,
+        lookup: vec![255, 0, 0, 0, 0, 255],
+    };
+    // Three vertices of a triangle at eight bits each: flag, x, y, index.
+    let triangle = vec![
+        0, 0, 0, 0, //
+        0, 100, 0, 1, //
+        0, 50, 80, 1,
+    ];
+    let sh0 = page.resources.intern_shading(&ShadingSpec {
+        kind: ShadingKind::Mesh {
+            ty: 4,
+            bits_per_coordinate: 8,
+            bits_per_component: 8,
+            bits_per_flag: 8,
+            decode: vec![0.0, 255.0, 0.0, 255.0, 0.0, 255.0],
+            vertices_per_row: None,
+            function: Vec::new(),
+            data: triangle.clone(),
+        },
+        space: indexed,
+        background: None,
+        bbox: None,
+        antialias: false,
+    });
+    // A lattice of two rows of two, a parametric value per vertex under a
+    // function, in a Separation space.
+    let lattice = vec![
+        0, 0, 0, //
+        100, 0, 255, //
+        0, 100, 255, //
+        100, 100, 0,
+    ];
+    let sh1 = page.resources.intern_shading(&ShadingSpec {
+        kind: ShadingKind::Mesh {
+            ty: 5,
+            bits_per_coordinate: 8,
+            bits_per_component: 8,
+            bits_per_flag: 0,
+            decode: vec![0.0, 255.0, 0.0, 255.0, 0.0, 1.0],
+            vertices_per_row: Some(2),
+            function: vec![exponential(vec![0.0], vec![1.0])],
+            data: lattice.clone(),
+        },
+        space: spot(),
+        background: None,
+        bbox: None,
+        antialias: false,
+    });
+    page.ops = vec![
+        IrOp::Shade {
+            shading: sh0,
+            matrix: Matrix::translation(100.0, 400.0),
+        }
+        .into(),
+        IrOp::Shade {
+            shading: sh1,
+            matrix: Matrix::IDENTITY,
+        }
+        .into(),
+    ];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "q 1 0 0 1 100 400 cm /Sh0 sh Q\n/Sh1 sh\n"
+    );
+
+    let sh0 = shading(&pdf, 0, "Sh0");
+    assert_eq!(sh0.get("ShadingType").unwrap().as_int(), 4);
+    let space = array(sh0.get("ColorSpace").unwrap());
+    assert_eq!(space[0].as_name(), b"Indexed");
+    assert_eq!(space[1].as_name(), b"DeviceRGB");
+    assert_eq!(space[2].as_int(), 1);
+    assert_eq!(sh0.get("BitsPerCoordinate").unwrap().as_int(), 8);
+    assert_eq!(sh0.get("BitsPerComponent").unwrap().as_int(), 8);
+    assert_eq!(sh0.get("BitsPerFlag").unwrap().as_int(), 8);
+    assert!(sh0.get("VerticesPerRow").is_none() && sh0.get("Function").is_none());
+    assert_eq!(
+        numbers(sh0.get("Decode").unwrap()),
+        [0.0, 255.0, 0.0, 255.0, 0.0, 255.0]
+    );
+    assert_eq!(sh0.get("Filter").unwrap().as_name(), b"FlateDecode");
+    assert_eq!(decoded(sh0), triangle);
+    // The stream read back through the interpreter's own mesh reader
+    // gives the vertices the data was packed from.
+    let read_back = ShadingSpec {
+        kind: ShadingKind::Mesh {
+            ty: sh0.get("ShadingType").unwrap().as_int() as u8,
+            bits_per_coordinate: sh0.get("BitsPerCoordinate").unwrap().as_int() as u8,
+            bits_per_component: sh0.get("BitsPerComponent").unwrap().as_int() as u8,
+            bits_per_flag: sh0.get("BitsPerFlag").unwrap().as_int() as u8,
+            decode: numbers(sh0.get("Decode").unwrap())
+                .into_iter()
+                .map(|v| v as f32)
+                .collect(),
+            vertices_per_row: None,
+            function: Vec::new(),
+            data: decoded(sh0),
+        },
+        space: SpaceSpec::DeviceGray,
+        background: None,
+        bbox: None,
+        antialias: false,
+    };
+    let vertex = |x: f32, y: f32, index: f32| MeshElement::Vertex {
+        flag: 0,
+        x,
+        y,
+        color: vec![index],
+    };
+    assert_eq!(
+        mesh_elements(&read_back).unwrap(),
+        [
+            vertex(0.0, 0.0, 0.0),
+            vertex(100.0, 0.0, 1.0),
+            vertex(50.0, 80.0, 1.0)
+        ]
+    );
+
+    let sh1 = shading(&pdf, 0, "Sh1");
+    assert_eq!(sh1.get("ShadingType").unwrap().as_int(), 5);
+    assert_eq!(
+        array(sh1.get("ColorSpace").unwrap())[0].as_name(),
+        b"Separation"
+    );
+    assert!(sh1.get("BitsPerFlag").is_none());
+    assert_eq!(sh1.get("VerticesPerRow").unwrap().as_int(), 2);
+    assert_eq!(
+        numbers(sh1.get("Decode").unwrap()),
+        [0.0, 255.0, 0.0, 255.0, 0.0, 1.0]
+    );
+    let function = pdf.resolve(sh1.get("Function").unwrap().as_reference());
+    assert_eq!(function.get("FunctionType").unwrap().as_int(), 2);
+    assert_eq!(decoded(sh1), lattice);
+}
+
+#[test]
+fn shading_patterns_and_shade_operations_carry_no_notes() {
+    let mut page = Page::new(LETTER);
+    let sh0 = page.resources.intern_shading(&axial(
+        vec![exponential(vec![0.0], vec![1.0])],
+        [false, false],
+    ));
+    let space = page
+        .resources
+        .intern_space(&SpaceSpec::Pattern { base: None });
+    let glow = page.resources.add_pattern(PatternSpec::Shading {
+        matrix: Matrix::IDENTITY,
+        shading: sh0,
+    });
+    page.ops = vec![
+        IrOp::Shade {
+            shading: sh0,
+            matrix: Matrix::IDENTITY,
+        },
+        IrOp::SetColorSpace(space),
+        IrOp::SetPattern {
+            pattern: glow,
+            components: Vec::new(),
+        },
+        IrOp::Stroke {
+            path: line(),
+            ctm: Matrix::IDENTITY,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let mut sink = PdfSink::new(Vec::new(), uncompressed()).unwrap();
+    sink.page(page);
+    assert!(sink.notes().is_empty(), "{:?}", sink.notes());
+    let pdf = check(&sink.finish().unwrap());
+    assert_eq!(
+        content(&pdf, 0),
+        "/Sh0 sh\n/Pattern cs\n/Pattern CS\n/P0 scn\n/P0 SCN\n10 10 m\n100 10 l\nS\n"
+    );
+    assert_eq!(
+        pattern(&pdf, 0, "P0").get("PatternType").unwrap().as_int(),
+        2
+    );
 }

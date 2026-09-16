@@ -1,0 +1,25 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: abc
+% expect-output: 0
+% expect-output: abc
+% expect-output: 5
+% Scenario: a reusable stream is read twice. The string becomes a
+% positionable file: the first read yields the bytes, a read at the end
+% yields nothing but leaves the file open, resetfile takes it back to
+% the start for a second read, and a stream over the job's own data is
+% made the same way, read through its hexadecimal pre-filter to the
+% marker so the program continues after it. The structuring comments
+% bound the data for tools that scan the file rather than run it.
+% Expect: abc, 0, abc, 5.
+(abc) /ReusableStreamDecode filter
+dup 10 string readstring pop =
+dup 10 string readstring pop length =
+dup resetfile 10 string readstring pop =
+%%BeginData: 2 ASCII Lines
+currentfile << /Filter /ASCIIHexDecode >> /ReusableStreamDecode filter
+48656C6C6F>
+%%EndData
+bytesavailable =

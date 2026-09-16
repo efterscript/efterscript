@@ -1,0 +1,11 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+shading 0 type 1 space DeviceRGB domain [0 1 0 1] matrix 200 0 0 100 100 500 {
+  function type 0 domain [0 1 0 1] range [0 1 0 1 0 1] size [2 2] bits 8 order 1 encode [0 1 0 1] decode [0 1 0 1 0 1] samples <ff000000ff000000ffffff00>
+}
+ops:
+sh 0 1 0 0 1 0 0

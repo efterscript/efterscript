@@ -8,6 +8,7 @@ use crate::names::Atom;
 use crate::object::{Handle, Object};
 use crate::ops::Num;
 use crate::ops::cie::CieJob;
+use crate::ops::filter::ReusableRead;
 use crate::ops::image::ImageAcquisition;
 use crate::ops::show::ShowFrame;
 use crate::scanner::Scanner;
@@ -126,6 +127,10 @@ pub enum LoopFrame {
         handle: Handle,
         started: bool,
     },
+    /// A reusable stream being read from its source on behalf of
+    /// `filter`, whose operands are already consumed: each step reads a
+    /// chunk, and the last one makes the stream the operator's result.
+    ReusableRead(Box<ReusableRead>),
     /// A `show`-family operator or `stringwidth` in progress: glyphs are
     /// consumed one step at a time so a Type 3 glyph procedure or a
     /// `kshow` procedure can run as frames above it.
@@ -211,6 +216,7 @@ impl LoopFrame {
             LoopFrame::PathForAll { procs, .. } => procs[0],
             LoopFrame::Show(frame) => frame.procedure(),
             LoopFrame::CieDecode { job } => job.current_procedure(),
+            LoopFrame::ReusableRead(_) => Object::null(),
         }
     }
 

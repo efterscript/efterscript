@@ -73,7 +73,7 @@ pub(crate) const FONT_TYPES: [i32; 5] = [0, 1, 2, 3, 42];
 pub(crate) const FMAP_TYPES: [i32; 1] = [9];
 /// The filters `filter` accepts, sorted: the six decode filters and the
 /// DCT placeholder, and the six encode filters.
-pub(crate) const FILTERS: [&str; 13] = [
+pub(crate) const FILTERS: [&str; 14] = [
     "ASCII85Decode",
     "ASCII85Encode",
     "ASCIIHexDecode",
@@ -84,6 +84,7 @@ pub(crate) const FILTERS: [&str; 13] = [
     "LZWDecode",
     "LZWEncode",
     "NullEncode",
+    "ReusableStreamDecode",
     "RunLengthDecode",
     "RunLengthEncode",
     "SubFileDecode",

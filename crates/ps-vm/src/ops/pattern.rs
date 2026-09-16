@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! Tiling patterns (PLRM3 §4.9): the shape check the `Pattern` category
-//! and `makepattern` share, the instance `makepattern` makes, the pattern
-//! as a colour (`setpattern`, and `setcolor` in a pattern space), and the
-//! capture of a cell at the first paint with it.
+//! Patterns (PLRM3 §4.9): the shape check the `Pattern` category and
+//! `makepattern` share, the instance `makepattern` makes, the pattern as
+//! a colour (`setpattern`, and `setcolor` in a pattern space), and the
+//! capture of a tiling cell at the first paint with it.
 //!
 //! An instance is a read-only copy of the prototype dictionary with an
 //! `Implementation` entry holding the instance id; the interpreter keeps
@@ -14,13 +14,19 @@
 //! the colour, and asked to capture its cell when a painting operator
 //! first uses that colour: the operator's operands stay on the operand
 //! stack, the paint procedure runs as a `PatternCell` frame with the
-//! dictionary as its operand, and the operator runs again afterwards.
+//! dictionary as its operand, and the operator runs again afterwards. A
+//! shading pattern (§4.9.3) has no cell: its shading is read and checked
+//! at `makepattern` and travels with the instance, and a painting
+//! operator never asks for a capture.
+
+use std::rc::Rc;
 
 use crate::error::VmError;
-use crate::graphics::{Bounds, PatternInfo, SpaceSpec};
+use crate::graphics::{Bounds, PatternInfo, PatternKind, SpaceSpec};
 use crate::interp::{Frame, Interp, LoopFrame, PatternInstance};
 use crate::object::{Access, Object, Type};
 use crate::ops::graphics::{drop, is_array, num_at, read_bounds, read_matrix};
+use crate::ops::shading::read_shading;
 
 op_table! { OPS {
     "makepattern" => makepattern, [Dict, Array];
@@ -82,16 +88,21 @@ pub(crate) struct Shape {
     pub tiling_type: u8,
 }
 
-/// Reads and checks a type 1 pattern dictionary: `PatternType` 1,
-/// `PaintType` 1 or 2, `TilingType` 1 to 3, a `BBox` of four numbers
-/// enclosing an area, non-zero `XStep` and `YStep`, and a `PaintProc`
-/// procedure. A wrongly typed entry is `typecheck`, a value outside its
-/// range `rangecheck`, and an absent entry `missing`.
-pub(crate) fn shape(i: &mut Interp, dict: Object, missing: VmError) -> Result<Shape, VmError> {
+/// The `PatternType` entry: 1 for a tiling pattern, 2 for a shading
+/// pattern; another integer is `rangecheck`.
+fn pattern_type(i: &mut Interp, dict: Object, missing: VmError) -> Result<i32, VmError> {
     if dict.ty() != Type::Dict {
         return Err(VmError::TypeCheck);
     }
-    int_in(i, dict, "PatternType", 1..=1, missing)?;
+    int_in(i, dict, "PatternType", 1..=2, missing)
+}
+
+/// Reads and checks a type 1 pattern dictionary: `PaintType` 1 or 2,
+/// `TilingType` 1 to 3, a `BBox` of four numbers enclosing an area,
+/// non-zero `XStep` and `YStep`, and a `PaintProc` procedure. A wrongly
+/// typed entry is `typecheck`, a value outside its range `rangecheck`,
+/// and an absent entry `missing`.
+pub(crate) fn shape(i: &mut Interp, dict: Object, missing: VmError) -> Result<Shape, VmError> {
     let paint_type = int_in(i, dict, "PaintType", 1..=2, missing)? as u8;
     let tiling_type = int_in(i, dict, "TilingType", 1..=3, missing)? as u8;
     let bbox = required(i, dict, "BBox", missing)?;
@@ -116,20 +127,53 @@ pub(crate) fn shape(i: &mut Interp, dict: Object, missing: VmError) -> Result<Sh
     })
 }
 
-/// Checks that `dict` is a type 1 pattern dictionary; see [`shape`].
+/// The `Shading` entry of a type 2 dictionary, which must be a
+/// dictionary; its contents are checked when an instance is made.
+fn shading_entry(i: &mut Interp, dict: Object, missing: VmError) -> Result<Object, VmError> {
+    let shading = required(i, dict, "Shading", missing)?;
+    if shading.ty() != Type::Dict {
+        return Err(VmError::TypeCheck);
+    }
+    Ok(shading)
+}
+
+/// Checks that `dict` has the shape of a pattern dictionary: a type 1
+/// dictionary per [`shape`], or a type 2 one with a `Shading`
+/// dictionary. The shading's own entries are not read here — a data
+/// source that is a file would be consumed — only at `makepattern`.
 pub(crate) fn check_dict(i: &mut Interp, dict: Object, missing: VmError) -> Result<(), VmError> {
-    shape(i, dict, missing).map(|_| ())
+    match pattern_type(i, dict, missing)? {
+        1 => shape(i, dict, missing).map(|_| ()),
+        _ => shading_entry(i, dict, missing).map(|_| ()),
+    }
 }
 
 /// `dict matrix makepattern instance`: the instance is a read-only copy
 /// of `dict` in local VM (PLRM3 §8.2) with an `Implementation` entry
 /// holding the instance id, and its pattern space is `matrix` followed
 /// by the CTM in effect; without a graphics backend the CTM is the
-/// identity. The prototype is left as it is.
+/// identity. The prototype is left as it is. A type 2 dictionary's
+/// shading is read whole here, so a starved file source fails the
+/// operator with `NeedMore` and it runs again when bytes arrive.
 fn makepattern(i: &mut Interp) -> Result<(), VmError> {
     let matrix = read_matrix(i, i.peek(0)?)?;
     let dict = i.peek(1)?;
-    let shape = shape(i, dict, VmError::Undefined)?;
+    let kind = match pattern_type(i, dict, VmError::Undefined)? {
+        1 => {
+            let shape = shape(i, dict, VmError::Undefined)?;
+            PatternKind::Tiling {
+                bbox: shape.bbox,
+                xstep: shape.xstep,
+                ystep: shape.ystep,
+                paint_type: shape.paint_type,
+                tiling_type: shape.tiling_type,
+            }
+        }
+        _ => {
+            let shading = shading_entry(i, dict, VmError::Undefined)?;
+            PatternKind::Shading(Rc::new(read_shading(i, shading)?))
+        }
+    };
     let ctm = i
         .graphics_backend()
         .map_or_else(Default::default, |backend| backend.current_matrix());
@@ -138,11 +182,7 @@ fn makepattern(i: &mut Interp) -> Result<(), VmError> {
     let info = PatternInfo {
         id,
         matrix: matrix.then(ctm),
-        bbox: shape.bbox,
-        xstep: shape.xstep,
-        ystep: shape.ystep,
-        paint_type: shape.paint_type,
-        tiling_type: shape.tiling_type,
+        kind,
     };
     i.register_pattern(PatternInstance {
         dict: instance,
@@ -218,15 +258,15 @@ fn setpattern(i: &mut Interp) -> Result<(), VmError> {
 }
 
 /// `setcolor` with a pattern instance on top: the operand of a coloured
-/// pattern is the instance alone, whatever the base; an uncoloured one
-/// takes the base's components under it, and without a base is
-/// `rangecheck` (PLRM3 §4.9.2, §8.2 `setpattern`).
+/// or shading pattern is the instance alone, whatever the base; an
+/// uncoloured one takes the base's components under it, and without a
+/// base is `rangecheck` (PLRM3 §4.9.2, §8.2 `setpattern`).
 pub(crate) fn set_instance(
     i: &mut Interp,
     instance: PatternInstance,
     space: &SpaceSpec,
 ) -> Result<(), VmError> {
-    let count = if instance.info.paint_type == 2 {
+    let count = if instance.info.is_uncoloured() {
         space
             .component_space()
             .map(SpaceSpec::components)
@@ -271,16 +311,21 @@ pub(crate) fn current_instance_dict(i: &mut Interp) -> Result<Option<Object>, Vm
 }
 
 /// Called by a painting operator before it paints, with its operands
-/// still on the operand stack. When the current colour is a pattern
-/// whose cell the backend has not captured for this page, the paint
-/// procedure is arranged to run as a `PatternCell` frame and the
+/// still on the operand stack. When the current colour is a tiling
+/// pattern whose cell the backend has not captured for this page, the
+/// paint procedure is arranged to run as a `PatternCell` frame and the
 /// operator to run again afterwards, and `true` is returned: the
-/// operator then returns without painting.
+/// operator then returns without painting. A shading pattern has no
+/// cell and the backend is not asked.
 pub(crate) fn capture_cell(i: &mut Interp, operator: &'static str) -> Result<bool, VmError> {
     let Some(instance) = current_instance(i)? else {
         return Ok(false);
     };
+    if instance.info.is_shading() {
+        return Ok(false);
+    }
     let body = paint_proc(i, instance.dict, VmError::Undefined)?;
+    let uncoloured = instance.info.is_uncoloured();
     let backend = i.backend()?;
     let depth = backend.gstate_depth();
     if !backend.begin_pattern_cell(&instance.info)? {
@@ -291,7 +336,7 @@ pub(crate) fn capture_cell(i: &mut Interp, operator: &'static str) -> Result<boo
         dict: instance.dict,
         depth,
         operator,
-        uncoloured: instance.info.paint_type == 2,
+        uncoloured,
         started: false,
     }));
     Ok(true)

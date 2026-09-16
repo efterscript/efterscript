@@ -152,9 +152,9 @@ fn gather(
                 {
                     open.push(Open::Pattern(pattern.0));
                     gather(
-                        &spec.ops,
+                        spec.ops(),
                         resources,
-                        spec.matrix.then(outer),
+                        spec.matrix().then(outer),
                         matrices,
                         open,
                     );
@@ -594,7 +594,7 @@ mod tests {
         let in_cell = page
             .resources
             .add_image(&spec(Some(SpaceSpec::DeviceGray), 8, 1, 1), &[0]);
-        let cell = page.resources.add_pattern(PatternSpec {
+        let cell = page.resources.add_pattern(PatternSpec::Tiling {
             matrix: Matrix::scaling(3.0, 3.0),
             bbox: ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0),
             xstep: 1.0,

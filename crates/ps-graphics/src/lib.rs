@@ -28,7 +28,8 @@ pub use backend::Graphics;
 pub use ir::{
     Annot, Collected, DocMark, FillRule, FontIndex, FontSpec, FormIndex, FormSpec, GlyphName,
     GlyphNames, GlyphProc, Image, ImageRef, IrOp, LinkTarget, Op, Page, PageAttrs, PageSink,
-    PatternIndex, PatternSpec, ProgramRef, Resources, SpaceRef, Target, View, glyph_names,
+    PatternIndex, PatternSpec, ProgramRef, Resources, ShadingIndex, SpaceRef, Target, View,
+    glyph_names,
 };
 pub use real::{fmt_real, fmt_reals};
 pub use state::{ClipEntry, GState, Path};

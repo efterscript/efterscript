@@ -13,8 +13,13 @@
 //! given to `scn`/`SCN` in a pattern space: the space is `/Pattern`
 //! itself when it has no underlying space and the `/CSn` resource
 //! holding `[/Pattern base]` when it has, and an uncoloured pattern's
-//! components go before the name. A form placement is the XObject
-//! painted under its matrix, `q … cm /Fmn Do Q`, as an image is.
+//! components go before the name; a shading pattern is selected the
+//! same way. A form placement is the XObject painted under its matrix,
+//! `q … cm /Fmn Do Q`, as an image is. A shade operation is its shading
+//! resource given to `sh` (§8.7.4.2) under its matrix in the same
+//! wrapper, `q … cm /Shn sh Q`; under the identity the bare `/Shn sh`,
+//! since the operator touches no graphics state that a save would
+//! restore.
 //!
 //! A clip with no segments is written as a zero-area rectangle before
 //! `W n`; the clipping operator with no path at all would be ignored.
@@ -52,7 +57,7 @@ use ps_graphics::{
 };
 use ps_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
-use crate::resources::{font_name, form_name, image_name, pattern_name, space_name};
+use crate::resources::{font_name, form_name, image_name, pattern_name, shading_name, space_name};
 
 /// The one-byte code each CID takes in a composite font written as a
 /// Type 3 fallback, by the page's font index; fonts absent here are
@@ -432,6 +437,14 @@ impl Writer<'_> {
             IrOp::Form { form, matrix: m } => {
                 self.line(&format!("q {} cm /{} Do Q", matrix(*m), form_name(*form)));
             }
+            IrOp::Shade { shading, matrix: m } => {
+                let name = shading_name(*shading);
+                if *m == Matrix::IDENTITY {
+                    self.line(&format!("/{name} sh"));
+                } else {
+                    self.line(&format!("q {} cm /{name} sh Q", matrix(*m)));
+                }
+            }
             IrOp::Fill { path, rule } => {
                 self.segments(path, |p| p);
                 self.line(match rule {
@@ -698,7 +711,7 @@ mod tests {
         let over_rgb = page.resources.intern_space(&SpaceSpec::Pattern {
             base: Some(Box::new(SpaceSpec::DeviceRGB)),
         });
-        let cell = PatternSpec {
+        let cell = PatternSpec::Tiling {
             matrix: Matrix::IDENTITY,
             bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
             xstep: 10.0,
@@ -708,9 +721,14 @@ mod tests {
             ops: Vec::new(),
         };
         let coloured = page.resources.add_pattern(cell.clone());
-        let uncoloured = page.resources.add_pattern(PatternSpec {
+        let uncoloured = page.resources.add_pattern(PatternSpec::Tiling {
+            matrix: Matrix::IDENTITY,
+            bbox: Bounds::new(0.0, 0.0, 10.0, 10.0),
+            xstep: 10.0,
+            ystep: 10.0,
             paint_type: 2,
-            ..cell
+            tiling_type: 1,
+            ops: Vec::new(),
         });
         let path = vec![Seg::Move(p(0.0, 0.0)), Seg::Line(p(10.0, 0.0))];
         page.ops = vec![
@@ -752,6 +770,51 @@ mod tests {
             matrix: Matrix([2.0, 0.0, 0.0, 2.0, 100.0, 50.0]),
         }]);
         assert_eq!(text(&placed), "q 2 0 0 2 100 50 cm /Fm2 Do Q\n");
+    }
+
+    #[test]
+    fn a_shade_operation_names_its_shading_under_its_matrix() {
+        use ps_graphics::ShadingIndex;
+        let page = page(vec![
+            IrOp::Shade {
+                shading: ShadingIndex(0),
+                matrix: Matrix([2.0, 0.0, 0.0, 2.0, 10.0, 20.0]),
+            },
+            IrOp::Shade {
+                shading: ShadingIndex(1),
+                matrix: Matrix::IDENTITY,
+            },
+        ]);
+        assert_eq!(text(&page), "q 2 0 0 2 10 20 cm /Sh0 sh Q\n/Sh1 sh\n");
+    }
+
+    #[test]
+    fn a_shading_pattern_is_selected_like_a_tiling_pattern() {
+        use ps_graphics::{PatternSpec, ShadingIndex};
+        let mut page = page(Vec::new());
+        let space = page.resources.intern_space(&SpaceSpec::Pattern {
+            base: Some(Box::new(SpaceSpec::DeviceRGB)),
+        });
+        let pattern = page.resources.add_pattern(PatternSpec::Shading {
+            matrix: Matrix::IDENTITY,
+            shading: ShadingIndex(0),
+        });
+        page.ops = vec![
+            IrOp::SetColorSpace(space),
+            IrOp::SetPattern {
+                pattern,
+                components: Vec::new(),
+            },
+        ]
+        .into_iter()
+        .map(Op::from)
+        .collect();
+        let rendered = content(&page, &Recode::default());
+        assert_eq!(
+            String::from_utf8(rendered.bytes).unwrap(),
+            "/CS0 cs\n/CS0 CS\n/P0 scn\n/P0 SCN\n"
+        );
+        assert!(rendered.notes.is_empty());
     }
 
     #[test]

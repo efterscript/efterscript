@@ -1,0 +1,87 @@
+%PDF-1.7
+%åæôò
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% GENERATED-BY: difftest --update-pdf
+2 0 obj
+<< /FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0.3 0.8 ] /C1 [ 1 0.9 0.2 ] /N 1 >>
+endobj
+3 0 obj
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [ 150 630 250 630 ] /Function 2 0 R >>
+endobj
+4 0 obj
+<< /FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0.3 0.8 ] /C1 [ 1 0.9 0.2 ] /N 1 >>
+endobj
+5 0 obj
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [ 150 530 250 530 ] /Function 4 0 R /Extend [ true true ] >>
+endobj
+6 0 obj
+<< /FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0.3 0.8 ] /C1 [ 1 0.9 0.2 ] /N 1 >>
+endobj
+7 0 obj
+<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [ 150 430 250 430 ] /Function 6 0 R /Extend [ false true ] >>
+endobj
+8 0 obj
+<< /Length 168 >>
+stream
+q
+50 600 m
+350 600 l
+350 660 l
+50 660 l
+h
+W n
+/Sh0 sh
+Q
+q
+50 500 m
+350 500 l
+350 560 l
+50 560 l
+h
+W n
+/Sh1 sh
+Q
+q
+50 400 m
+350 400 l
+350 460 l
+50 460 l
+h
+W n
+/Sh2 sh
+Q
+
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /Shading << /Sh0 3 0 R /Sh1 5 0 R /Sh2 7 0 R >> >> /Contents 8 0 R >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 9 0 R ] /Count 1 >>
+endobj
+10 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+11 0 obj
+<< /Producer (EfterScript 0.0.1) >>
+endobj
+xref
+0 12
+0000000000 65535 f
+0000001149 00000 n
+0000000140 00000 n
+0000000234 00000 n
+0000000337 00000 n
+0000000431 00000 n
+0000000556 00000 n
+0000000650 00000 n
+0000000776 00000 n
+0000000995 00000 n
+0000001208 00000 n
+0000001258 00000 n
+trailer
+<< /Size 12 /Root 10 0 R /Info 11 0 R >>
+startxref
+1310
+%%EOF

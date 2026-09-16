@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a shading pattern fills text and a stroke. A radial shading
+% pattern is set with setpattern, a string is shown, and a path is
+% stroked: the page's text run and stroke carry the pattern as their
+% colour, and the resources hold one shading pattern naming the radial
+% shading with the instance's matrix.
+/Sh << /ShadingType 3 /ColorSpace /DeviceRGB /Coords [150 400 0 150 400 120]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [1 1 0] /C1 [0 0.5 0] /N 1 >>
+   /Extend [false true] >> def
+/P << /PatternType 2 /Shading Sh >> matrix makepattern def
+/Helvetica-Bold findfont 72 scalefont setfont
+P setpattern
+60 380 moveto (Glow) show
+12 setlinewidth
+60 300 moveto 280 300 lineto stroke
+showpage

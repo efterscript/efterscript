@@ -1,0 +1,11 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+shading 0 type 6 space DeviceRGB bits 32 16 8 decode [-10 210 -10 110 0 1 0 1 0 1] {
+  data <000ba2e8ba1555555500000000555555551745d174aaaaaaaa0ba2e8baeaaaaaaa2e8ba2e9ffffffff5d1745d1d555555580000000eaaaaaaa8ba2e8baaaaaaaaa745d17455555555580000000155555555d1745d1000000002e8ba2e92aaaaaabffff000000000000ffff000000000000ffffffffffff000002a2e8ba2e00000000d1745d162aaaaaabf45d174515555555ffffffff55555555e8ba2e8baaaaaaaaf45d1745eaaaaaaad1745d16ffffffffa2e8ba2ed5555555ffff0000ffff0000ffffffff>
+}
+ops:
+sh 0 1 0 0 1 100 450

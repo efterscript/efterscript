@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 2
+% expect-output: true
+% expect-output: false
+% expect-output: true
+% expect-output: true
+% Scenario: a shading pattern instance is made. A dictionary with
+% PatternType 2 and an axial Shading is given to makepattern: the result
+% carries the prototype's entries and an Implementation entry, the
+% prototype gains nothing, setpattern accepts the instance, and
+% currentcolor answers it.
+/D << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0]
+  /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >> def
+/P D matrix makepattern def
+P /PatternType get =
+P /Implementation known =
+D /Implementation known =
+P setpattern
+currentcolorspace 0 get /Pattern eq =
+currentcolor P eq =

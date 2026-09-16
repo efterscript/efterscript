@@ -15,8 +15,8 @@
 % expect-output: (ok)
 % Scenario: the Pattern category checks an instance's shape. Not a
 % dictionary, or one missing an entry, is typecheck; a PatternType other
-% than 1, a PaintType outside 1 and 2, a TilingType outside 1 to 3, or
-% a zero step is rangecheck; a BBox that is not four numbers, a
+% than 1 or 2, a PaintType outside 1 and 2, a TilingType outside 1 to 3,
+% or a zero step is rangecheck; a BBox that is not four numbers, a
 % literal PaintProc, or a PatternType that is not an integer is
 % typecheck; a well-formed dictionary is accepted.
 /try { stopped { $error /errorname get == } { (ok) == } ifelse } def
@@ -25,7 +25,7 @@
 /with { base dup length 1 add dict copy dup 4 2 roll put } def
 { /A 5 /Pattern defineresource pop } try
 { /B << /PatternType 1 >> /Pattern defineresource pop } try
-{ /C /PatternType 2 with /Pattern defineresource pop } try
+{ /C /PatternType 3 with /Pattern defineresource pop } try
 { /D /PaintType 3 with /Pattern defineresource pop } try
 { /E /TilingType 4 with /Pattern defineresource pop } try
 { /F /XStep 0 with /Pattern defineresource pop } try

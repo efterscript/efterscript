@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a tensor-product patch mesh from an array. Each patch
+% carries four interior control points after its twelve boundary
+% points; the second patch is attached with a flag of 1 to the first
+% patch's top edge, giving eight boundary points, four interior points,
+% and two colours.
+gsave
+100 250 translate
+<< /ShadingType 7 /ColorSpace /DeviceRGB
+   /DataSource [
+     0   0 0  -10 30  10 70  0 100  30 110  70 90  100 100  110 70  90 30  100 0  70 -10  30 10
+         30 30  30 70  70 70  70 30
+         1 0 0  0 1 0  0 0 1  1 1 0
+     1   110 130  90 170  100 200  70 210  30 190  0 200  -10 170  10 130
+         30 130  70 130  70 170  30 170
+         1 0 1  0 1 1 ] >> shfill
+grestore
+showpage

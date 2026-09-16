@@ -1,0 +1,43 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+shading 0 type 2 space DeviceRGB coords [150 630 250 630] domain [0 1] extend [false false] {
+  function type 2 domain [0 1] c0 [0 0.3 0.8] c1 [1 0.9 0.2] n 1
+}
+shading 1 type 2 space DeviceRGB coords [150 530 250 530] domain [0 1] extend [true true] {
+  function type 2 domain [0 1] c0 [0 0.3 0.8] c1 [1 0.9 0.2] n 1
+}
+shading 2 type 2 space DeviceRGB coords [150 430 250 430] domain [0 1] extend [false true] {
+  function type 2 domain [0 1] c0 [0 0.3 0.8] c1 [1 0.9 0.2] n 1
+}
+ops:
+q
+m 50 600
+l 350 600
+l 350 660
+l 50 660
+h
+W n
+sh 0 1 0 0 1 0 0
+Q
+q
+m 50 500
+l 350 500
+l 350 560
+l 50 560
+h
+W n
+sh 1 1 0 0 1 0 0
+Q
+q
+m 50 400
+l 350 400
+l 350 460
+l 50 460
+h
+W n
+sh 2 1 0 0 1 0 0
+Q

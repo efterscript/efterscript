@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: rangecheck
+% Scenario: a stitching function's bounds. A type 3 function over the
+% unit domain gives its bounds as 0.7 then 0.3, out of order, so the
+% shading using it raises rangecheck.
+/F << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> def
+<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 100 0]
+   /Function << /FunctionType 3 /Domain [0 1] /Functions [F F F]
+     /Bounds [0.7 0.3] /Encode [0 1 0 1 0 1] >> >> shfill

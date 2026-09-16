@@ -28,14 +28,17 @@
 //! as geometry is, so the resource's matrix maps pattern space to the
 //! enclosing form's or cell's space (§8.7.2); the same instance used in
 //! two contexts is therefore two pattern resources over one captured
-//! cell.
+//! cell. A shading pattern has no cell: its resource is made at the
+//! first paint with it, the shading interned by value, and a shade
+//! operation carries the CTM at the call, taken through the enclosing
+//! capture like an image's matrix.
 
 use std::collections::{BTreeMap, HashMap};
 
 use ps_vm::{
     Bounds, CieColor, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend, ImageSpec,
-    LineCap, LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg,
-    SpaceSpec, VmError,
+    LineCap, LineJoin, MarkValue, Matrix, PatternInfo, PatternKind, Point, ProcRef, Rect, Screen,
+    Seg, ShadingSpec, SpaceSpec, VmError,
 };
 
 use crate::arc;
@@ -322,8 +325,9 @@ impl<S: PageSink> Graphics<S> {
     }
 
     /// The pattern resource `info` names in the current context, made on
-    /// first use from the cell captured for the instance (empty when the
-    /// page holds none) with the matrix relative to the context's space.
+    /// first use — from the cell captured for the instance (empty when
+    /// the page holds none), or over the interned shading — with the
+    /// matrix relative to the context's space.
     fn pattern_resource(&mut self, info: &PatternInfo) -> PatternIndex {
         let context = self.context();
         if let Some(&index) = self.placed_patterns.get(&(info.id, context)) {
@@ -332,20 +336,39 @@ impl<S: PageSink> Graphics<S> {
         let ops = self
             .page_patterns
             .get(&info.id)
-            .map(|index| self.page.resources.patterns[index.0].ops.clone())
+            .map(|index| self.page.resources.patterns[index.0].ops().to_vec())
             .unwrap_or_default();
         let matrix = self.local_matrix(info.matrix);
-        let index = self.page.resources.add_pattern(PatternSpec {
-            matrix,
-            bbox: info.bbox,
-            xstep: info.xstep,
-            ystep: info.ystep,
-            paint_type: info.paint_type,
-            tiling_type: info.tiling_type,
-            ops,
-        });
+        let spec = self.pattern_spec(info, matrix, ops);
+        let index = self.page.resources.add_pattern(spec);
         self.placed_patterns.insert((info.id, context), index);
         index
+    }
+
+    /// The resource for `info` under `matrix`, a tiling pattern's over
+    /// `ops`.
+    fn pattern_spec(&mut self, info: &PatternInfo, matrix: Matrix, ops: Vec<Op>) -> PatternSpec {
+        match &info.kind {
+            PatternKind::Tiling {
+                bbox,
+                xstep,
+                ystep,
+                paint_type,
+                tiling_type,
+            } => PatternSpec::Tiling {
+                matrix,
+                bbox: *bbox,
+                xstep: *xstep,
+                ystep: *ystep,
+                paint_type: *paint_type,
+                tiling_type: *tiling_type,
+                ops,
+            },
+            PatternKind::Shading(shading) => PatternSpec::Shading {
+                matrix,
+                shading: self.page.resources.intern_shading(shading),
+            },
+        }
     }
 
     /// Redirects emission into a fresh operation list for `target`,
@@ -442,7 +465,11 @@ impl<S: PageSink> Graphics<S> {
         if needs == Needs::Nothing {
             return;
         }
-        let pattern = self.gstate.pattern.map(|info| self.pattern_resource(&info));
+        let pattern = self
+            .gstate
+            .pattern
+            .clone()
+            .map(|info| self.pattern_resource(&info));
         let state = &self.gstate;
         let mut ops = Vec::new();
         {
@@ -849,6 +876,18 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         self.gstate.flatness
     }
 
+    fn set_smoothness(&mut self, smoothness: f32) -> Result<(), VmError> {
+        if smoothness.is_nan() {
+            return Err(VmError::RangeCheck);
+        }
+        self.gstate.smoothness = smoothness.clamp(0.0, 1.0);
+        Ok(())
+    }
+
+    fn smoothness(&self) -> f32 {
+        self.gstate.smoothness
+    }
+
     fn concat(&mut self, matrix: Matrix) -> Result<(), VmError> {
         self.gstate.ctm = matrix.then(self.gstate.ctm);
         Ok(())
@@ -1201,7 +1240,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     }
 
     fn current_pattern(&self) -> Option<PatternInfo> {
-        self.gstate.pattern
+        self.gstate.pattern.clone()
     }
 
     /// The cell runs in a saved state that starts from the initial one —
@@ -1209,8 +1248,12 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     /// — with the pattern space as its CTM, the box as its only clip,
     /// and an empty path; the emitter starts from the initial state
     /// too. A cell the page holds, or one being captured (a cell that
-    /// paints with its own pattern), is not captured again.
+    /// paints with its own pattern), is not captured again; a shading
+    /// pattern has nothing to capture.
     fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
+        let PatternKind::Tiling { bbox, .. } = pattern.kind else {
+            return Ok(false);
+        };
         if self.gstate.null_device
             || self.page_patterns.contains_key(&pattern.id)
             || self.capturing(Context::Pattern(pattern.id))
@@ -1222,8 +1265,12 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             ctm: pattern.matrix,
             ..self.gstate.reinitialized()
         };
-        self.begin_capture(Target::Pattern(*pattern), pattern.matrix, Emitter::new());
-        self.clip_to_box(pattern.bbox, pattern.matrix);
+        self.begin_capture(
+            Target::Pattern(pattern.clone()),
+            pattern.matrix,
+            Emitter::new(),
+        );
+        self.clip_to_box(bbox, pattern.matrix);
         Ok(true)
     }
 
@@ -1241,15 +1288,8 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             unreachable!("checked above");
         };
         let matrix = self.local_matrix(info.matrix);
-        let index = self.page.resources.add_pattern(PatternSpec {
-            matrix,
-            bbox: info.bbox,
-            xstep: info.xstep,
-            ystep: info.ystep,
-            paint_type: info.paint_type,
-            tiling_type: info.tiling_type,
-            ops,
-        });
+        let spec = self.pattern_spec(&info, matrix, ops);
+        let index = self.page.resources.add_pattern(spec);
         self.page_patterns.insert(info.id, index);
         self.placed_patterns
             .insert((info.id, self.context()), index);
@@ -1320,6 +1360,22 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         self.record(IrOp::Form {
             form: index,
             matrix: form.matrix,
+        });
+        Ok(())
+    }
+
+    /// The shading interned by value and a shade operation under the CTM
+    /// recorded where emission goes, after the clip is synchronised;
+    /// nothing under the null device.
+    fn shade(&mut self, shading: &ShadingSpec) -> Result<(), VmError> {
+        if self.gstate.null_device {
+            return Ok(());
+        }
+        self.sync_clip();
+        let index = self.page.resources.intern_shading(shading);
+        self.record(IrOp::Shade {
+            shading: index,
+            matrix: self.gstate.ctm,
         });
         Ok(())
     }
@@ -1477,7 +1533,8 @@ fn map_segments(path: Vec<Seg>, m: [f64; 6]) -> Vec<Seg> {
 
 /// The operation with its geometry taken from default user space through
 /// `m`: paths point by point, and the matrices a stroke, an image, a
-/// nested run, or a form placement carry composed with it.
+/// nested run, a form placement, or a shade operation carry composed
+/// with it.
 fn transformed(op: IrOp, m: [f64; 6]) -> IrOp {
     match op {
         IrOp::Fill { path, rule } => IrOp::Fill {
@@ -1509,6 +1566,10 @@ fn transformed(op: IrOp, m: [f64; 6]) -> IrOp {
         },
         IrOp::Form { form, matrix } => IrOp::Form {
             form,
+            matrix: then64(matrix, m),
+        },
+        IrOp::Shade { shading, matrix } => IrOp::Shade {
+            shading,
             matrix: then64(matrix, m),
         },
         other => other,

@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a triangle mesh driven by a function. Each vertex carries
+% one parametric value instead of colour components; the values are
+% interpolated across the triangle and the function turns them into
+% colours.
+gsave
+100 400 translate
+<< /ShadingType 4 /ColorSpace /DeviceRGB
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>
+   /DataSource [ 0 0 0 0   0 200 0 0.5   0 100 150 1 ] >> shfill
+grestore
+showpage

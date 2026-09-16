@@ -1,0 +1,25 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a function-based shading with a sampled function from a
+% reusable stream. The samples arrive in the job as hexadecimal text,
+% read through the pre-filter into a positionable stream that the type
+% 0 function names as its DataSource; the function is read from the
+% stream's start whatever was read before, and the shading paints the
+% same four-corner blend as its string-sourced twin, this time under a
+% clip narrower than its domain rectangle.
+%%BeginData: 2 ASCII Lines
+/S currentfile << /Filter /ASCIIHexDecode >> /ReusableStreamDecode filter
+ff0000 00ff00 0000ff ffff00>
+%%EndData
+def
+S 3 setfileposition
+gsave
+150 300 100 100 rectclip
+<< /ShadingType 1 /ColorSpace /DeviceRGB
+   /Domain [0 1 0 1] /Matrix [200 0 0 100 100 300]
+   /Function << /FunctionType 0 /Domain [0 1 0 1] /Range [0 1 0 1 0 1]
+     /Size [2 2] /BitsPerSample 8 /DataSource S >> >> shfill
+grestore
+showpage

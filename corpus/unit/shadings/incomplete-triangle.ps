@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: incomplete-mesh-element
+% expect-error: rangecheck
+% Scenario: an incomplete triangle. A type 4 shading's data ends after
+% two vertices of a new triangle, so shfill raises rangecheck.
+<< /ShadingType 4 /ColorSpace /DeviceRGB
+   /DataSource [ 0 0 0 1 0 0   0 100 0 0 1 0 ] >> shfill

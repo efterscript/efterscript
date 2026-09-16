@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: BBox clips the shading. An axial blend extended at both
+% ends would fill its clip, but its BBox confines it to a smaller
+% rectangle; the same shading as a pattern is confined the same way
+% inside the rectangle it fills.
+/Sh << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [100 0 300 0]
+   /BBox [120 420 280 480]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0.2 0.6 0.2] /C1 [0.9 0.9 0.1] /N 1 >>
+   /Extend [true true] >> def
+gsave
+50 400 300 100 rectclip
+Sh shfill
+grestore
+gsave
+0 -200 translate
+/P << /PatternType 2 /Shading Sh >> matrix makepattern setpattern
+50 400 300 100 rectfill
+grestore
+showpage

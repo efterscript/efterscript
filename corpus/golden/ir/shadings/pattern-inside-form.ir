@@ -1,0 +1,40 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Pattern base=DeviceGray
+shading 0 type 3 space DeviceGray coords [50 50 0 50 50 50] domain [0 1] extend [false false] {
+  function type 2 domain [0 1] c0 [1] c1 [0.1] n 1
+}
+pattern 0 shading 0 matrix 1 0 0 1 0 0
+pattern 1 shading 0 matrix 1 0 0 1 300 300
+form 0 bbox 0 0 100 100 {
+  q
+  m 0 0
+  l 100 0
+  l 100 100
+  l 0 100
+  h
+  W n
+  cs 0
+  pattern 0
+  m 0 0
+  l 100 0
+  l 100 100
+  l 0 100
+  h
+  f
+  Q
+}
+ops:
+form 0 1 0 0 1 100 500
+cs 0
+pattern 1
+m 300 300
+l 400 300
+l 400 400
+l 300 400
+h
+f

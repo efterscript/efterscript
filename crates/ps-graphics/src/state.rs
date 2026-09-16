@@ -13,8 +13,8 @@
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, CieColor, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point, ProcRef, Rect,
-    Screen, Seg, SpaceSpec, VmError,
+    Bounds, CieColor, DEFAULT_SMOOTHNESS, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point,
+    ProcRef, Rect, Screen, Seg, SpaceSpec, VmError,
 };
 
 /// The inside rule of a fill or clip.
@@ -173,6 +173,9 @@ pub struct GState {
     pub miter_limit: f32,
     pub dash: (Vec<f32>, f32),
     pub flatness: f32,
+    /// The smoothness parameter, in the unit interval; recorded for the
+    /// getter and never applied.
+    pub smoothness: f32,
     /// Intersections since `initclip`, oldest first; empty means the
     /// page is the clip.
     pub clip: Vec<ClipEntry>,
@@ -206,6 +209,7 @@ impl Default for GState {
             miter_limit: 10.0,
             dash: (Vec::new(), 0.0),
             flatness: 1.0,
+            smoothness: DEFAULT_SMOOTHNESS,
             clip: Vec::new(),
             media_box: DEFAULT_MEDIA_BOX,
             path: Path::default(),
@@ -274,14 +278,14 @@ impl GState {
     }
 
     /// Makes `pattern` the colour: an uncoloured pattern takes exactly
-    /// the underlying space's components, a coloured one none, whatever
-    /// the space's base.
+    /// the underlying space's components, a coloured or shading one
+    /// none, whatever the space's base.
     pub fn set_pattern(
         &mut self,
         pattern: &PatternInfo,
         components: &[f32],
     ) -> Result<(), VmError> {
-        let expected = if pattern.paint_type == 2 {
+        let expected = if pattern.is_uncoloured() {
             self.space.components()
         } else {
             0
@@ -290,7 +294,7 @@ impl GState {
             return Err(VmError::RangeCheck);
         }
         self.color = self.clamped(components);
-        self.pattern = Some(*pattern);
+        self.pattern = Some(pattern.clone());
         Ok(())
     }
 
@@ -319,6 +323,8 @@ impl GState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ps_vm::PatternKind;
 
     #[test]
     fn path_tracks_current_point_and_start() {
@@ -394,15 +400,23 @@ mod tests {
         let coloured = PatternInfo {
             id: 1,
             matrix: Matrix::IDENTITY,
-            bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
-            xstep: 1.0,
-            ystep: 1.0,
-            paint_type: 1,
-            tiling_type: 1,
+            kind: PatternKind::Tiling {
+                bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+                xstep: 1.0,
+                ystep: 1.0,
+                paint_type: 1,
+                tiling_type: 1,
+            },
         };
         let uncoloured = PatternInfo {
-            paint_type: 2,
-            ..coloured
+            kind: PatternKind::Tiling {
+                bbox: Bounds::new(0.0, 0.0, 1.0, 1.0),
+                xstep: 1.0,
+                ystep: 1.0,
+                paint_type: 2,
+                tiling_type: 1,
+            },
+            ..coloured.clone()
         };
         let mut state = GState {
             space: SpaceSpec::Pattern {
@@ -424,7 +438,7 @@ mod tests {
         );
         assert_eq!(state.set_pattern(&uncoloured, &[2.0, 0.5, -1.0]), Ok(()));
         assert_eq!(state.color, vec![1.0, 0.5, 0.0]);
-        assert_eq!(state.pattern, Some(uncoloured));
+        assert_eq!(state.pattern, Some(uncoloured.clone()));
         state.set_color(&[0.0, 0.0, 0.0]).unwrap();
         assert_eq!(state.pattern, None);
         state.space = SpaceSpec::Pattern { base: None };

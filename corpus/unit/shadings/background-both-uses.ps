@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: Background applies in pattern use only. One axial shading
+% with a Background is painted with shfill inside a clip and, as a
+% pattern, fills a rectangle wider than its extent: the shading is one
+% resource carrying the background, the shade operation is what ignores
+% it, and the pattern honours it outside the blend.
+/Sh << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [100 0 200 0]
+   /Background [0.9 0.9 0.2]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 0.6] /C1 [0.8 0 0] /N 1 >> >> def
+gsave
+0 500 translate
+50 0 300 100 rectclip
+Sh shfill
+grestore
+/P << /PatternType 2 /Shading Sh >> matrix makepattern def
+P setpattern
+50 300 300 100 rectfill
+showpage

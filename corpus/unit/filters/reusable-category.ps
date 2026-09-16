@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: /ReusableStreamDecode
+% Scenario: the Filter category lists ReusableStreamDecode. It has
+% status 0 and size 0 like the other standard filters, and findresource
+% returns the key.
+% Expect: true 0 0, /ReusableStreamDecode.
+/ReusableStreamDecode /Filter resourcestatus = = =
+/ReusableStreamDecode /Filter findresource ==

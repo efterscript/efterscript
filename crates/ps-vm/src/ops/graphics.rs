@@ -123,7 +123,7 @@ pub(crate) fn drop(i: &mut Interp, count: usize) -> Result<(), VmError> {
     Ok(())
 }
 
-fn push_real(i: &mut Interp, value: f32) -> Result<(), VmError> {
+pub(crate) fn push_real(i: &mut Interp, value: f32) -> Result<(), VmError> {
     i.push(Object::real(value))
 }
 

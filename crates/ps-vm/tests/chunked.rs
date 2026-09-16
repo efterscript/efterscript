@@ -6,9 +6,10 @@
 //! source finds no byte with more to come is undone and run again once
 //! bytes have arrived — `readline`, `readstring`, `readhexstring`,
 //! `read`, `token`, `eexec` in both forms, image data from
-//! `currentfile`, `closefile` on it, and a filter chain over it. Every
-//! program is split at every point and compared with its unsplit run:
-//! outcome, output, error output, and the backend's log.
+//! `currentfile`, `closefile` on it, a filter chain over it, and a
+//! reusable stream read from it. Every program is split at every point
+//! and compared with its unsplit run: outcome, output, error output,
+//! and the backend's log.
 
 mod common;
 
@@ -199,6 +200,67 @@ fn filters_over_the_job_source() {
     let run = agrees_at_every_split(&program);
     assert_eq!(run.outcome, Outcome::Ok);
     assert_eq!(run.out, "ABC\ntail\n");
+}
+
+#[test]
+fn a_reusable_stream_from_the_job_source() {
+    // The whole encoded section is read when the stream is made, through
+    // the hexadecimal pre-filter to its marker, so the scanner resumes
+    // after it; the stream is then read twice and used as image data.
+    let run = agrees_at_every_split(
+        b"currentfile << /Filter /ASCIIHexDecode >> /ReusableStreamDecode filter\n\
+          48656C6C 6F2C2073 747265616D>\n\
+          /s exch def s 20 string readstring pop = s resetfile s 5 string readstring pop = \
+          s 0 setfileposition 4 2 8 [4 0 0 -2 0 2] s image s bytesavailable = (after) =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "Hello, stream\nHello\n5\nafter\n");
+    assert!(run.log.contains("Image"), "{}", run.log);
+    // Without a pre-filter the stream takes the rest of the job, the
+    // code after the operator included, so nothing more runs.
+    let run = agrees_at_every_split(
+        b"(before) = currentfile /ReusableStreamDecode filter 100 string readstring pop ==\nrest of job",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "before\n");
+    // A run-length pre-filter over base-85 over the job: two layers
+    // whose state is rolled back and rebuilt at every cut.
+    let run = agrees_at_every_split(
+        b"currentfile << /Filter [/ASCII85Decode /RunLengthDecode] >> /ReusableStreamDecode filter\n\
+          !b#PJrciq~>\n\
+          10 string readstring pop = (tail) =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "abcxxx\ntail\n");
+}
+
+#[test]
+fn a_mesh_read_from_the_job_source() {
+    // The shading's data comes through a hexadecimal filter over the
+    // job: a read that starves fails shfill with NeedMore, the filter's
+    // state is rolled back, and the operator runs again over its
+    // operand once bytes arrive; the scanner resumes after the marker.
+    let run = agrees_at_every_split(
+        b"<< /ShadingType 4 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8 \
+          /BitsPerFlag 8 /Decode [0 255 0 255 0 1 0 1 0 1] \
+          /DataSource currentfile /ASCIIHexDecode filter >> shfill\n\
+          00 0000 ff0000  00 6400 00ff00  00 3250 0000ff>\n\
+          (after) =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "after\n");
+    assert!(run.log.contains("Shade"), "{}", run.log);
+    // A type 2 pattern's shading is read at makepattern the same way.
+    let run = agrees_at_every_split(
+        b"<< /PatternType 2 /Shading << /ShadingType 4 /ColorSpace /DeviceGray \
+          /BitsPerCoordinate 8 /BitsPerComponent 8 /BitsPerFlag 8 /Decode [0 255 0 255 0 1] \
+          /DataSource currentfile /ASCIIHexDecode filter >> >> matrix makepattern\n\
+          00 0000 00  00 6400 80  00 3250 ff>\n\
+          setpattern 0 0 10 10 rectfill (done) =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.out, "done\n");
+    assert!(run.log.contains("SetPattern"), "{}", run.log);
 }
 
 #[test]

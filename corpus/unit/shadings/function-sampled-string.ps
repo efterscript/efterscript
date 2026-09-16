@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a function-based shading with a sampled function from a
+% string. A type 0 function of two inputs and three outputs holds four
+% RGB samples at eight bits in a string, one per corner of the unit
+% domain, and the shading's Matrix maps that domain onto a rectangle:
+% the viewer interpolates the corners across it.
+<< /ShadingType 1 /ColorSpace /DeviceRGB
+   /Matrix [200 0 0 100 100 500]
+   /Function << /FunctionType 0 /Domain [0 1 0 1] /Range [0 1 0 1 0 1]
+     /Size [2 2] /BitsPerSample 8
+     /DataSource <ff0000 00ff00 0000ff ffff00> >> >> shfill
+showpage

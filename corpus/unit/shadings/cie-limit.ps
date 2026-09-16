@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% divergence: shading-colour-conversion-limit
+% expect-error: limitcheck
+% Scenario: a CIE-based space that does not collapse. A CIEBasedABC
+% dictionary whose RangeABC exceeds the unit interval cannot be carried
+% as a calibrated space, and converting the shading's colours would
+% mean evaluating its function, so the shading raises limitcheck.
+<< /ShadingType 2 /ColorSpace [/CIEBasedABC << /WhitePoint [0.9505 1 1.089]
+     /RangeABC [0 2 0 2 0 2] >>]
+   /Coords [100 0 400 0]
+   /Function << /FunctionType 2 /Domain [0 1] /C0 [0.9 0.2 0.1] /C1 [0.1 0.3 0.9] /N 1 >> >> shfill
