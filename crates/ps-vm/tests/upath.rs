@@ -463,3 +463,66 @@ fn user_path_operators_belong_to_the_graphics_group() {
         assert!(interp.operator(name).is_none(), "{name}");
     }
 }
+
+// --- ustrokepath ---------------------------------------------------------------------
+
+/// The first form is `newpath uappend strokepath`; the second
+/// concatenates its matrix before the outline and puts the CTM back,
+/// so `ustrokepath` never changes it (PLRM3 §8.2). Nothing is saved:
+/// the outline is meant to stay as the current path.
+#[test]
+fn ustrokepath_outlines_in_place_and_leaves_the_ctm_alone() {
+    let run = exec(
+        "/u {0 0 100 100 setbbox 10 10 moveto 90 90 lineto} cvlit def \
+         u ustrokepath u [2 0 0 2 0 0] ustrokepath \
+         matrix currentmatrix == count =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "[1.0 0.0 0.0 1.0 0.0 0.0]\n0\n");
+    assert_eq!(
+        calls(&run),
+        [
+            Call::NewPath,
+            Call::MoveTo(p(10.0, 10.0)),
+            Call::LineTo(p(90.0, 90.0)),
+            Call::StrokeOutline,
+            Call::NewPath,
+            Call::MoveTo(p(10.0, 10.0)),
+            Call::LineTo(p(90.0, 90.0)),
+            Call::Concat(Matrix([2.0, 0.0, 0.0, 2.0, 0.0, 0.0])),
+            Call::StrokeOutline,
+            Call::SetMatrix(Matrix::IDENTITY),
+        ]
+    );
+    let run = exec("5 5 moveto strokepath count =");
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.output, "0\n");
+    assert!(calls(&run).ends_with(&[Call::MoveTo(p(5.0, 5.0)), Call::StrokeOutline]));
+}
+
+#[test]
+fn ustrokepath_checks_its_operands_like_ustroke() {
+    for (program, error) in [
+        (
+            "{0 0 9 9 setbbox 1 1 moveto} [2 0 0 2 0] ustrokepath",
+            "typecheck",
+        ),
+        (
+            "{1 1 moveto 2 2 lineto 3 3 lineto 4 4 lineto} ustrokepath",
+            "typecheck",
+        ),
+        ("[1 0 0 1 0 0] ustrokepath", "stackunderflow"),
+        (
+            "{0 0 9 9 setbbox 1 1 moveto 50 50 lineto} ustrokepath",
+            "rangecheck",
+        ),
+    ] {
+        let run = exec(program);
+        assert_eq!(run.error(), Some(error), "{program}");
+    }
+    // The operands stay when the walk fails; the CTM was never touched.
+    let run = exec("{0 0 9 9 setbbox 1 1 moveto 50 50 lineto} [2 0 0 2 0 0] ustrokepath");
+    assert_eq!(run.error(), Some("rangecheck"));
+    assert_eq!(run.interp.ostack().len(), 2);
+    assert!(!calls(&run).contains(&Call::Concat(Matrix([2.0, 0.0, 0.0, 2.0, 0.0, 0.0]))));
+}

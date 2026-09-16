@@ -14,8 +14,19 @@ use std::rc::Rc;
 
 use ps_vm::{
     Bounds, CieColor, DEFAULT_SMOOTHNESS, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point,
-    ProcRef, Rect, Screen, Seg, SpaceSpec, VmError,
+    ProcRef, Rect, Screen, Seg, SpaceSpec, VmError, apply64, envelope64, user_box_of,
 };
+
+/// A point in double precision.
+pub type P64 = (f64, f64);
+
+pub(crate) fn widen(p: Point) -> P64 {
+    (f64::from(p.x), f64::from(p.y))
+}
+
+pub(crate) fn narrow(p: P64) -> Point {
+    Point::new(p.0 as f32, p.1 as f32)
+}
 
 /// The inside rule of a fill or clip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +55,13 @@ pub struct Path {
     pub current: Option<Point>,
     /// Where the current subpath began, for `closepath`.
     pub start: Option<Point>,
+    /// The current point as the construction operator computed it
+    /// before rounding to `current`: what the readings — `currentpoint`,
+    /// `arcto`'s corner — start from, so a point read back through the
+    /// inverse CTM is rounded once, not twice.
+    pub current64: Option<P64>,
+    /// The subpath start, likewise.
+    pub start64: Option<P64>,
 }
 
 impl Path {
@@ -63,25 +81,50 @@ impl Path {
     /// Starts a subpath; a `Move` with no segment after it is replaced
     /// rather than left as a one-point subpath (PLRM3 §4.4).
     pub fn move_to(&mut self, p: Point) {
+        self.move_to_at(p, widen(p));
+    }
+
+    /// As [`Path::move_to`], with the point before rounding.
+    pub fn move_to_at(&mut self, p: Point, exact: P64) {
         match Rc::make_mut(&mut self.segs).last_mut() {
             Some(last @ Seg::Move(_)) => *last = Seg::Move(p),
             _ => self.push(Seg::Move(p)),
         }
         self.current = Some(p);
         self.start = Some(p);
+        self.current64 = Some(exact);
+        self.start64 = Some(exact);
     }
 
     pub fn line_to(&mut self, p: Point) -> Result<(), VmError> {
+        self.line_to_at(p, widen(p))
+    }
+
+    /// As [`Path::line_to`], with the point before rounding.
+    pub fn line_to_at(&mut self, p: Point, exact: P64) -> Result<(), VmError> {
         self.current()?;
         self.push(Seg::Line(p));
         self.current = Some(p);
+        self.current64 = Some(exact);
         Ok(())
     }
 
     pub fn curve_to(&mut self, c1: Point, c2: Point, p: Point) -> Result<(), VmError> {
+        self.curve_to_at(c1, c2, p, widen(p))
+    }
+
+    /// As [`Path::curve_to`], with the end point before rounding.
+    pub fn curve_to_at(
+        &mut self,
+        c1: Point,
+        c2: Point,
+        p: Point,
+        exact: P64,
+    ) -> Result<(), VmError> {
         self.current()?;
         self.push(Seg::Curve(c1, c2, p));
         self.current = Some(p);
+        self.current64 = Some(exact);
         Ok(())
     }
 
@@ -93,6 +136,7 @@ impl Path {
         }
         self.push(Seg::Close);
         self.current = self.start;
+        self.current64 = self.start64;
     }
 
     /// A path over ready-made segments, with the current point and
@@ -104,13 +148,26 @@ impl Path {
                 Seg::Move(p) => {
                     path.current = Some(p);
                     path.start = Some(p);
+                    path.current64 = Some(widen(p));
+                    path.start64 = Some(widen(p));
                 }
-                Seg::Line(p) | Seg::Curve(_, _, p) => path.current = Some(p),
-                Seg::Close => path.current = path.start,
+                Seg::Line(p) | Seg::Curve(_, _, p) => {
+                    path.current = Some(p);
+                    path.current64 = Some(widen(p));
+                }
+                Seg::Close => {
+                    path.current = path.start;
+                    path.current64 = path.start64;
+                }
             }
         }
         path.segs = segs.into();
         path
+    }
+
+    /// The device-space current point before rounding.
+    pub fn current64(&self) -> Result<P64, VmError> {
+        self.current64.ok_or(VmError::NoCurrentPoint)
     }
 
     /// Every point of the path, control points included.
@@ -193,6 +250,9 @@ pub struct GState {
     pub transfers: [ProcRef; 4],
     /// The colour rendering dictionary, likewise; `None` is the default.
     pub color_rendering: Option<ProcRef>,
+    /// The overprint parameter (PLRM3 §4.8.5), as the VM last told it;
+    /// carried to the IR where a paint occurs.
+    pub overprint: bool,
 }
 
 impl Default for GState {
@@ -218,6 +278,7 @@ impl Default for GState {
             screens: [Screen::DEFAULT; 4],
             transfers: [ProcRef::IDENTITY; 4],
             color_rendering: None,
+            overprint: false,
         }
     }
 }
@@ -225,8 +286,8 @@ impl Default for GState {
 impl GState {
     /// What `initgraphics` leaves: the defaults with the device untouched
     /// (media box and null device kept) and the font, screens, transfer
-    /// functions, and colour rendering kept, since `initgraphics` and
-    /// `showpage` do not reset them (PLRM3 §8.2).
+    /// functions, colour rendering, and overprint kept, since
+    /// `initgraphics` and `showpage` do not reset them (PLRM3 §8.2).
     pub fn reinitialized(&self) -> GState {
         GState {
             media_box: self.media_box,
@@ -235,6 +296,7 @@ impl GState {
             screens: self.screens,
             transfers: self.transfers,
             color_rendering: self.color_rendering,
+            overprint: self.overprint,
             ..GState::default()
         }
     }
@@ -243,29 +305,48 @@ impl GState {
         self.ctm.inverse().ok_or(VmError::UndefinedResult)
     }
 
-    /// The current point in the current user space.
-    pub fn current_point(&self) -> Result<Point, VmError> {
-        let device = self.path.current()?;
-        Ok(self.inverse_ctm()?.apply(device))
+    /// The inverse CTM in double precision, for the readings.
+    pub fn inverse_ctm64(&self) -> Result<[f64; 6], VmError> {
+        self.ctm.inverse64().ok_or(VmError::UndefinedResult)
     }
 
-    /// The user-space bounding box of every point of the current path.
+    /// The current point in the current user space, before rounding.
+    pub fn current_point64(&self) -> Result<P64, VmError> {
+        let (x, y) = self.path.current64()?;
+        let inverse = self.inverse_ctm64()?;
+        Ok(apply64(inverse, x, y))
+    }
+
+    /// The current point in the current user space, rounded once.
+    pub fn current_point(&self) -> Result<Point, VmError> {
+        self.current_point64().map(narrow)
+    }
+
+    /// The user-space bounding box of the current path, as `pathbbox`
+    /// defines it (PLRM3 §8.2): the device-space box of every segment
+    /// end and control point — a `moveto` ending the path is left out
+    /// unless it is the whole path — whose corners go through the
+    /// inverse CTM, the axis-aligned envelope of those being the result.
     pub fn path_bbox(&self) -> Result<Bounds, VmError> {
         self.path.current()?;
-        let inverse = self.inverse_ctm()?;
-        let mut bounds: Option<Bounds> = None;
-        for p in self.path.points().map(|p| inverse.apply(p)) {
-            bounds = Some(match bounds {
-                None => Bounds::new(p.x, p.y, p.x, p.y),
-                Some(b) => Bounds::new(
-                    b.llx.min(p.x),
-                    b.lly.min(p.y),
-                    b.urx.max(p.x),
-                    b.ury.max(p.y),
-                ),
-            });
+        let inverse = self.inverse_ctm64()?;
+        let segs: &[Seg] = &self.path.segs;
+        let considered = match segs {
+            [rest @ .., Seg::Move(_)] if !rest.is_empty() => rest,
+            all => all,
+        };
+        let points: Vec<P64> = considered
+            .iter()
+            .flat_map(|seg| match *seg {
+                Seg::Move(p) | Seg::Line(p) => vec![widen(p)],
+                Seg::Curve(a, b, c) => vec![widen(a), widen(b), widen(c)],
+                Seg::Close => Vec::new(),
+            })
+            .collect();
+        if points.is_empty() {
+            return Err(VmError::NoCurrentPoint);
         }
-        bounds.ok_or(VmError::NoCurrentPoint)
+        Ok(user_box_of(inverse, envelope64(&points)))
     }
 
     pub fn set_color(&mut self, components: &[f32]) -> Result<(), VmError> {

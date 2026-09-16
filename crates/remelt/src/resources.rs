@@ -45,11 +45,18 @@
 //! fonts are written, so a glyph procedure can name them, and the
 //! streams are written after, so they can name the fonts.
 //!
+//! An overprint setting anywhere on the page — its own operations, a
+//! cell, a body, or a glyph procedure — has an extended graphics state
+//! dictionary `/GSn` (ISO 32000-1 §8.4.5) carrying `OP` and `op` with
+//! the value, one per distinct value used, listed under `ExtGState` by
+//! the page and by every content that selects it.
+//!
 //! The objects a page needs are written before the page itself, so a
 //! `Resources` dictionary only ever refers to objects already in the file.
 //! Fonts are `/Fn` (n the `FontIndex`), written once per document by
 //! `fonts`.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use pdf_out::{DictBuilder, Document, Filter, Ref, Val};
@@ -87,6 +94,12 @@ pub(crate) fn form_name(form: FormIndex) -> String {
 
 pub(crate) fn shading_name(shading: ShadingIndex) -> String {
     format!("Sh{}", shading.0)
+}
+
+/// The extended graphics state selecting overprint `on`: `GS0` turns
+/// it off, `GS1` on.
+pub(crate) fn ext_gstate_name(on: bool) -> String {
+    format!("GS{}", u8::from(on))
 }
 
 /// A colour space with its function streams already written.
@@ -661,6 +674,35 @@ fn put_axis(d: &mut DictBuilder<'_>, domain: &[f32; 2], extend: &[bool; 2], func
     }
 }
 
+/// The overprint values selected anywhere on `page`: its operations
+/// and those of every cell, body, and glyph procedure it holds.
+fn overprints_used(page: &Page) -> BTreeSet<bool> {
+    let resources = &page.resources;
+    let mut used = Refs::of(&page.ops, resources).overprints;
+    for spec in &resources.patterns {
+        used.extend(Refs::of(spec.ops(), resources).overprints);
+    }
+    for spec in &resources.forms {
+        used.extend(Refs::of(&spec.ops, resources).overprints);
+    }
+    for spec in &resources.fonts {
+        used.extend(crate::fonts::references(spec, resources, false).overprints);
+    }
+    used
+}
+
+fn write_ext_gstate<W: Write>(doc: &mut Document<W>, on: bool) -> Result<Ref, pdf_out::Error> {
+    let object = doc.alloc();
+    doc.write_obj(object, |v| {
+        v.dict(|d| {
+            d.key("Type").name("ExtGState");
+            d.key("OP").boolean(on);
+            d.key("op").boolean(on);
+        })
+    })?;
+    Ok(object)
+}
+
 /// The written objects behind one page's resources, indexed like the IR.
 pub(crate) struct Objects {
     spaces: Vec<Form>,
@@ -669,6 +711,7 @@ pub(crate) struct Objects {
     fonts: Vec<Ref>,
     patterns: Vec<Ref>,
     forms: Vec<Ref>,
+    ext_gstates: BTreeMap<bool, Ref>,
     recode: Recode,
 }
 
@@ -722,6 +765,10 @@ impl Objects {
         for spec in &resources.shadings {
             shadings.push(write_shading(doc, spec, filter)?);
         }
+        let mut ext_gstates = BTreeMap::new();
+        for on in overprints_used(page) {
+            ext_gstates.insert(on, write_ext_gstate(doc, on)?);
+        }
         // Allocated before the fonts are written and written after them:
         // a glyph procedure may name a pattern, a cell may show text.
         let mut objects = Objects {
@@ -731,6 +778,7 @@ impl Objects {
             fonts: Vec::new(),
             patterns: resources.patterns.iter().map(|_| doc.alloc()).collect(),
             forms: resources.forms.iter().map(|_| doc.alloc()).collect(),
+            ext_gstates,
             recode: Recode::new(),
         };
         (objects.fonts, objects.recode) = write_fonts(
@@ -857,6 +905,16 @@ impl Objects {
         (0..self.forms.len()).filter(move |&i| only.is_none_or(|refs| refs.forms.contains(&i)))
     }
 
+    fn listed_ext_gstates<'a>(
+        &'a self,
+        only: Option<&'a Refs>,
+    ) -> impl Iterator<Item = (bool, Ref)> + 'a {
+        self.ext_gstates
+            .iter()
+            .filter(move |(on, _)| only.is_none_or(|refs| refs.overprints.contains(on)))
+            .map(|(&on, &r)| (on, r))
+    }
+
     /// Whether a resources dictionary restricted to `only` would list
     /// anything.
     pub(crate) fn names_anything(&self, only: &Refs, fonts: &[Ref]) -> bool {
@@ -866,14 +924,15 @@ impl Objects {
             || self.listed_fonts(fonts, Some(only)).next().is_some()
             || self.listed_patterns(Some(only)).next().is_some()
             || self.listed_forms(Some(only)).next().is_some()
+            || self.listed_ext_gstates(Some(only)).next().is_some()
     }
 
     /// A resources dictionary over the page's objects, restricted to the
     /// indices in `only` when given; `fonts` are the page's font objects
     /// by index. `ColorSpace` lists the spaces selected by name,
     /// `XObject` the images and forms, `Shading` the shadings, `Font`
-    /// the fonts, and `Pattern` the patterns, each only when there is
-    /// something to list.
+    /// the fonts, `Pattern` the patterns, and `ExtGState` the overprint
+    /// settings, each only when there is something to list.
     pub(crate) fn resources_dict(
         &self,
         d: &mut DictBuilder<'_>,
@@ -917,6 +976,13 @@ impl Objects {
                 for i in self.listed_patterns(only) {
                     p.key(&pattern_name(PatternIndex(i)))
                         .reference(self.patterns[i]);
+                }
+            });
+        }
+        if self.listed_ext_gstates(only).next().is_some() {
+            d.key("ExtGState").dict(|e| {
+                for (on, r) in self.listed_ext_gstates(only) {
+                    e.key(&ext_gstate_name(on)).reference(r);
                 }
             });
         }
@@ -973,6 +1039,8 @@ mod tests {
         assert_eq!(pattern_name(PatternIndex(2)), "P2");
         assert_eq!(form_name(FormIndex(1)), "Fm1");
         assert_eq!(shading_name(ShadingIndex(4)), "Sh4");
+        assert_eq!(ext_gstate_name(false), "GS0");
+        assert_eq!(ext_gstate_name(true), "GS1");
     }
 
     #[test]

@@ -68,8 +68,10 @@ pub(crate) enum Implicit {
 }
 
 /// The font types `definefont` accepts: 0 (with map type 9 and a CMap),
-/// 1, 2 (loaded through a FontSet, definable by hand), 3, and 42.
-pub(crate) const FONT_TYPES: [i32; 5] = [0, 1, 2, 3, 42];
+/// 1, 2 (loaded through a FontSet, definable by hand), 3, 9 and 11 (the
+/// types `definefont` inserts for CID-keyed fonts of `CIDFontType` 0 and
+/// 2, PLRM3 §5.11 Table 5.11), and 42.
+pub(crate) const FONT_TYPES: [i32; 7] = [0, 1, 2, 3, 9, 11, 42];
 pub(crate) const FMAP_TYPES: [i32; 1] = [9];
 /// The filters `filter` accepts, sorted: the six decode filters and the
 /// DCT placeholder, and the six encode filters.

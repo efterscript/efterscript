@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% expect-output: false
+% Scenario: overprint is recorded. A Separation fill with overprint on
+% and a second with it off (PLRM3 §4.8.5 setoverprint): the dump shows
+% an overprint setting before the first fill and its reset before the
+% second, and the distilled page carries one extended graphics state
+% per value, selected before each fill. The setting survives a
+% gsave/grestore round trip unchanged.
+[/Separation /Spot /DeviceCMYK {0 0 0 4 -1 roll}] setcolorspace
+0.6 setcolor
+true setoverprint
+100 100 200 200 rectfill
+false setoverprint
+350 100 200 200 rectfill
+gsave true setoverprint grestore currentoverprint =
+showpage

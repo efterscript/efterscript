@@ -41,23 +41,45 @@ pub(crate) fn seed(i: &mut Interp) -> Result<(), VmError> {
     seed_identity(i, &default_identity()).map_err(|(e, _)| e)
 }
 
-/// Writes `entries` into `statusdict`, in the current (local) VM; a
-/// value the VM cannot hold names the key it failed on.
+/// The identity keys `systemdict` defines as well (PLRM3 §8.2 entries
+/// `product`, `version`, `revision`, `serialnumber`): an entry under one
+/// of these is written to both dictionaries, so the operators and the
+/// `statusdict` lookups a driver makes answer alike.
+const SYSTEMDICT_IDENTITY: [&str; 4] = ["product", "version", "revision", "serialnumber"];
+
+/// Writes `entries` into `statusdict`, in the current (local) VM, and
+/// the identity keys into `systemdict` too; a value the VM cannot hold,
+/// or a `serialnumber` that is not an integer, names the key it failed
+/// on.
 pub(crate) fn seed_identity(
     i: &mut Interp,
     entries: &[(String, MarkValue)],
 ) -> Result<(), (VmError, String)> {
     let dict = i.dicts().statusdict;
+    let systemdict = i.dicts().systemdict;
     for (key, value) in entries {
+        if key == "serialnumber" && !matches!(value, MarkValue::Int(_)) {
+            return Err((VmError::TypeCheck, key.clone()));
+        }
         let stored = i
             .mem
             .intern(key.as_bytes())
             .map_err(|_| VmError::LimitCheck)
             .and_then(|key| {
                 let value = object(i, value, 0)?;
-                i.mem.dict_put(dict, key, value)
+                i.mem.dict_put(dict, key, value)?;
+                Ok((key, value))
             });
-        stored.map_err(|e| (e, key.clone()))?;
+        let (name, value) = stored.map_err(|e| (e, key.clone()))?;
+        if SYSTEMDICT_IDENTITY.contains(&key.as_str()) {
+            // systemdict is read-only and global; these objects predate
+            // every save, so the raw insert is safe (as for the
+            // graphics operators).
+            i.mem
+                .dict_mut(systemdict)
+                .expect("systemdict exists")
+                .insert(name, value);
+        }
     }
     Ok(())
 }

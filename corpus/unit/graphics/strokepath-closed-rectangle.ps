@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a closed subpath's outline is a ring. The rectangle is
+% closed with closepath, so every corner is a join and no cap is drawn
+% (PLRM3 §8.2 strokepath, closepath); the inside stays unpainted.
+% Page 1 fills the outline, page 2 strokes the rectangle.
+/path { 120 150 moveto 360 150 lineto 360 330 lineto 120 330 lineto closepath } def
+30 setlinewidth
+path strokepath fill
+showpage
+30 setlinewidth
+path stroke
+showpage

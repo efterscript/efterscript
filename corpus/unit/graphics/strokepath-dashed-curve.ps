@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a dashed curve's outline. The dash pattern and phase are
+% applied along the flattened curve, each dash ending in a round cap
+% (PLRM3 §8.2 setdash, strokepath): page 1 fills the outline, page 2
+% strokes the same curve.
+/path { 100 150 moveto 100 500 500 500 500 150 curveto } def
+16 setlinewidth 1 setlinecap [40 20] 10 setdash
+path strokepath fill
+showpage
+16 setlinewidth 1 setlinecap [40 20] 10 setdash
+path stroke
+showpage

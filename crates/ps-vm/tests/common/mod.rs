@@ -65,6 +65,8 @@ pub enum Call {
     PlaceForm(FormInfo),
     Shade(ShadingSpec),
     Smoothness(f32),
+    Overprint(bool),
+    StrokeOutline,
     MediaBox(Bounds),
     ShowPage,
     CopyPage,
@@ -553,6 +555,16 @@ impl GraphicsBackend for Recording {
 
     fn smoothness(&self) -> f32 {
         self.state.smoothness
+    }
+
+    fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
+        self.record(Call::Overprint(on));
+        Ok(())
+    }
+
+    fn stroke_outline(&mut self) -> Result<(), VmError> {
+        self.record(Call::StrokeOutline);
+        Ok(())
     }
 
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError> {

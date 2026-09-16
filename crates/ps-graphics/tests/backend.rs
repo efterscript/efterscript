@@ -1644,3 +1644,262 @@ fn smoothness_is_kept_clamped_and_reset_by_initgraphics() {
     g.initgraphics().unwrap();
     assert_eq!(g.smoothness(), 0.02);
 }
+
+// --- readings in double precision ---------------------------------------------------
+
+/// Six significant digits: what a reading must agree to.
+fn six_digits(got: f32, want: f64) -> bool {
+    let scale = 10f64.powi(5 - want.abs().log10().floor() as i32);
+    ((f64::from(got) * scale).round() - (want * scale).round()).abs() <= 1.0
+}
+
+// pathbbox-control-points.ps
+#[test]
+fn pathbbox_encloses_control_points_and_ignores_a_trailing_moveto() {
+    let (mut g, _) = backend();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    g.curveto(p(0.0, 100.0), p(100.0, 100.0), p(100.0, 0.0))
+        .unwrap();
+    assert_eq!(g.path_bbox(), Ok(Bounds::new(0.0, 0.0, 100.0, 100.0)));
+    g.moveto(p(50.0, 50.0)).unwrap();
+    assert_eq!(
+        g.path_bbox(),
+        Ok(Bounds::new(0.0, 0.0, 100.0, 100.0)),
+        "a moveto ending the path is not considered"
+    );
+    g.moveto(p(-50.0, 300.0)).unwrap();
+    assert_eq!(
+        g.path_bbox(),
+        Ok(Bounds::new(0.0, 0.0, 100.0, 100.0)),
+        "the replacing moveto neither"
+    );
+    g.lineto(p(-50.0, 300.0)).unwrap();
+    assert_eq!(g.path_bbox(), Ok(Bounds::new(-50.0, 0.0, 100.0, 300.0)));
+    g.newpath().unwrap();
+    g.moveto(p(50.0, 50.0)).unwrap();
+    assert_eq!(
+        g.path_bbox(),
+        Ok(Bounds::new(50.0, 50.0, 50.0, 50.0)),
+        "a lone moveto is the whole path"
+    );
+    g.closepath().unwrap();
+    assert_eq!(g.path_bbox(), Ok(Bounds::new(50.0, 50.0, 50.0, 50.0)));
+    g.newpath().unwrap();
+    assert_eq!(g.path_bbox(), Err(VmError::NoCurrentPoint));
+}
+
+// pathbbox-rules.ps
+#[test]
+fn pathbbox_is_the_envelope_of_the_device_box_corners() {
+    let (mut g, _) = backend();
+    g.concat(Matrix::rotation(45.0)).unwrap();
+    g.moveto(p(0.0, 0.0)).unwrap();
+    g.lineto(p(100.0, 0.0)).unwrap();
+    g.lineto(p(100.0, 100.0)).unwrap();
+    g.lineto(p(0.0, 100.0)).unwrap();
+    g.closepath().unwrap();
+    // The device box of the rotated square is the diamond's box, ±70.71
+    // by 0..141.42; its corners taken back to user space span more than
+    // the square.
+    let Bounds { llx, lly, urx, ury } = g.path_bbox().unwrap();
+    assert!(
+        six_digits(llx, -50.0) && six_digits(urx, 150.0),
+        "{llx} {urx}"
+    );
+    assert!(
+        six_digits(lly, -50.0) && six_digits(ury, 150.0),
+        "{lly} {ury}"
+    );
+}
+
+// arcto-acute-tangent.ps
+#[test]
+fn current_point_and_arcto_readings_are_rounded_once() {
+    // A point read back through the inverse of a rotation is the point
+    // that was set, to the last digit.
+    let (mut g, _) = backend();
+    g.concat(Matrix::rotation(-45.0)).unwrap();
+    g.concat(Matrix::scaling(0.80, 0.89)).unwrap();
+    g.moveto(p(12.3, 45.6)).unwrap();
+    assert_eq!(g.current_point(), Ok(p(12.3, 45.6)));
+
+    // The generator's acute corner: tangent points some 930 units out,
+    // compared with the same construction done wholly in f64.
+    let (mut g, _) = backend();
+    g.concat(Matrix::rotation(-45.0)).unwrap();
+    g.moveto(p(440.0, 404.0)).unwrap();
+    let (t1, t2) = g.arcto(p(464.0, 404.0), p(371.0, 414.0), 50.0).unwrap();
+    let exact = exact_tangents((440.0, 404.0), (464.0, 404.0), (371.0, 414.0), 50.0);
+    assert!(six_digits(t1.x, exact.0.0), "{t1:?} {exact:?}");
+    assert!(six_digits(t1.y, exact.0.1), "{t1:?} {exact:?}");
+    assert!(six_digits(t2.x, exact.1.0), "{t2:?} {exact:?}");
+    assert!(six_digits(t2.y, exact.1.1), "{t2:?} {exact:?}");
+    assert!(
+        six_digits(t1.x, -468.680) && six_digits(t1.y, 404.0),
+        "{t1:?}"
+    );
+    assert!(
+        six_digits(t2.x, -463.335) && six_digits(t2.y, 503.713),
+        "{t2:?}"
+    );
+
+    // The generator's quarter-turn corner under an anisotropic scale:
+    // the sweep is a right angle to the last digit, one Bezier piece.
+    let (mut g, _) = backend();
+    g.concat(Matrix::rotation(-45.0)).unwrap();
+    g.concat(Matrix::scaling(0.80, 0.89)).unwrap();
+    g.concat(Matrix::scaling(1.50, 1.16)).unwrap();
+    g.moveto(p(7.0, 8.0)).unwrap();
+    let (t1, t2) = g.arcto(p(23.0, 8.0), p(23.0, 57.0), 45.0).unwrap();
+    assert_eq!((t1, t2), (p(-22.0, 8.0), p(23.0, 53.0)));
+    g.stroke().unwrap();
+    let recorded = ops(&g);
+    let [IrOp::Stroke { path, .. }] = recorded.as_slice() else {
+        panic!("one stroke");
+    };
+    assert_eq!(path.len(), 3, "{path:?}");
+}
+
+/// The tangent points of `arcto` for the corner `p0 → p1 → p2` computed
+/// independently in f64: the corner's half angle from the unit vectors,
+/// the tangent distance r / tan(θ/2) along each edge.
+fn exact_tangents(
+    p0: (f64, f64),
+    p1: (f64, f64),
+    p2: (f64, f64),
+    r: f64,
+) -> ((f64, f64), (f64, f64)) {
+    let (ux, uy) = (p0.0 - p1.0, p0.1 - p1.1);
+    let (vx, vy) = (p2.0 - p1.0, p2.1 - p1.1);
+    let (lu, lv) = ((ux * ux + uy * uy).sqrt(), (vx * vx + vy * vy).sqrt());
+    let (ux, uy, vx, vy) = (ux / lu, uy / lu, vx / lv, vy / lv);
+    let half = (ux * vx + uy * vy).acos() / 2.0;
+    let d = r / half.tan();
+    (
+        (p1.0 + ux * d, p1.1 + uy * d),
+        (p1.0 + vx * d, p1.1 + vy * d),
+    )
+}
+
+// --- overprint and stroke outlines ---------------------------------------------------
+
+#[test]
+fn overprint_is_emitted_where_it_changes_and_restored_with_the_clip() {
+    let (mut g, _) = backend();
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.fill().unwrap();
+    g.set_overprint(true).unwrap();
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.fill().unwrap();
+    // Set again to the same value: nothing new.
+    g.set_overprint(true).unwrap();
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.stroke().unwrap();
+    g.gsave().unwrap();
+    g.rectclip(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 5.0,
+        height: 5.0,
+    }])
+    .unwrap();
+    g.set_overprint(false).unwrap();
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.fill().unwrap();
+    g.grestore().unwrap();
+    assert!(g.state().overprint);
+    // The restore brings the earlier setting back on both sides.
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.fill().unwrap();
+    g.set_overprint(false).unwrap();
+    let spec = ImageSpec {
+        width: 1,
+        height: 1,
+        bits_per_component: 8,
+        color_space: Some(SpaceSpec::DeviceGray),
+        decode: vec![0.0, 1.0],
+        matrix: Matrix::IDENTITY,
+        interpolate: false,
+        is_mask: false,
+        encoded: None,
+    };
+    g.image(&spec, &[0]).unwrap();
+    let kinds: Vec<String> = ops(&g)
+        .iter()
+        .map(|o| {
+            format!("{o:?}")
+                .split(['(', ' ', '{'])
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "Fill",
+            "Overprint",
+            "Fill",
+            "Stroke",
+            "Save",
+            "Clip",
+            "Overprint",
+            "Fill",
+            "Restore",
+            "Fill",
+            "Overprint",
+            "Image",
+        ]
+    );
+    let flags: Vec<bool> = ops(&g)
+        .into_iter()
+        .filter_map(|o| match o {
+            IrOp::Overprint(on) => Some(on),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(flags, [true, false, false]);
+    // initgraphics and showpage leave the setting, the next page's
+    // emitter starts afresh and records it again.
+    g.initgraphics().unwrap();
+    assert!(!g.state().overprint);
+    g.set_overprint(true).unwrap();
+    g.showpage().unwrap();
+    assert!(g.state().overprint);
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.fill().unwrap();
+    assert_eq!(ops(&g).first(), Some(&IrOp::Overprint(true)));
+}
+
+#[test]
+fn stroke_outline_replaces_the_path_with_closed_subpaths() {
+    let (mut g, _) = backend();
+    g.set_line_width(2.0).unwrap();
+    line(&mut g, p(0.0, 0.0), p(10.0, 0.0));
+    g.stroke_outline().unwrap();
+    let segs: Vec<Seg> = g.state().path.segs.to_vec();
+    assert_eq!(segs.len(), 5);
+    assert!(matches!(segs[0], Seg::Move(_)));
+    assert_eq!(segs[4], Seg::Close);
+    assert_eq!(g.path_bbox(), Ok(Bounds::new(0.0, -1.0, 10.0, 1.0)));
+    let current = g.current_point().unwrap();
+    assert!(current.x == 0.0 || current.x == 10.0);
+    g.fill().unwrap();
+    assert!(matches!(ops(&g).as_slice(), [IrOp::Fill { .. }]));
+    // The outline is built under the CTM at the call, in default user
+    // space like every stored path, and a stroke of it would not be
+    // wanted: the fill's segments carry no CTM.
+    g.concat(Matrix::scaling(2.0, 2.0)).unwrap();
+    line(&mut g, p(0.0, 0.0), p(10.0, 0.0));
+    g.stroke_outline().unwrap();
+    assert_eq!(g.path_bbox(), Ok(Bounds::new(0.0, -1.0, 10.0, 1.0)));
+    // An empty path or a lone moveto outlines to nothing, leaving no
+    // current point.
+    g.newpath().unwrap();
+    g.stroke_outline().unwrap();
+    assert_eq!(g.current_point(), Err(VmError::NoCurrentPoint));
+    g.moveto(p(3.0, 3.0)).unwrap();
+    g.stroke_outline().unwrap();
+    assert_eq!(g.current_point(), Err(VmError::NoCurrentPoint));
+    assert!(g.state().path.is_empty());
+}

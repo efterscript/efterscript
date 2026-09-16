@@ -331,6 +331,7 @@ pub(crate) fn capture_cell(i: &mut Interp, operator: &'static str) -> Result<boo
     if !backend.begin_pattern_cell(&instance.info)? {
         return Ok(false);
     }
+    i.align_vm_gstates();
     i.push_frame_unchecked(Frame::Loop(LoopFrame::PatternCell {
         body,
         dict: instance.dict,
@@ -347,14 +348,9 @@ pub(crate) fn capture_cell(i: &mut Interp, operator: &'static str) -> Result<boo
 /// its operands. An error is raised on the operator.
 pub(crate) fn finish_cell(i: &mut Interp, depth: usize, operator: &'static str) {
     let command = i.operator(operator).unwrap_or(Object::null());
-    let result = match i.backend() {
-        Ok(backend) => {
-            let ended = backend.end_pattern_cell();
-            let restored = backend.grestore_to(depth);
-            ended.and(restored)
-        }
-        Err(e) => Err(e),
-    };
+    let ended = i.backend().and_then(|backend| backend.end_pattern_cell());
+    let restored = i.grestore_to(depth);
+    let result = ended.and(restored);
     match result {
         Ok(()) => i.push_frame_unchecked(Frame::Object(command)),
         Err(e) => i.raise(e, command),
@@ -365,8 +361,8 @@ pub(crate) fn finish_cell(i: &mut Interp, depth: usize, operator: &'static str) 
 /// closed and the graphics state returns to what it was before the
 /// paint; the operator does not run again.
 pub(crate) fn abandon_cell(i: &mut Interp, depth: usize) {
-    if let Some(backend) = i.graphics_backend() {
-        let _ = backend.end_pattern_cell();
-        let _ = backend.grestore_to(depth);
+    if i.has_graphics_backend() {
+        let _ = i.backend().and_then(|backend| backend.end_pattern_cell());
+        let _ = i.grestore_to(depth);
     }
 }

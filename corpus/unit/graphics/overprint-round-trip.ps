@@ -1,0 +1,29 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: false
+% expect-output: true
+% expect-output: true
+% expect-output: false
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: /typecheck
+% expect-output: /typecheck
+% Scenario: overprint and stroke adjustment in the graphics state.
+% Overprint is false by default, set by setoverprint, unchanged by a
+% gsave ... grestore round trip, and left alone by initgraphics
+% (PLRM3 §8.2 lists what initgraphics resets); stroke adjustment is a
+% boolean that round-trips the same way and that initgraphics does not
+% touch; each setter wants a boolean.
+currentoverprint =
+true setoverprint gsave false setoverprint grestore currentoverprint =
+initgraphics currentoverprint =
+false setoverprint currentoverprint =
+true setstrokeadjust currentstrokeadjust =
+gsave false setstrokeadjust grestore currentstrokeadjust =
+initgraphics currentstrokeadjust =
+currentstrokeadjust type /booleantype eq =
+{ 1 setoverprint } stopped pop $error /errorname get ==
+{ 1 setstrokeadjust } stopped pop $error /errorname get ==

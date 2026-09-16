@@ -284,6 +284,16 @@ pub(crate) fn define(i: &mut Interp, key: Object, font: Object) -> Result<Option
         let id = i.allocate_fid();
         i.mem.dict_put(font, fid, id)?;
     }
+    if kind == Kind::CidFont {
+        // The font type a CIDFont carries once defined is fixed by its
+        // CIDFontType (PLRM3 §5.11, Table 5.11), whatever it came with.
+        let font_type = match entry(i, font, "CIDFontType")?.and_then(Object::as_i32) {
+            Some(0) => 9,
+            _ => 11,
+        };
+        let key = i.intern("FontType");
+        i.mem.dict_put(font, key, Object::integer(font_type))?;
+    }
     if let Some(id) = i.mem.dict_get(font, fid)?.and_then(Object::as_font_id) {
         let matrix = entry(i, font, "FontMatrix")?.ok_or(VmError::InvalidFont)?;
         let matrix = read_matrix(i, matrix).map_err(|_| VmError::InvalidFont)?;

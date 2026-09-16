@@ -15,6 +15,7 @@ use std::{error, fmt};
 use ps_fonts::cmap::CMapBuilder;
 use ps_fonts::{CMap, Program};
 
+use crate::clock::Clock;
 use crate::error::VmError;
 use crate::files::{FileCapability, Stream};
 use crate::graphics::{
@@ -135,6 +136,8 @@ impl Default for Limits {
 #[derive(Default)]
 pub struct Capabilities {
     pub file: Option<Box<dyn FileCapability>>,
+    /// The clock `realtime` reads; without one it answers `usertime`.
+    pub clock: Option<Box<dyn Clock>>,
 }
 
 /// Tolerance policy; empty until a change defines the first quirk.
@@ -265,6 +268,20 @@ pub(crate) struct Atoms {
     pub handleerror: Object,
 }
 
+/// The part of the graphics state the VM keeps itself, beside the
+/// backend's: saved by `gsave` and `save`, restored by `grestore`,
+/// `grestoreall`, and `restore` in step with the backend's stack
+/// (PLRM3 §4.2, §6.1.1).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VmGState {
+    /// The page-device dictionary `currentpagedevice` answers with.
+    pub page_device: Object,
+    /// The stroke adjustment parameter; recorded, never applied.
+    pub stroke_adjust: bool,
+    /// The overprint parameter; handed to the backend as well.
+    pub overprint: bool,
+}
+
 pub struct Interp {
     pub(crate) mem: Memory,
     pub(crate) ostack: Vec<Object>,
@@ -282,9 +299,19 @@ pub struct Interp {
     // gsave that `save` performed, below which `grestore` must not pop.
     gstate_floors: Vec<usize>,
     // The box the last `setbbox` outside a user path declared for the
-    // current path, cleared by `newpath`; recorded, not enforced.
+    // current path, cleared by `newpath`; recorded, not enforced, and
+    // answered by `pathbbox`. The second is its device-space envelope
+    // under the CTM at the time, which `pathbbox` derives its result
+    // from.
     declared_bbox: Option<Bounds>,
-    page_device: Object,
+    declared_device_bbox: Option<[f64; 4]>,
+    // The current VM-side graphics state and the ones saved beneath it,
+    // one per state on the backend's stack.
+    vm_gstate: VmGState,
+    vm_gstates: Vec<VmGState>,
+    // The state of the random number generator behind `rand`.
+    random_state: i32,
+    clock: Option<Box<dyn Clock>>,
     /// The `currentdistillerparams` dictionary, in global VM.
     distiller_params: Object,
     pub(crate) fonts_config: FontConfig,
@@ -441,7 +468,8 @@ impl Interp {
             server_password,
         } = config;
         let mut mem = Memory::new();
-        mem.set_file_capability(capabilities.file);
+        let Capabilities { file, clock } = capabilities;
+        mem.set_file_capability(file);
         let stdin = io
             .stdin
             .map(|s| mem.open_stream(s).with_access(Access::ReadOnly));
@@ -527,7 +555,15 @@ impl Interp {
             graphics: None,
             gstate_floors: Vec::new(),
             declared_bbox: None,
-            page_device,
+            declared_device_bbox: None,
+            vm_gstate: VmGState {
+                page_device,
+                stroke_adjust: false,
+                overprint: false,
+            },
+            vm_gstates: Vec::new(),
+            random_state: ops::random::INITIAL_STATE,
+            clock,
             distiller_params,
             fonts_config: fonts,
             font_category: Category {
@@ -685,7 +721,8 @@ impl Interp {
             ("true", Object::boolean(true)),
             ("false", Object::boolean(false)),
             ("null", Object::null()),
-            ("languagelevel", Object::integer(2)),
+            ("languagelevel", Object::integer(3)),
+            ("serialnumber", Object::integer(0)),
             ("systemdict", dicts.systemdict),
             ("globaldict", dicts.globaldict),
             ("userdict", dicts.userdict),
@@ -740,6 +777,8 @@ impl Interp {
         let first = self.graphics.is_none();
         self.graphics = Some(backend);
         self.described_fonts.clear();
+        // The state stack is the backend's; a fresh one starts empty.
+        self.vm_gstates.clear();
         if !first {
             return;
         }
@@ -774,9 +813,122 @@ impl Interp {
         self.graphics.as_deref_mut().ok_or(VmError::Undefined)
     }
 
-    /// The page-device dictionary `currentpagedevice` returns.
+    /// The page-device dictionary `currentpagedevice` returns: the
+    /// current graphics state's.
     pub fn page_device(&self) -> Object {
-        self.page_device
+        self.vm_gstate.page_device
+    }
+
+    /// Makes `dict` the current graphics state's page device.
+    pub(crate) fn install_page_device(&mut self, dict: Object) {
+        self.vm_gstate.page_device = dict;
+    }
+
+    /// The stroke adjustment parameter of the current graphics state.
+    pub fn stroke_adjust(&self) -> bool {
+        self.vm_gstate.stroke_adjust
+    }
+
+    pub(crate) fn set_stroke_adjust(&mut self, on: bool) {
+        self.vm_gstate.stroke_adjust = on;
+    }
+
+    /// The overprint parameter of the current graphics state.
+    pub fn overprint(&self) -> bool {
+        self.vm_gstate.overprint
+    }
+
+    /// Sets the overprint parameter and tells the backend.
+    pub(crate) fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
+        self.backend()?.set_overprint(on)?;
+        self.vm_gstate.overprint = on;
+        Ok(())
+    }
+
+    // The backend's state stack and the VM's move together: every push
+    // and pop goes through these three, so the VM-side states line up
+    // with the backend's by depth.
+
+    /// `gsave` on both sides.
+    pub(crate) fn gsave(&mut self) -> Result<(), VmError> {
+        self.backend()?.gsave()?;
+        self.vm_gstates.push(self.vm_gstate);
+        self.sync_check();
+        Ok(())
+    }
+
+    /// `grestore` on both sides; nothing happens on an empty stack.
+    pub(crate) fn grestore(&mut self) -> Result<(), VmError> {
+        self.backend()?.grestore()?;
+        if let Some(state) = self.vm_gstates.pop() {
+            self.restore_vm_gstate(state)?;
+        }
+        self.sync_check();
+        Ok(())
+    }
+
+    /// Pops states on both sides until `depth` remain saved.
+    pub(crate) fn grestore_to(&mut self, depth: usize) -> Result<(), VmError> {
+        self.backend()?.grestore_to(depth)?;
+        let mut restored = None;
+        while self.vm_gstates.len() > depth {
+            restored = self.vm_gstates.pop();
+        }
+        if let Some(state) = restored {
+            self.restore_vm_gstate(state)?;
+        }
+        self.sync_check();
+        Ok(())
+    }
+
+    /// Makes `state` current and tells the backend what changed: the
+    /// overprint setting, and the media box when the restored page
+    /// device is another dictionary (the backend keeps its own media
+    /// box per state, so the call repeats what its restore did).
+    fn restore_vm_gstate(&mut self, state: VmGState) -> Result<(), VmError> {
+        let before = std::mem::replace(&mut self.vm_gstate, state);
+        if before.overprint != state.overprint {
+            self.backend()?.set_overprint(state.overprint)?;
+        }
+        if !before.page_device.eq(state.page_device)
+            && let Some(media_box) = ops::pagedevice::media_box(self)
+        {
+            self.backend()?.set_media_box(media_box)?;
+        }
+        Ok(())
+    }
+
+    /// Catches the VM-side states up with a backend that saved states
+    /// of its own (a capture's begin does), each a copy of the current
+    /// one, so the two stacks line up again.
+    pub(crate) fn align_vm_gstates(&mut self) {
+        let depth = self.graphics.as_ref().map_or(0, |b| b.gstate_depth());
+        while self.vm_gstates.len() < depth {
+            self.vm_gstates.push(self.vm_gstate);
+        }
+        self.sync_check();
+    }
+
+    fn sync_check(&self) {
+        debug_assert_eq!(
+            self.vm_gstates.len(),
+            self.graphics.as_ref().map_or(0, |b| b.gstate_depth()),
+            "the VM-side graphics states must line up with the backend's"
+        );
+    }
+
+    /// The state of the random number generator, as `rrand` reports it.
+    pub(crate) fn random_state(&self) -> i32 {
+        self.random_state
+    }
+
+    pub(crate) fn set_random_state(&mut self, state: i32) {
+        self.random_state = state;
+    }
+
+    /// The embedder's clock, when one was installed.
+    pub(crate) fn clock_mut(&mut self) -> Option<&mut (dyn Clock + 'static)> {
+        self.clock.as_deref_mut()
     }
 
     /// The dictionary `currentdistillerparams` copies.
@@ -796,14 +948,34 @@ impl Interp {
     }
 
     /// The bounding box the last `setbbox` outside a user path declared
-    /// for the current path, until the next `newpath`. It is recorded
-    /// for inspection only: the path operators do not check against it.
+    /// for the current path, until the next `newpath`. The path
+    /// operators do not check against it; `pathbbox` answers from it.
     pub fn declared_path_bbox(&self) -> Option<Bounds> {
         self.declared_bbox
     }
 
+    /// The declared box's device-space envelope under the CTM in effect
+    /// when it was declared, as `llx lly urx ury`.
+    pub(crate) fn declared_device_bbox(&self) -> Option<[f64; 4]> {
+        self.declared_device_bbox
+    }
+
     pub(crate) fn set_declared_path_bbox(&mut self, bbox: Option<Bounds>) {
         self.declared_bbox = bbox;
+        self.declared_device_bbox = bbox.map(|b| {
+            let ctm = self
+                .graphics
+                .as_ref()
+                .map_or(Matrix::IDENTITY, |backend| backend.current_matrix())
+                .as_f64();
+            let corners = [
+                crate::graphics::apply64(ctm, f64::from(b.llx), f64::from(b.lly)),
+                crate::graphics::apply64(ctm, f64::from(b.urx), f64::from(b.lly)),
+                crate::graphics::apply64(ctm, f64::from(b.urx), f64::from(b.ury)),
+                crate::graphics::apply64(ctm, f64::from(b.llx), f64::from(b.ury)),
+            ];
+            crate::graphics::envelope64(&corners)
+        });
     }
 
     /// The depth `grestore` may not pop below: the state the innermost
@@ -1388,8 +1560,9 @@ impl Interp {
         self.exec_count
     }
 
-    /// Objects executed so far, loop iterations included: what
-    /// `Limits::steps` is measured against.
+    /// Objects executed so far, loop iterations included, counted
+    /// whether or not a budget is set: what `Limits::steps` is measured
+    /// against and what `usertime` reads.
     pub fn steps(&self) -> u64 {
         self.steps
     }

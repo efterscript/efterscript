@@ -84,6 +84,7 @@ fn execform(i: &mut Interp) -> Result<(), VmError> {
     };
     let depth = backend.gstate_depth();
     let captured = backend.begin_form(&info)?;
+    i.align_vm_gstates();
     i.pop()?;
     if captured {
         i.push_frame_unchecked(Frame::Loop(LoopFrame::FormBody {
@@ -125,14 +126,11 @@ fn mark_executed(i: &mut Interp, dict: Object) -> Result<(), VmError> {
 /// The body has returned: the capture ends, the graphics state returns
 /// to `depth`, and the form is placed. An error is raised on `execform`.
 pub(crate) fn finish_body(i: &mut Interp, depth: usize, info: &FormInfo) {
-    let result = match i.backend() {
-        Ok(backend) => {
-            let ended = backend.end_form();
-            let restored = backend.grestore_to(depth);
-            ended.and(restored).and_then(|()| backend.place_form(info))
-        }
-        Err(e) => Err(e),
-    };
+    let ended = i.backend().and_then(|backend| backend.end_form());
+    let restored = i.grestore_to(depth);
+    let result = ended
+        .and(restored)
+        .and_then(|()| i.backend()?.place_form(info));
     if let Err(e) = result {
         let command = i.operator("execform").unwrap_or(Object::null());
         i.raise(e, command);
@@ -143,8 +141,8 @@ pub(crate) fn finish_body(i: &mut Interp, depth: usize, info: &FormInfo) {
 /// closed and the graphics state returns to what it was before the
 /// form; nothing is placed.
 pub(crate) fn abandon_body(i: &mut Interp, depth: usize) {
-    if let Some(backend) = i.graphics_backend() {
-        let _ = backend.end_form();
-        let _ = backend.grestore_to(depth);
+    if i.has_graphics_backend() {
+        let _ = i.backend().and_then(|backend| backend.end_form());
+        let _ = i.grestore_to(depth);
     }
 }

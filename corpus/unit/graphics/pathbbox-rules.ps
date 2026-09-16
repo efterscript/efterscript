@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 100.0
+% expect-output: 100.0
+% expect-output: -50.0
+% expect-output: -50.0
+% expect-output: 150.0
+% expect-output: 150.0
+% expect-output: 10.0
+% expect-output: 10.0
+% expect-output: 20.0
+% expect-output: 20.0
+% Scenario: the box is derived from the device-space box. A square drawn
+% after a 45 degree rotation has the device box of a diamond, whose four
+% corners taken back to user space span -50 to 150 each way, more than
+% the square; under the identity the box is the square itself. A
+% declared setbbox takes the place of the path's box.
+% Each box is printed as llx lly urx ury, one per line.
+/report { pathbbox 4 -1 roll = 3 -1 roll = exch = = } def
+0 0 moveto 100 0 lineto 100 100 lineto 0 100 lineto closepath report
+newpath 45 rotate
+0 0 moveto 100 0 lineto 100 100 lineto 0 100 lineto closepath report
+initgraphics newpath 10 10 20 20 setbbox 12 12 moveto 15 18 lineto report

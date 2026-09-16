@@ -69,6 +69,7 @@ fn exec_with(program: &[u8], file: Option<Vec<u8>>) -> Run {
         io,
         capabilities: Capabilities {
             file: file.map(|bytes| Box::new(OneFile(bytes)) as Box<dyn FileCapability>),
+            ..Default::default()
         },
         ..Default::default()
     };

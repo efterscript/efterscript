@@ -620,10 +620,10 @@ pub(crate) fn step(i: &mut Interp) {
 pub(crate) fn abandon(i: &mut Interp, frame: &ShowFrame) {
     if let Some(run) = frame.running
         && let Some(depth) = run.depth
-        && let Some(backend) = i.graphics_backend()
+        && i.has_graphics_backend()
     {
-        let _ = backend.end_glyph((0.0, 0.0), None);
-        let _ = backend.grestore_to(depth);
+        let _ = i.backend().and_then(|b| b.end_glyph((0.0, 0.0), None));
+        let _ = i.grestore_to(depth);
     }
 }
 
@@ -994,10 +994,13 @@ fn begin_glyph(i: &mut Interp, f: &mut ShowFrame, code: u8, by_name: bool) -> Re
             }
         };
         let at = add(origin, f.font.matrix.apply_delta(f.total));
-        let backend = i.backend()?;
-        run.depth = Some(backend.gstate_depth());
-        backend.gsave()?;
+        run.depth = Some(i.backend()?.gstate_depth());
+        i.gsave()?;
+        // A glyph procedure starts without stroke adjustment (PLRM3
+        // §8.2 `setstrokeadjust`); the saved state brings it back.
+        i.set_stroke_adjust(false);
         f.running = Some(run);
+        let backend = i.backend()?;
         let ctm = backend.current_matrix();
         let glyph_ctm = f
             .font
@@ -1023,9 +1026,8 @@ fn begin_glyph(i: &mut Interp, f: &mut ShowFrame, code: u8, by_name: bool) -> Re
 fn finish_glyph(i: &mut Interp, f: &mut ShowFrame, run: RunningGlyph) -> Result<(), VmError> {
     let width = run.width.unwrap_or((0.0, 0.0));
     if let Some(depth) = run.depth {
-        let backend = i.backend()?;
-        let ended = backend.end_glyph(width, run.bbox);
-        let restored = backend.grestore_to(depth);
+        let ended = i.backend()?.end_glyph(width, run.bbox);
+        let restored = i.grestore_to(depth);
         ended?;
         restored?;
     }

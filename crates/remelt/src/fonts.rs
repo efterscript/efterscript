@@ -48,6 +48,9 @@ pub(crate) struct Refs {
     pub patterns: BTreeSet<usize>,
     pub forms: BTreeSet<usize>,
     pub shadings: BTreeSet<usize>,
+    /// The overprint values the content selects, each an extended
+    /// graphics state resource.
+    pub overprints: BTreeSet<bool>,
 }
 
 impl Refs {
@@ -92,6 +95,9 @@ fn collect(ops: &[Op], resources: &Resources, refs: &mut Refs, deep: bool) {
             }
             IrOp::Shade { shading, .. } => {
                 refs.shadings.insert(shading.0);
+            }
+            IrOp::Overprint(on) => {
+                refs.overprints.insert(*on);
             }
             IrOp::Form { form, .. } => {
                 if refs.forms.insert(form.0)

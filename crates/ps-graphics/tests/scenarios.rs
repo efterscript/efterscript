@@ -614,7 +614,7 @@ fn a_type42_charpath_box_is_the_cubic_control_box() {
         corpus_truetype().type42("SynTT", &[(97, "a"), (111, "o")])
     ));
     assert_eq!(run.outcome, Outcome::Ok);
-    assert_eq!(run.output, "0.977\n-3.372\n11.719\n3.138\n");
+    assert_eq!(run.output, "0.977\n-3.372\n10.742\n3.138\n");
     let page = &run.pages[0];
     let fills = fills(page);
     assert_eq!(fills.len(), 1);
@@ -851,4 +851,71 @@ fn pathforall_reports_segments_in_user_space() {
     // procedure (run twice: the path now has two moves) does not move
     // the remaining segments.
     assert_eq!(run.output, "m\nl\nc\nh\n10.0\n10.0\n0.0625\n0.0625\n");
+}
+
+// overprint-separation.ps
+#[test]
+fn overprint_is_recorded_before_the_fills_it_bears_on() {
+    let run = exec(
+        "[/Separation /Spot /DeviceCMYK {0 0 0 4 -1 roll}] setcolorspace 0.6 setcolor \
+         true setoverprint 100 100 200 200 rectfill \
+         false setoverprint 350 100 200 200 rectfill \
+         gsave true setoverprint grestore currentoverprint = showpage",
+    );
+    assert_eq!(run.output, "false\n");
+    let page = &run.pages[0];
+    let kinds: Vec<String> = ops(page)
+        .iter()
+        .map(|o| {
+            format!("{o:?}")
+                .split(['(', ' ', '{'])
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    // Overprint is recorded ahead of the other settings a paint needs.
+    assert_eq!(
+        kinds,
+        [
+            "Overprint",
+            "SetColorSpace",
+            "SetColor",
+            "Fill",
+            "Overprint",
+            "Fill"
+        ]
+    );
+    assert_eq!(ops(page)[0], IrOp::Overprint(true));
+    assert_eq!(ops(page)[4], IrOp::Overprint(false));
+    let text = dump::page(page);
+    assert!(text.contains("op true\n"));
+    assert!(text.contains("op false\n"));
+}
+
+// strokepath-cap-round.ps, ustrokepath-plain.ps
+#[test]
+fn a_strokes_outline_fills_as_closed_subpaths_without_a_stroke() {
+    let run = exec(
+        "20 setlinewidth 1 setlinecap \
+         100 100 moveto 300 150 lineto 200 350 lineto strokepath fill showpage \
+         20 setlinewidth 1 setlinecap \
+         {0 0 400 400 setbbox 100 100 moveto 300 150 lineto 200 350 lineto} ustrokepath fill \
+         showpage",
+    );
+    assert_eq!(run.pages.len(), 2);
+    let ops_ = ops(&run.pages[0]);
+    let [IrOp::Fill { path, rule }] = ops_.as_slice() else {
+        panic!("one fill: {ops_:?}");
+    };
+    assert_eq!(*rule, FillRule::NonZero);
+    assert!(matches!(path.first(), Some(Seg::Move(_))));
+    assert_eq!(path.last(), Some(&Seg::Close));
+    assert!(path.iter().all(|s| !matches!(s, Seg::Curve(..))));
+    assert!(path.iter().filter(|s| matches!(s, Seg::Close)).count() >= 3);
+    assert_eq!(
+        ops(&run.pages[1]),
+        ops_,
+        "ustrokepath builds the same outline"
+    );
 }

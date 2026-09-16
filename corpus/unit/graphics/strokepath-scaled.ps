@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: the pen is round in the user space of the stroke. Under a
+% scale of 3 by 1 a line 10 wide is 30 wide on the page where it runs
+% up and 10 wide where it runs across (PLRM3 §8.2 setlinewidth); the
+% outline (page 1) has the same shape as the stroke (page 2).
+/path { 40 150 moveto 40 450 lineto 160 450 lineto } def
+3 1 scale 10 setlinewidth
+path strokepath fill
+showpage
+3 1 scale 10 setlinewidth
+path stroke
+showpage

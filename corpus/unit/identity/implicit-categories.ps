@@ -13,6 +13,8 @@
 % expect-output: 1
 % expect-output: 2
 % expect-output: 3
+% expect-output: 9
+% expect-output: 11
 % expect-output: 42
 % Scenario: the implicit categories answer for the interpreter. Type 42
 % fonts are supported (status 0, size 0); type 7 is not; findresource on
@@ -22,7 +24,7 @@
 % filters. The reference converter's own tables differ, so its output
 % does.
 % Expect: true 0 0, false, /DeviceRGB, true, 3, true, /invalidaccess,
-% then 0 1 2 3 42.
+% then 0 1 2 3 9 11 42.
 42 /FontType resourcestatus = = =
 7 /FontType resourcestatus =
 /DeviceRGB /ColorSpaceFamily findresource ==

@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a user path's outline. The first form of ustrokepath is
+% newpath uappend strokepath (PLRM3 §8.2 ustrokepath): page 1 fills
+% the outline it leaves, page 2 fills the outline strokepath leaves of
+% the same path built by hand, and the two dump the same.
+30 setlinewidth 1 setlinecap
+{0 0 500 500 setbbox 120 150 moveto 360 220 lineto 220 500 lineto} ustrokepath fill
+showpage
+30 setlinewidth 1 setlinecap
+120 150 moveto 360 220 lineto 220 500 lineto strokepath fill
+showpage

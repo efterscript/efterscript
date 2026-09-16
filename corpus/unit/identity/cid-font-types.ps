@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: false
+% Scenario: CID font types are listed. The FontType category answers
+% for 9 and 11, the types definefont inserts for CIDFontType 0 and 2
+% (PLRM3 §5.11), and not for 10, whose glyph procedures this
+% interpreter does not accept; an interpreter that does lists 10 as
+% well, so the last line differs there by design.
+9 /FontType resourcestatus = = =
+11 /FontType resourcestatus = = =
+10 /FontType resourcestatus =

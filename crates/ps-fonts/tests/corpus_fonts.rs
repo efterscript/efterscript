@@ -193,18 +193,19 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
          4 -1 roll = 3 -1 roll = exch = =\n\
          fill showpage\n",
         header(
-            &["0.977", "-3.372", "11.719", "3.138"],
+            &["0.977", "-3.372", "10.742", "3.138"],
             "% Scenario: outline conversion. Glyph o is one quadratic contour\n\
              % whose control box is 100..1100 by 0..1000 font units; converted to\n\
              % cubics its control points sit at two thirds of the way to the\n\
              % quadratic control, so the path's extent in y is 166.67 to 833.33\n\
              % units, within the quadratic box: at 20/2048 per unit, shifted down\n\
              % by 5 so the run's start and end points lie inside, -3.372 to 3.138.\n\
-             % In x the box spans the outline's own start (100 units, 0.977) to the\n\
-             % trailing point charpath leaves at the advance: the program's moveto\n\
-             % is replaced by the outline's first, so the origin does not count;\n\
-             % the .ir golden pins the outline itself.\n\
-             % Expect: 0.977, -3.372, 11.719, 3.138.\n",
+             % In x the box spans the outline's own start (100 units, 0.977) to its\n\
+             % own end (1100 units, 10.742): the program's moveto is replaced by the\n\
+             % outline's first, so the origin does not count, and the trailing\n\
+             % moveto charpath leaves at the advance is not considered by pathbbox\n\
+             % (PLRM3 8.2); the .ir golden pins the outline itself.\n\
+             % Expect: 0.977, -3.372, 10.742, 3.138.\n",
         )
     );
 

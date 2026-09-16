@@ -5,13 +5,15 @@
 //! most a quarter turn, each approximated by one cubic whose control
 //! points sit at `4/3·tan(θ/4)` radii along the tangents; the error of
 //! that construction is far below the precision of an `f32` coordinate.
-//! The geometry is computed in double precision and narrowed only at
-//! the points handed out.
+//! The geometry is computed in double precision and handed out that
+//! way; the backend takes the points through the CTM and narrows them
+//! once.
 
-use ps_vm::Point;
+/// A point in double precision.
+pub type P64 = (f64, f64);
 
 /// One cubic piece: the two control points and the end point.
-pub type Curve = (Point, Point, Point);
+pub type Curve = (P64, P64, P64);
 
 /// Degrees `end − start` swept counter-clockwise for `ccw`, otherwise
 /// clockwise, with the end angle brought to the correct side of the start
@@ -50,19 +52,12 @@ fn sin_cos_deg(degrees: f64) -> (f64, f64) {
 }
 
 /// A circle centre in double precision.
-pub type Center = (f64, f64);
-
-pub fn center_of(p: Point) -> Center {
-    (f64::from(p.x), f64::from(p.y))
-}
+pub type Center = P64;
 
 /// The point at `degrees` on the circle.
-pub fn point_at(center: Center, radius: f64, degrees: f64) -> Point {
+pub fn point_at(center: Center, radius: f64, degrees: f64) -> P64 {
     let (sin, cos) = sin_cos_deg(degrees);
-    Point::new(
-        (center.0 + radius * cos) as f32,
-        (center.1 + radius * sin) as f32,
-    )
+    (center.0 + radius * cos, center.1 + radius * sin)
 }
 
 /// The Bézier pieces of the arc from `start` degrees sweeping `sweep`
@@ -83,7 +78,7 @@ pub fn curves(center: Center, radius: f64, start: f64, sweep: f64) -> Vec<Curve>
         let next = angle + step;
         let (s0, c0) = sin_cos_deg(angle);
         let (s1, c1) = sin_cos_deg(next);
-        let p = |x: f64, y: f64| Point::new((cx + r * x) as f32, (cy + r * y) as f32);
+        let p = |x: f64, y: f64| (cx + r * x, cy + r * y);
         out.push((
             p(c0 - kappa * s0, s0 + kappa * c0),
             p(c1 + kappa * s1, s1 - kappa * c1),
@@ -100,18 +95,17 @@ pub fn curves(center: Center, radius: f64, start: f64, sweep: f64) -> Vec<Curve>
 /// coincident points or collinear lines — which the caller turns into a
 /// straight line to `p1`.
 pub struct Tangent {
-    pub t1: Point,
-    pub t2: Point,
+    pub t1: P64,
+    pub t2: P64,
     pub center: Center,
     pub start: f64,
     pub sweep: f64,
 }
 
-pub fn tangent(p0: Point, p1: Point, p2: Point, radius: f32) -> Option<Tangent> {
-    let (x0, y0) = (f64::from(p0.x), f64::from(p0.y));
-    let (x1, y1) = (f64::from(p1.x), f64::from(p1.y));
-    let (x2, y2) = (f64::from(p2.x), f64::from(p2.y));
-    let r = f64::from(radius);
+pub fn tangent(p0: P64, p1: P64, p2: P64, r: f64) -> Option<Tangent> {
+    let (x0, y0) = p0;
+    let (x1, y1) = p1;
+    let (x2, y2) = p2;
     let (ux, uy) = (x0 - x1, y0 - y1);
     let (vx, vy) = (x2 - x1, y2 - y1);
     let lu = (ux * ux + uy * uy).sqrt();
@@ -141,8 +135,8 @@ pub fn tangent(p0: Point, p1: Point, p2: Point, radius: f32) -> Option<Tangent> 
     // incoming edge, so a left turn has a negative cross product.
     let sweep = sweep(start, end, cross < 0.0);
     Some(Tangent {
-        t1: Point::new(t1x as f32, t1y as f32),
-        t2: Point::new(t2x as f32, t2y as f32),
+        t1: (t1x, t1y),
+        t2: (t2x, t2y),
         center: (cx, cy),
         start,
         sweep,
@@ -153,8 +147,12 @@ pub fn tangent(p0: Point, p1: Point, p2: Point, radius: f32) -> Option<Tangent> 
 mod tests {
     use super::*;
 
-    fn close(a: Point, b: Point) -> bool {
-        (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+    fn close(a: P64, b: P64) -> bool {
+        (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3
+    }
+
+    fn exact(a: P64, b: P64) -> bool {
+        a.0 == b.0 && a.1 == b.1
     }
 
     #[test]
@@ -172,10 +170,10 @@ mod tests {
         let c = curves((0.0, 0.0), 10.0, 0.0, 360.0);
         assert_eq!(c.len(), 4);
         // Quarter-turn points are exact, not within rounding.
-        assert_eq!(c[3].2, Point::new(10.0, 0.0));
-        assert_eq!(c[0].2, Point::new(0.0, 10.0));
-        assert_eq!(c[1].2, Point::new(-10.0, 0.0));
-        assert_eq!(point_at((1.0, 1.0), 2.0, -90.0), Point::new(1.0, -1.0));
+        assert!(exact(c[3].2, (10.0, 0.0)));
+        assert!(exact(c[0].2, (0.0, 10.0)));
+        assert!(exact(c[1].2, (-10.0, 0.0)));
+        assert!(exact(point_at((1.0, 1.0), 2.0, -90.0), (1.0, -1.0)));
         assert!(curves((0.0, 0.0), 10.0, 0.0, 0.0).is_empty());
         assert_eq!(curves((0.0, 0.0), 10.0, 0.0, 91.0).len(), 2);
     }
@@ -204,75 +202,47 @@ mod tests {
             panic!("one piece");
         };
         let k = 0.552_284_8;
-        assert!(close(*c1, Point::new(1.0, k)));
-        assert!(close(*c2, Point::new(k, 1.0)));
-        assert!(close(*p, Point::new(0.0, 1.0)));
+        assert!(close(*c1, (1.0, k)));
+        assert!(close(*c2, (k, 1.0)));
+        assert!(close(*p, (0.0, 1.0)));
     }
 
     #[test]
     fn bezier_stays_on_the_circle() {
-        let center = Point::new(3.0, -2.0);
+        let center = (3.0, -2.0);
         let radius = 50.0;
         for (start, sweep) in [(0.0, 90.0), (30.0, -75.0), (180.0, 360.0), (10.0, 200.0)] {
-            let mut from = point_at(center_of(center), f64::from(radius), start);
-            for (c1, c2, p) in curves(center_of(center), f64::from(radius), start, sweep) {
+            let mut from = point_at(center, radius, start);
+            for (c1, c2, p) in curves(center, radius, start, sweep) {
                 for k in 1..8 {
-                    let t = k as f32 / 8.0;
+                    let t = k as f64 / 8.0;
                     let u = 1.0 - t;
-                    let at = |a: f32, b: f32, c: f32, d: f32| {
+                    let at = |a: f64, b: f64, c: f64, d: f64| {
                         u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
                     };
-                    let x = at(from.x, c1.x, c2.x, p.x) - center.x;
-                    let y = at(from.y, c1.y, c2.y, p.y) - center.y;
+                    let x = at(from.0, c1.0, c2.0, p.0) - center.0;
+                    let y = at(from.1, c1.1, c2.1, p.1) - center.1;
                     let deviation = ((x * x + y * y).sqrt() - radius).abs();
                     assert!(deviation < 0.02, "{start} {sweep}: off by {deviation}");
                 }
                 from = p;
             }
-            let end = point_at(center_of(center), f64::from(radius), start + sweep);
+            let end = point_at(center, radius, start + sweep);
             assert!(close(from, end), "{start} {sweep}");
         }
     }
 
     #[test]
     fn tangent_points_of_a_right_angle() {
-        let t = tangent(
-            Point::new(0.0, 0.0),
-            Point::new(100.0, 0.0),
-            Point::new(100.0, 100.0),
-            10.0,
-        )
-        .unwrap();
-        assert!(close(t.t1, Point::new(90.0, 0.0)));
-        assert!(close(t.t2, Point::new(100.0, 10.0)));
+        let t = tangent((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), 10.0).unwrap();
+        assert!(close(t.t1, (90.0, 0.0)));
+        assert!(close(t.t2, (100.0, 10.0)));
         assert!((t.center.0 - 90.0).abs() < 1e-9 && (t.center.1 - 10.0).abs() < 1e-9);
         assert!((t.sweep - 90.0).abs() < 1e-3);
         // The mirror image turns right, so the arc runs clockwise.
-        let t = tangent(
-            Point::new(0.0, 0.0),
-            Point::new(100.0, 0.0),
-            Point::new(100.0, -100.0),
-            10.0,
-        )
-        .unwrap();
+        let t = tangent((0.0, 0.0), (100.0, 0.0), (100.0, -100.0), 10.0).unwrap();
         assert!((t.sweep + 90.0).abs() < 1e-3);
-        assert!(
-            tangent(
-                Point::new(0.0, 0.0),
-                Point::new(1.0, 0.0),
-                Point::new(2.0, 0.0),
-                1.0
-            )
-            .is_none()
-        );
-        assert!(
-            tangent(
-                Point::new(0.0, 0.0),
-                Point::new(0.0, 0.0),
-                Point::new(2.0, 0.0),
-                1.0
-            )
-            .is_none()
-        );
+        assert!(tangent((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), 1.0).is_none());
+        assert!(tangent((0.0, 0.0), (0.0, 0.0), (2.0, 0.0), 1.0).is_none());
     }
 }

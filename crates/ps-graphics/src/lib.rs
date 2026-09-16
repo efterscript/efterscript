@@ -21,6 +21,7 @@ mod backend;
 pub mod dump;
 mod ir;
 mod marks;
+pub mod outline;
 mod real;
 mod state;
 

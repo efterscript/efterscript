@@ -12,6 +12,7 @@
 //!
 //! Independently useful as a PostScript scripting engine.
 
+pub mod clock;
 mod decoders;
 pub mod dict;
 mod encoders;
@@ -29,6 +30,7 @@ pub mod ops;
 pub mod scanner;
 pub mod source;
 
+pub use clock::Clock;
 pub use dict::Dict;
 pub use error::VmError;
 pub use files::{FileCapability, FileTable, Stream};
@@ -36,7 +38,7 @@ pub use graphics::{
     Bounds, CieColor, DEFAULT_SMOOTHNESS, Encoded, FontInfo, FontRef, FontSource, FormInfo,
     FunctionSpec, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, MarkValue, Matrix,
     PatternInfo, PatternKind, Point, ProcRef, Rect, Screen, Seg, ShadingKind, ShadingSpec,
-    SpaceSpec,
+    SpaceSpec, apply64, envelope64, user_box_of,
 };
 pub use interp::{
     Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,

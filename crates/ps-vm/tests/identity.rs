@@ -198,9 +198,67 @@ fn every_claimed_font_type_defines() {
                /CharStrings 1 dict /sfnts [ <00010000000100> ] >> definefont /FontType get = \
         /T0 << /FontType 0 /FMapType 9 /FontMatrix [1 0 0 1 0 0] /CMap /Identity-H \
                /Encoding [0] /FDepVector [ /Helvetica findfont ] >> definefont /FontType get = \
-        (*) { = } 8 string /FontType resourceforall";
+        /C0 << /CIDFontType 0 /FontType 9 /CIDFontName /C0 /FontMatrix [0.001 0 0 0.001 0 0] \
+               /FontBBox [0 0 1000 1000] /CIDCount 1 /CIDSystemInfo << /Registry (R) \
+               /Ordering (O) /Supplement 0 >> /CharStrings 1 dict /Private 1 dict \
+               /FDArray [ << /FontType 1 /FontMatrix [0.001 0 0 0.001 0 0] /Private 1 dict >> ] \
+               /FDBytes 1 /GDBytes 1 /GlyphDirectory 1 dict >> definefont /FontType get = \
+        /C2 << /CIDFontType 2 /FontType 42 /CIDFontName /C2 /FontMatrix [1 0 0 1 0 0] \
+               /FontBBox [0 0 1 1] /CIDCount 1 /CIDSystemInfo << /Registry (R) /Ordering (O) \
+               /Supplement 0 >> /CIDMap 0 /GDBytes 1 /CharStrings 1 dict \
+               /sfnts [ <00010000000100> ] >> definefont /FontType get = \
+        (*) { = } 8 string /FontType resourceforall \
+        9 /FontType resourcestatus = = = 11 /FontType resourcestatus = = = \
+        10 /FontType resourcestatus = 32 /FontType resourcestatus =";
+    let outcome = run(&mut interp, program);
+    assert_eq!(outcome, Outcome::Ok, "{outcome:?}\n{}", out.text());
+    assert_eq!(
+        out.text(),
+        "1\n2\n3\n42\n0\n9\n11\n0\n1\n2\n3\n9\n11\n42\n\
+         true\n0\n0\ntrue\n0\n0\nfalse\nfalse\n"
+    );
+}
+
+/// The identity keys are defined in `systemdict` as well as in
+/// `statusdict`, from the same configuration; `serialnumber` is an
+/// integer, 0 unless configured. The printed scenarios are corpus files.
+#[test]
+fn identity_is_defined_in_systemdict_too() {
+    let (mut interp, out) = configured(Vec::new(), None);
+    let program = "\
+        systemdict /product get statusdict /product get eq = \
+        systemdict /version get statusdict /version get eq = \
+        systemdict /revision get statusdict /revision get eq = \
+        product statusdict /product get eq = serialnumber = serialnumber type = \
+        statusdict /serialnumber known = languagelevel =";
     assert_eq!(run(&mut interp, program), Outcome::Ok);
-    assert_eq!(out.text(), "1\n2\n3\n42\n0\n0\n1\n2\n3\n42\n");
+    assert_eq!(
+        out.text(),
+        "true\ntrue\ntrue\ntrue\n0\nintegertype\nfalse\n3\n"
+    );
+
+    let (mut interp, out) = configured(
+        vec![
+            ("product", string("Fictional Press")),
+            ("version", string("47.0")),
+            ("revision", MarkValue::Int(3)),
+            ("serialnumber", MarkValue::Int(123456)),
+        ],
+        None,
+    );
+    let program = "product = version = revision = serialnumber = \
+                   statusdict /serialnumber get = statusdict length =";
+    assert_eq!(run(&mut interp, program), Outcome::Ok);
+    assert_eq!(out.text(), "Fictional Press\n47.0\n3\n123456\n123456\n4\n");
+
+    // A serial number that is not an integer fails construction.
+    let config = Config {
+        identity: vec![("serialnumber".to_string(), string("x"))],
+        ..Default::default()
+    };
+    let error = Interp::try_with_config(config).err().expect("fails");
+    assert_eq!(error.name, "typecheck");
+    assert_eq!(error.offending, "serialnumber");
 }
 
 #[test]

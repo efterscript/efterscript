@@ -477,7 +477,7 @@ fn names_resolve_top_down_and_through_names() {
 fn systemdict_holds_constants_and_is_read_only() {
     let (interp, _, _, _) = run("languagelevel true false null systemdict /add known");
     let stack = interp.ostack();
-    assert_eq!(stack[0].as_i32(), Some(2));
+    assert_eq!(stack[0].as_i32(), Some(3));
     assert_eq!(stack[1].as_bool(), Some(true));
     assert_eq!(stack[2].as_bool(), Some(false));
     assert_eq!(stack[3].ty(), Type::Null);
@@ -816,7 +816,10 @@ impl FileCapability for OneFile {
 fn run_with(io: Io, file: Option<Box<dyn FileCapability>>, program: &str) -> (Interp, Outcome) {
     let config = Config {
         io,
-        capabilities: Capabilities { file },
+        capabilities: Capabilities {
+            file,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let mut interp = Interp::with_config(config);
@@ -1565,10 +1568,11 @@ fn budget_stops_a_handler_that_loops() {
 }
 
 #[test]
-fn no_budget_leaves_execution_unbounded() {
+fn no_budget_leaves_execution_unbounded_but_counted() {
     let (mut interp, _, _) = interp_with(Limits::default());
     let outcome = run_in(&mut interp, "0 1 1 100000 { add } for");
     assert_eq!(outcome, Outcome::Ok);
-    assert_eq!(interp.steps(), 0);
+    // The count feeds `usertime`, so it runs without a budget too.
+    assert!(interp.steps() > 100_000);
     assert!(!interp.budget_exceeded());
 }

@@ -1,0 +1,34 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+ops:
+m 135 150
+l 135 450
+l 105 450
+l 105 150
+h
+m 120 445
+l 480 445
+l 480 455
+l 120 455
+h
+m 120 455
+l 105 455
+l 105 450
+l 120 450
+h
+f
+
+ir/1
+page 612 792
+resources:
+ops:
+w 10
+stroke-ctm 3 0 0 1 0 0
+m 120 150
+l 120 450
+l 480 450
+S

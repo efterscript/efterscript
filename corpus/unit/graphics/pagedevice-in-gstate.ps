@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: [200 200]
+% expect-output: [612 792]
+% Scenario: a page size set inside gsave reverts. The page device is
+% part of the graphics state (PLRM3 §6.1.1): the page shown inside the
+% gsave has the requested size, grestore brings the default page device
+% back, and the page shown afterwards has the default media box.
+gsave
+<< /PageSize [200 200] >> setpagedevice
+currentpagedevice /PageSize get ==
+20 20 moveto 180 180 lineto stroke
+showpage
+grestore
+currentpagedevice /PageSize get ==
+20 20 moveto 300 300 lineto stroke
+showpage

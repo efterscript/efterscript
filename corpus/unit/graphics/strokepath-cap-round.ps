@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a stroke's outline fills as the stroke, with round caps.
+% Page 1 fills the outline strokepath leaves of an open two-segment
+% path 30 wide with round caps (PLRM3 §8.2 strokepath, setlinecap);
+% page 2 strokes the same path. The first page's IR carries one fill
+% of closed subpaths and no stroke; both pages paint the same area.
+/path { 120 150 moveto 360 220 lineto 220 500 lineto } def
+30 setlinewidth 1 setlinecap
+path strokepath fill
+showpage
+30 setlinewidth 1 setlinecap
+path stroke
+showpage

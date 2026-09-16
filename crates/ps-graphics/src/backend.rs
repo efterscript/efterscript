@@ -13,7 +13,8 @@
 //! no longer in effect (`Restore`), keeping a stack of "last set" states
 //! so a `Restore` also restores what the IR knows about line width and
 //! colour, as PDF's `Q` does. A `gsave`/`grestore` pair that paints
-//! nothing therefore leaves no trace.
+//! nothing therefore leaves no trace. Overprint is recorded the same
+//! way, ahead of every kind of paint, since it bears on all of them.
 //!
 //! A Type 3 glyph, a pattern cell, and a form body are captured by
 //! redirecting emission: between `begin_*` and `end_*` the page's
@@ -47,8 +48,10 @@ use crate::ir::{
     IrOp, Op, Page, PageSink, PatternIndex, PatternSpec, ProgramRef, glyph_names,
 };
 use crate::marks::{self, Parsed};
+use crate::outline::{self, StrokeStyle};
 use crate::state::{
-    ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, Path, bounds_segments, rect_segments,
+    ClipEntry, GState, MAX_FLATNESS, MIN_FLATNESS, P64, Path, bounds_segments, narrow,
+    rect_segments, widen,
 };
 
 /// What the IR last set, tracked per open `Save`.
@@ -60,6 +63,7 @@ struct Emitted {
     miter_limit: f32,
     dash: (Vec<f32>, f32),
     flatness: f32,
+    overprint: bool,
     space: SpaceSpec,
     color: Vec<f32>,
     /// The pattern resource the colour last set names, if a pattern.
@@ -82,6 +86,7 @@ impl Emitted {
             miter_limit: state.miter_limit,
             dash: state.dash.clone(),
             flatness: state.flatness,
+            overprint: state.overprint,
             space: state.space.clone(),
             color: state.color.clone(),
             pattern: None,
@@ -106,7 +111,7 @@ enum Needs {
     Stroke,
     /// A mask: colour only.
     Color,
-    /// An image: nothing beyond the clip.
+    /// An image or a shading: nothing beyond the clip and overprint.
     Nothing,
 }
 
@@ -378,7 +383,7 @@ impl<S: PageSink> Graphics<S> {
         let outer_emitter = std::mem::replace(&mut self.emitter, emitter);
         self.captures.push(Capture {
             target,
-            to_target: inverse64(ctm),
+            to_target: ctm.inverse64(),
             outer_ops,
             outer_emitter,
         });
@@ -415,8 +420,15 @@ impl<S: PageSink> Graphics<S> {
         self.intersect_clip(path, FillRule::NonZero);
     }
 
+    /// `p` through the CTM: the stored geometry, in single precision.
     fn device(&self, p: Point) -> Point {
         self.gstate.ctm.apply(p)
+    }
+
+    /// `p` through the CTM in double precision: the shadow the readings
+    /// start from, which rounds to within an ulp of `device`.
+    fn device64(&self, p: P64) -> P64 {
+        ps_vm::apply64(self.gstate.ctm.as_f64(), p.0, p.1)
     }
 
     // --- emission -----------------------------------------------------------------
@@ -460,8 +472,13 @@ impl<S: PageSink> Graphics<S> {
     }
 
     /// Records the settings the paint needs that differ from what the IR
-    /// last set.
+    /// last set. Overprint bears on every paint, so it goes first.
     fn flush(&mut self, needs: Needs) {
+        if self.gstate.overprint != self.emitter.current().overprint {
+            let on = self.gstate.overprint;
+            self.emitter.current().overprint = on;
+            self.record(IrOp::Overprint(on));
+        }
         if needs == Needs::Nothing {
             return;
         }
@@ -718,10 +735,15 @@ impl<S: PageSink> Graphics<S> {
     /// the current point at the arc's start.
     fn append_arc(&mut self, center: arc::Center, radius: f64, start: f64, sweep: f64) {
         for (c1, c2, p) in arc::curves(center, radius, start, sweep) {
-            let (c1, c2, p) = (self.device(c1), self.device(c2), self.device(p));
+            let exact = self.device64(p);
+            let (c1, c2, p) = (
+                self.device(narrow(c1)),
+                self.device(narrow(c2)),
+                self.device(narrow(p)),
+            );
             self.gstate
                 .path
-                .curve_to(c1, c2, p)
+                .curve_to_at(c1, c2, p, exact)
                 .expect("the arc start is the current point");
         }
     }
@@ -739,13 +761,14 @@ impl<S: PageSink> Graphics<S> {
         if !radius.is_finite() {
             return Err(VmError::RangeCheck);
         }
-        let (center, radius) = (arc::center_of(center), f64::from(radius));
+        let (center, radius) = (widen(center), f64::from(radius));
         let (start, end) = (f64::from(start), f64::from(end));
-        let first = self.device(arc::point_at(center, radius, start));
+        let first = arc::point_at(center, radius, start);
+        let (p, exact) = (self.device(narrow(first)), self.device64(first));
         if self.gstate.path.current.is_some() {
-            self.gstate.path.line_to(first)?;
+            self.gstate.path.line_to_at(p, exact)?;
         } else {
-            self.gstate.path.move_to(first);
+            self.gstate.path.move_to_at(p, exact);
         }
         self.append_arc(center, radius, start, arc::sweep(start, end, ccw));
         Ok(())
@@ -888,6 +911,11 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         self.gstate.smoothness
     }
 
+    fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
+        self.gstate.overprint = on;
+        Ok(())
+    }
+
     fn concat(&mut self, matrix: Matrix) -> Result<(), VmError> {
         self.gstate.ctm = matrix.then(self.gstate.ctm);
         Ok(())
@@ -932,19 +960,20 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
     }
 
     fn moveto(&mut self, p: Point) -> Result<(), VmError> {
-        let p = self.device(p);
-        self.gstate.path.move_to(p);
+        let exact = self.device64(widen(p));
+        self.gstate.path.move_to_at(self.device(p), exact);
         Ok(())
     }
 
     fn lineto(&mut self, p: Point) -> Result<(), VmError> {
-        let p = self.device(p);
-        self.gstate.path.line_to(p)
+        let exact = self.device64(widen(p));
+        self.gstate.path.line_to_at(self.device(p), exact)
     }
 
     fn curveto(&mut self, c1: Point, c2: Point, p: Point) -> Result<(), VmError> {
+        let exact = self.device64(widen(p));
         let (c1, c2, p) = (self.device(c1), self.device(c2), self.device(p));
-        self.gstate.path.curve_to(c1, c2, p)
+        self.gstate.path.curve_to_at(c1, c2, p, exact)
     }
 
     fn closepath(&mut self) -> Result<(), VmError> {
@@ -962,26 +991,31 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
 
     /// A negative radius is `undefinedresult`; when no arc fits (the
     /// points coincide or are collinear) a straight line to `p1` is
-    /// appended and both tangent points are `p1`.
+    /// appended and both tangent points are `p1`. The corner is read
+    /// from the unrounded current point and the tangent points are
+    /// computed in double precision, since a long tangent distance
+    /// amplifies any error in the corner's angle.
     fn arcto(&mut self, p1: Point, p2: Point, radius: f32) -> Result<(Point, Point), VmError> {
-        let p0 = self.gstate.current_point()?;
+        let p0 = self.gstate.current_point64()?;
         if !radius.is_finite() || radius < 0.0 {
             return Err(VmError::UndefinedResult);
         }
-        let Some(tangent) = arc::tangent(p0, p1, p2, radius) else {
-            let p = self.device(p1);
-            self.gstate.path.line_to(p)?;
+        let Some(tangent) = arc::tangent(p0, widen(p1), widen(p2), f64::from(radius)) else {
+            let exact = self.device64(widen(p1));
+            self.gstate.path.line_to_at(self.device(p1), exact)?;
             return Ok((p1, p1));
         };
-        let t1 = self.device(tangent.t1);
-        self.gstate.path.line_to(t1)?;
+        let exact = self.device64(tangent.t1);
+        self.gstate
+            .path
+            .line_to_at(self.device(narrow(tangent.t1)), exact)?;
         self.append_arc(
             tangent.center,
             f64::from(radius),
             tangent.start,
             tangent.sweep,
         );
-        Ok((tangent.t1, tangent.t2))
+        Ok((narrow(tangent.t1), narrow(tangent.t2)))
     }
 
     fn current_point(&self) -> Result<Point, VmError> {
@@ -1075,6 +1109,26 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
 
     fn current_path(&self) -> Vec<Seg> {
         self.to_user((*self.gstate.path.segs).clone())
+    }
+
+    /// The outline is built from the stored segments (default user
+    /// space) with the line parameters and CTM in effect, and becomes
+    /// the current path; its last point is the current point, and an
+    /// outline with nothing in it leaves no current point.
+    fn stroke_outline(&mut self) -> Result<(), VmError> {
+        let state = &self.gstate;
+        let style = StrokeStyle {
+            width: state.line_width,
+            cap: state.line_cap,
+            join: state.line_join,
+            miter_limit: state.miter_limit,
+            dash: state.dash.clone(),
+            flatness: state.flatness,
+            ctm: state.ctm,
+        };
+        let segs = outline::outline(&state.path.segs, &style);
+        self.gstate.path = Path::from_segments(segs);
+        Ok(())
     }
 
     fn set_screens(&mut self, screens: [Screen; 4]) -> Result<(), VmError> {
@@ -1372,6 +1426,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             return Ok(());
         }
         self.sync_clip();
+        self.flush(Needs::Nothing);
         let index = self.page.resources.intern_shading(shading);
         self.record(IrOp::Shade {
             shading: index,
@@ -1485,22 +1540,9 @@ impl<S: PageSink> Graphics<S> {
     }
 }
 
-/// The inverse of `m` in double precision, or `None` for a singular
-/// matrix.
-fn inverse64(m: Matrix) -> Option<[f64; 6]> {
-    let [a, b, c, d, tx, ty] = m.0.map(f64::from);
-    let det = a * d - b * c;
-    if det == 0.0 || !det.is_finite() {
-        return None;
-    }
-    let (ia, ib, ic, id) = (d / det, -b / det, -c / det, a / det);
-    Some([ia, ib, ic, id, -(tx * ia + ty * ic), -(tx * ib + ty * id)])
-}
-
 fn apply64(m: [f64; 6], p: Point) -> Point {
-    let [a, b, c, d, tx, ty] = m;
-    let (x, y) = (f64::from(p.x), f64::from(p.y));
-    Point::new((a * x + c * y + tx) as f32, (b * x + d * y + ty) as f32)
+    let (x, y) = ps_vm::apply64(m, f64::from(p.x), f64::from(p.y));
+    Point::new(x as f32, y as f32)
 }
 
 /// `first` followed by `then`, computed in double precision.

@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: integertype
+% expect-output: integertype
+% Scenario: time moves forward. usertime read before and after a loop
+% never decreases; realtime and usertime are integers. Neither value is
+% printed, since the rates and origins are the interpreter's own.
+usertime 1000 { 0 pop } repeat usertime exch sub 0 ge =
+realtime type ==
+usertime type ==

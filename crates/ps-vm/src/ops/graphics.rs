@@ -102,6 +102,17 @@ op_table! { graphics LATER_OPS {
     "colorimage" => image::colorimage, [Bool, Int];
 }}
 
+op_table! { graphics STATE_OPS {
+    "setstrokeadjust" => setstrokeadjust, [Bool];
+    "currentstrokeadjust" => currentstrokeadjust;
+    "setoverprint" => setoverprint, [Bool];
+    "currentoverprint" => currentoverprint;
+}}
+
+op_table! { graphics OUTLINE_OPS {
+    "strokepath" => strokepath;
+}}
+
 // --- operand helpers ---------------------------------------------------------
 //
 // Operands are read in place and popped only after the backend accepted
@@ -195,7 +206,7 @@ fn reals_array(i: &mut Interp, values: &[f32]) -> Result<Object, VmError> {
 // --- graphics-state stack -------------------------------------------------------
 
 fn gsave(i: &mut Interp) -> Result<(), VmError> {
-    i.backend()?.gsave()
+    i.gsave()
 }
 
 // `grestore` never pops the state a `save` left on the stack: at that
@@ -203,13 +214,12 @@ fn gsave(i: &mut Interp) -> Result<(), VmError> {
 // followed by a push of the same state.
 fn grestore(i: &mut Interp) -> Result<(), VmError> {
     let floor = i.gstate_floor();
-    let backend = i.backend()?;
-    let depth = backend.gstate_depth();
+    let depth = i.backend()?.gstate_depth();
     if depth > floor {
-        backend.grestore()
+        i.grestore()
     } else if depth > 0 {
-        backend.grestore()?;
-        backend.gsave()
+        i.grestore()?;
+        i.gsave()
     } else {
         Ok(())
     }
@@ -217,15 +227,42 @@ fn grestore(i: &mut Interp) -> Result<(), VmError> {
 
 fn grestoreall(i: &mut Interp) -> Result<(), VmError> {
     let floor = i.gstate_floor();
-    let backend = i.backend()?;
-    if backend.gstate_depth() > floor {
-        backend.grestore_to(floor)?;
+    if i.backend()?.gstate_depth() > floor {
+        i.grestore_to(floor)?;
     }
-    if floor > 0 && backend.gstate_depth() == floor {
-        backend.grestore()?;
-        backend.gsave()?;
+    if floor > 0 && i.backend()?.gstate_depth() == floor {
+        i.grestore()?;
+        i.gsave()?;
     }
     Ok(())
+}
+
+// --- stroke adjustment and overprint ----------------------------------------------
+//
+// Both are VM-side graphics-state parameters: saved and restored with
+// the state, left alone by `initgraphics` (its entry lists what it
+// resets, and neither is there). Only overprint reaches the backend.
+
+fn setstrokeadjust(i: &mut Interp) -> Result<(), VmError> {
+    let on = i.pop_bool()?;
+    i.set_stroke_adjust(on);
+    Ok(())
+}
+
+fn currentstrokeadjust(i: &mut Interp) -> Result<(), VmError> {
+    let on = i.stroke_adjust();
+    i.push(Object::boolean(on))
+}
+
+fn setoverprint(i: &mut Interp) -> Result<(), VmError> {
+    let on = i.peek(0)?.as_bool().ok_or(VmError::TypeCheck)?;
+    i.set_overprint(on)?;
+    drop(i, 1)
+}
+
+fn currentoverprint(i: &mut Interp) -> Result<(), VmError> {
+    let on = i.overprint();
+    i.push(Object::boolean(on))
 }
 
 fn initgraphics(i: &mut Interp) -> Result<(), VmError> {
@@ -571,8 +608,25 @@ fn currentpoint(i: &mut Interp) -> Result<(), VmError> {
     push_point(i, p)
 }
 
+// A box declared with `setbbox` wins over the path's own, derived the
+// same way: its device-space envelope back through the inverse CTM
+// (PLRM3 §8.2 `pathbbox`, `setbbox`). An empty path is `nocurrentpoint`
+// either way.
 fn pathbbox(i: &mut Interp) -> Result<(), VmError> {
-    let Bounds { llx, lly, urx, ury } = i.backend()?.path_bbox()?;
+    let declared = i.declared_device_bbox();
+    let backend = i.backend()?;
+    let bounds = match declared {
+        Some(device) => {
+            backend.current_point()?;
+            let inverse = backend
+                .current_matrix()
+                .inverse64()
+                .ok_or(VmError::UndefinedResult)?;
+            crate::graphics::user_box_of(inverse, device)
+        }
+        None => backend.path_bbox()?,
+    };
+    let Bounds { llx, lly, urx, ury } = bounds;
     for value in [llx, lly, urx, ury] {
         push_real(i, value)?;
     }
@@ -604,6 +658,13 @@ fn stroke(i: &mut Interp) -> Result<(), VmError> {
         return Ok(());
     }
     i.backend()?.stroke()
+}
+
+/// The outline replaces the path, so a box declared for the old one no
+/// longer describes it.
+fn strokepath(i: &mut Interp) -> Result<(), VmError> {
+    i.set_declared_path_bbox(None);
+    i.backend()?.stroke_outline()
 }
 
 fn clip(i: &mut Interp) -> Result<(), VmError> {

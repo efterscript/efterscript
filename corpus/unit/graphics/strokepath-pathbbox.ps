@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 10.0
+% expect-output: 8.0
+% expect-output: 100.0
+% expect-output: 12.0
+% expect-output: 8.0
+% expect-output: 8.0
+% expect-output: 102.0
+% expect-output: 12.0
+% expect-output: false
+% expect-output: /nocurrentpoint
+% Scenario: the outline is a path like any other. After strokepath the
+% box of a horizontal line 4 wide reaches half the width each side and,
+% with projecting caps, half the width past each end (PLRM3 §8.2
+% strokepath, pathbbox); the outline of an empty path is empty, so it
+% has no current point and no box.
+/report { pathbbox 4 -1 roll = 3 -1 roll = exch = = } def
+4 setlinewidth
+10 10 moveto 100 10 lineto strokepath report
+newpath 2 setlinecap 10 10 moveto 100 10 lineto strokepath report
+newpath strokepath { currentpoint pop pop true } stopped { false } if =
+{ pathbbox } stopped pop $error /errorname get ==

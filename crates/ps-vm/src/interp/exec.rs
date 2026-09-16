@@ -391,9 +391,7 @@ impl Interp {
     /// unsplit one.
     fn suspend_for_input(&mut self, operator: Object) {
         self.mem.files_mut().rollback();
-        if self.steps_limit.is_some() {
-            self.steps -= 1;
-        }
+        self.steps = self.steps.saturating_sub(1);
         self.push_frame_unchecked(Frame::Object(operator));
         if !self.run_wanted_procedure() {
             self.starved = true;
@@ -832,10 +830,10 @@ impl Interp {
     /// exceed is raised on every object from then on, so no handler can
     /// keep the job alive. Returns whether an error was raised.
     fn charge(&mut self, command: Object) -> bool {
+        self.steps += 1;
         let Some(limit) = self.steps_limit else {
             return false;
         };
-        self.steps += 1;
         if self.steps <= limit {
             return false;
         }

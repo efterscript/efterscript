@@ -119,11 +119,67 @@ impl Matrix {
         Point::new(a * p.x + c * p.y + tx, b * p.x + d * p.y + ty)
     }
 
+    /// The elements widened to double precision, for computations that
+    /// round once at the end.
+    pub fn as_f64(self) -> [f64; 6] {
+        self.0.map(f64::from)
+    }
+
+    /// The inverse in double precision, or `None` for a singular matrix.
+    pub fn inverse64(self) -> Option<[f64; 6]> {
+        let [a, b, c, d, tx, ty] = self.as_f64();
+        let det = a * d - b * c;
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let (ia, ib, ic, id) = (d / det, -b / det, -c / det, a / det);
+        Some([ia, ib, ic, id, -(tx * ia + ty * ic), -(tx * ib + ty * id)])
+    }
+
     /// Transforms a distance vector: the matrix without its translation.
     pub fn apply_delta(self, p: Point) -> Point {
         let [a, b, c, d, _, _] = self.0;
         Point::new(a * p.x + c * p.y, b * p.x + d * p.y)
     }
+}
+
+/// `m` applied to `(x, y)` in double precision.
+pub fn apply64(m: [f64; 6], x: f64, y: f64) -> (f64, f64) {
+    let [a, b, c, d, tx, ty] = m;
+    (a * x + c * y + tx, b * x + d * y + ty)
+}
+
+/// The axis-aligned box enclosing `points`, as `llx lly urx ury`; the
+/// slice must not be empty.
+pub fn envelope64(points: &[(f64, f64)]) -> [f64; 4] {
+    let mut box_ = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for &(x, y) in points {
+        box_[0] = box_[0].min(x);
+        box_[1] = box_[1].min(y);
+        box_[2] = box_[2].max(x);
+        box_[3] = box_[3].max(y);
+    }
+    box_
+}
+
+/// The user-space box `pathbbox` answers for a device-space box: the
+/// four corners through the inverse CTM and the axis-aligned envelope
+/// of the result, rounded once (PLRM3 §8.2 `pathbbox`).
+pub fn user_box_of(inverse: [f64; 6], device: [f64; 4]) -> Bounds {
+    let [llx, lly, urx, ury] = device;
+    let corners = [
+        apply64(inverse, llx, lly),
+        apply64(inverse, urx, lly),
+        apply64(inverse, urx, ury),
+        apply64(inverse, llx, ury),
+    ];
+    let [x0, y0, x1, y1] = envelope64(&corners);
+    Bounds::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1189,6 +1245,24 @@ pub trait GraphicsBackend {
     }
     fn smoothness(&self) -> f32 {
         DEFAULT_SMOOTHNESS
+    }
+    /// The overprint parameter (`setoverprint`, PLRM3 §4.8.5): the VM
+    /// keeps the value in its own graphics state and calls this on every
+    /// `setoverprint` and on a restoration that changes it, so a backend
+    /// carrying the setting to its output keeps its own copy per state.
+    /// A backend that keeps nothing accepts and ignores it.
+    fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
+        let _ = on;
+        Ok(())
+    }
+
+    /// Replaces the current path with the outline of the stroke the
+    /// current line parameters would draw (`strokepath`, PLRM3 §8.2):
+    /// closed subpaths for a nonzero fill, an empty path where the
+    /// stroke would mark nothing. A backend that keeps no path accepts
+    /// and ignores it.
+    fn stroke_outline(&mut self) -> Result<(), VmError> {
+        Ok(())
     }
 
     // --- page and device ---------------------------------------------------------

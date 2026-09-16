@@ -5,10 +5,14 @@
 //! tolerant-acceptance policy: `PageSize` becomes the backend's media box,
 //! every other entry is recorded and readable back, and no key is
 //! rejected — though a recognised key given a value of the wrong type is
-//! `typecheck` (PLRM3 §6.2 gives each its type). The page-device
-//! dictionary lives in global VM, so the values a request carries are
-//! copied there. These operators work without a graphics backend, so
-//! page setup can be tested in a scripting-only VM.
+//! `typecheck` (PLRM3 §6.2 gives each its type). Each `setpagedevice`
+//! builds a fresh dictionary — the current one's entries merged with the
+//! request's — and installs it in the current graphics state, so a
+//! state restored by `grestore` or `restore` brings back the dictionary
+//! it held (§6.1.1); the dictionaries live in global VM, so the values a
+//! request carries are copied there. These operators work without a
+//! graphics backend, so page setup can be tested in a scripting-only
+//! VM.
 
 use crate::error::VmError;
 use crate::graphics::Bounds;
@@ -165,11 +169,23 @@ fn setpagedevice(i: &mut Interp) -> Result<(), VmError> {
     crate::ops::graphics::page_operator_allowed(i)?;
     let request = i.peek(0)?;
     let entries = i.mem.dict_entries(request)?;
-    let dict = i.page_device();
+    let current = i.mem.dict_entries(i.page_device())?;
     let page_size_key = i.intern("PageSize");
     let mut media_box = None;
     for (key, value) in &entries {
         check_type(i, *key, *value)?;
+    }
+    // The new dictionary is complete before it is installed, so a
+    // request that fails part-way changes nothing.
+    let capacity = u32::try_from(current.len() + entries.len())
+        .map_err(|_| VmError::LimitCheck)?
+        .max(32);
+    let dict = in_global(i, |i| i.mem.new_dict(capacity));
+    for (key, value) in current {
+        i.mem
+            .dict_mut(dict)
+            .expect("page device exists")
+            .insert(key, value);
     }
     for (key, value) in entries {
         let key = globalize(i, key)?;
@@ -182,6 +198,8 @@ fn setpagedevice(i: &mut Interp) -> Result<(), VmError> {
             .expect("page device exists")
             .insert(key, value);
     }
+    i.mem.dict_set_access(dict, Access::ReadOnly)?;
+    i.install_page_device(dict);
     if let (Some(media_box), Some(backend)) = (media_box, i.graphics_backend()) {
         backend.set_media_box(media_box)?;
     }

@@ -2709,3 +2709,77 @@ fn shading_patterns_and_shade_operations_carry_no_notes() {
         2
     );
 }
+
+// --- overprint -------------------------------------------------------------------------
+
+#[test]
+fn an_overprint_setting_is_an_extended_graphics_state_selected_with_gs() {
+    let mut page = Page::new(LETTER);
+    let spot = page.resources.intern_space(&spot());
+    page.ops = vec![
+        IrOp::SetColorSpace(spot),
+        IrOp::SetColor(vec![0.6]),
+        IrOp::Overprint(true),
+        IrOp::Fill {
+            path: line(),
+            rule: FillRule::NonZero,
+        },
+        IrOp::Overprint(false),
+        IrOp::Fill {
+            path: line(),
+            rule: FillRule::NonZero,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(
+        content(&pdf, 0),
+        "/CS0 cs\n/CS0 CS\n0.6 scn\n0.6 SCN\n/GS1 gs\n10 10 m\n100 10 l\nf\n/GS0 gs\n10 10 m\n100 10 l\nf\n"
+    );
+    let states = resources(&pdf, 0).get("ExtGState").unwrap();
+    for (name, on) in [("GS0", false), ("GS1", true)] {
+        let state = pdf.resolve(states.get(name).unwrap().as_reference());
+        assert_eq!(state.get("Type").unwrap().as_name(), b"ExtGState");
+        assert!(matches!(state.get("OP"), Some(Value::Bool(b)) if *b == on));
+        assert!(matches!(state.get("op"), Some(Value::Bool(b)) if *b == on));
+    }
+    // A page that never sets overprint lists no extended graphics state.
+    let pdf = check(&distil_pages(vec![stroked_line()], uncompressed()));
+    assert!(resources(&pdf, 0).get("ExtGState").is_none());
+}
+
+#[test]
+fn a_form_body_that_overprints_lists_the_state_in_its_own_resources() {
+    use ps_graphics::{FormIndex, FormSpec};
+    let mut page = Page::new(LETTER);
+    let body = page.resources.add_form(FormSpec {
+        bbox: Bounds::new(0.0, 0.0, 200.0, 200.0),
+        ops: vec![
+            IrOp::Overprint(true).into(),
+            IrOp::Fill {
+                path: line(),
+                rule: FillRule::NonZero,
+            }
+            .into(),
+        ],
+    });
+    page.ops = vec![Op::from(IrOp::Form {
+        form: body,
+        matrix: Matrix::IDENTITY,
+    })];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let form = xobject(&pdf, 0, &format!("Fm{}", FormIndex(0).0));
+    let inner = form.get("Resources").unwrap().get("ExtGState").unwrap();
+    let state = pdf.resolve(inner.get("GS1").unwrap().as_reference());
+    assert!(matches!(state.get("OP"), Some(Value::Bool(true))));
+    assert!(inner.get("GS0").is_none());
+    assert!(
+        String::from_utf8(decoded(form))
+            .unwrap()
+            .starts_with("/GS1 gs\n")
+    );
+    let outer = resources(&pdf, 0).get("ExtGState").unwrap();
+    assert!(outer.get("GS1").is_some());
+}

@@ -1,0 +1,25 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 100.0
+% expect-output: 100.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 100.0
+% expect-output: 100.0
+% expect-output: 50.0
+% expect-output: 50.0
+% expect-output: 50.0
+% expect-output: 50.0
+% expect-output: /nocurrentpoint
+% Scenario: control points widen the box. The box of a curve encloses
+% its control points, not only its ends (PLRM3 §8.2 pathbbox); a moveto
+% ending the path is left out, unless it is the whole path; an empty
+% path has no box. Each box is printed as llx lly urx ury, one per line.
+/report { pathbbox 4 -1 roll = 3 -1 roll = exch = = } def
+0 0 moveto 0 100 100 100 100 0 curveto report
+50 50 moveto report
+newpath 50 50 moveto report
+newpath { pathbbox } stopped pop $error /errorname get ==

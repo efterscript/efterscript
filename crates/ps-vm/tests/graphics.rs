@@ -1257,3 +1257,157 @@ fn colorimage_paints_device_samples_from_one_source_or_planes() {
         assert_eq!(exec(program).error(), Some(error), "{program}");
     }
 }
+
+// --- stroke adjustment, overprint, and the page device in the state ------------
+
+// overprint-round-trip.ps
+#[test]
+fn stroke_adjust_and_overprint_live_in_the_graphics_state() {
+    let run = exec(
+        "currentstrokeadjust = currentoverprint = \
+         true setstrokeadjust true setoverprint \
+         gsave false setstrokeadjust false setoverprint \
+         currentstrokeadjust = currentoverprint = grestore \
+         currentstrokeadjust = currentoverprint = \
+         initgraphics currentstrokeadjust = currentoverprint = \
+         save false setoverprint false setstrokeadjust restore \
+         currentstrokeadjust = currentoverprint =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(
+        run.output,
+        "false\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+    );
+    // The backend hears every setoverprint and the restorations that
+    // change the value; stroke adjustment never crosses the boundary.
+    let overprints: Vec<bool> = run
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::Overprint(on) => Some(on),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(overprints, [true, false, true, false, true]);
+    assert!(run.interp.stroke_adjust());
+    assert!(run.interp.overprint());
+
+    let run = exec("1 setstrokeadjust");
+    assert_eq!(run.error(), Some("typecheck"));
+    let run = exec("(x) setoverprint");
+    assert_eq!(run.error(), Some("typecheck"));
+    assert_eq!(run.top_numbers(0), Vec::<f32>::new());
+    // A failing setter leaves its operand in place.
+    assert_eq!(run.interp.ostack().len(), 1);
+}
+
+#[test]
+fn a_glyph_procedure_starts_without_stroke_adjustment() {
+    let run = exec(
+        "/T << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding 256 array \
+         /BuildGlyph { pop pop 500 0 setcharwidth /seen currentstrokeadjust def \
+         true setstrokeadjust } >> definefont 10 scalefont setfont \
+         true setstrokeadjust 0 0 moveto (a) show seen = currentstrokeadjust = \
+         false setstrokeadjust 0 0 moveto (a) show seen = currentstrokeadjust =",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(run.output, "false\ntrue\nfalse\nfalse\n");
+}
+
+// pagedevice-in-gstate.ps, pagedevice-merges.ps
+#[test]
+fn the_page_device_follows_the_graphics_state() {
+    let run = exec(
+        "currentpagedevice /PageSize get == \
+         gsave << /PageSize [200 200] /Duplex true >> setpagedevice \
+         currentpagedevice /PageSize get == \
+         gsave << /PageSize [100 50] >> setpagedevice grestore \
+         currentpagedevice /PageSize get == currentpagedevice /Duplex get == \
+         grestore currentpagedevice /PageSize get == currentpagedevice /Duplex known == \
+         save << /PageSize [300 300] >> setpagedevice \
+         gsave << /PageSize [400 400] >> setpagedevice \
+         restore currentpagedevice /PageSize get == \
+         gsave gsave << /PageSize [500 500] >> setpagedevice grestoreall \
+         currentpagedevice /PageSize get ==",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(
+        run.output,
+        "[612 792]\n[200 200]\n[200 200]\ntrue\n[612 792]\nfalse\n[612 792]\n[612 792]\n"
+    );
+    // The media box the backend is told: at installation, on each
+    // setpagedevice, and on each restoration that changes the device.
+    let boxes: Vec<Bounds> = run
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::MediaBox(b) => Some(b),
+            _ => None,
+        })
+        .collect();
+    let b = |w, h| Bounds::new(0.0, 0.0, w, h);
+    assert_eq!(
+        boxes,
+        [
+            b(612.0, 792.0),
+            b(200.0, 200.0),
+            b(100.0, 50.0),
+            b(200.0, 200.0),
+            b(612.0, 792.0),
+            b(300.0, 300.0),
+            b(400.0, 400.0),
+            b(612.0, 792.0),
+            b(500.0, 500.0),
+            b(612.0, 792.0),
+        ]
+    );
+}
+
+#[test]
+fn each_setpagedevice_installs_a_fresh_read_only_dictionary() {
+    let run = exec(
+        "currentpagedevice << /PageSize [200 200] >> setpagedevice currentpagedevice \
+         2 copy eq = exch /PageSize get == /PageSize get == \
+         currentpagedevice wcheck = \
+         { << /PageSize [1 2 3] >> setpagedevice } stopped pop \
+         currentpagedevice /PageSize get ==",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(
+        run.output,
+        "false\n[612 792]\n[200 200]\nfalse\n[200 200]\n"
+    );
+}
+
+// --- pathbbox and the declared box ----------------------------------------------
+
+// pathbbox-rules.ps
+#[test]
+fn a_declared_setbbox_answers_pathbbox() {
+    // The recording backend answers pathbbox with the current point's
+    // box, so anything else comes from the declared box.
+    let run = exec(
+        "10 10 20 20 setbbox 12 12 moveto pathbbox \
+         newpath 12 12 moveto pathbbox",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(
+        run.top_numbers(8),
+        [10.0, 10.0, 20.0, 20.0, 12.0, 12.0, 12.0, 12.0]
+    );
+    // The declared box is derived from its device-space envelope under
+    // the CTM at the declaration, through the inverse of the current one.
+    let run = exec("2 2 scale 10 10 20 20 setbbox 12 12 moveto 1 1 translate pathbbox");
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert_eq!(run.top_numbers(4), [9.0, 9.0, 19.0, 19.0]);
+    let run = exec("45 rotate 0 0 10 10 setbbox 5 5 moveto pathbbox");
+    assert_eq!(run.outcome, Outcome::Ok);
+    let got = run.top_numbers(4);
+    let want = [-5.0, -5.0, 15.0, 15.0];
+    for (g, w) in got.iter().zip(want) {
+        assert!((g - w).abs() < 1e-3, "{got:?}");
+    }
+    // Without a current point the declared box does not answer.
+    let run = exec("10 10 20 20 setbbox pathbbox");
+    assert_eq!(run.error(), Some("nocurrentpoint"));
+}

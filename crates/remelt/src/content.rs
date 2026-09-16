@@ -24,6 +24,11 @@
 //! A clip with no segments is written as a zero-area rectangle before
 //! `W n`; the clipping operator with no path at all would be ignored.
 //!
+//! An overprint setting selects the extended graphics state resource
+//! for its value (§8.4.5), `/GSn gs`, at the point the IR sets it; the
+//! resource carries `OP` and `op` alike, and a `Q` brings the earlier
+//! setting back with the rest of the state.
+//!
 //! Paths arrive in default user space and go out unchanged, except under
 //! a stroke recorded with a CTM: PDF measures line width and dash lengths
 //! in the space current at the stroke, so the stroke is wrapped in its
@@ -57,7 +62,9 @@ use ps_graphics::{
 };
 use ps_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
-use crate::resources::{font_name, form_name, image_name, pattern_name, shading_name, space_name};
+use crate::resources::{
+    ext_gstate_name, font_name, form_name, image_name, pattern_name, shading_name, space_name,
+};
 
 /// The one-byte code each CID takes in a composite font written as a
 /// Type 3 fallback, by the page's font index; fonts absent here are
@@ -428,6 +435,7 @@ impl Writer<'_> {
                 self.line(&format!("[{}] {} d", reals(lengths), fmt_real(*phase)));
             }
             IrOp::Flatness(f) => self.line(&format!("{} i", fmt_real(*f))),
+            IrOp::Overprint(on) => self.line(&format!("/{} gs", ext_gstate_name(*on))),
             IrOp::SetColorSpace(space) => self.set_color_space(*space),
             IrOp::SetColor(components) => self.color(components),
             IrOp::SetPattern {
@@ -551,10 +559,12 @@ mod tests {
             IrOp::Dash(vec![3.0, 1.0], 0.5),
             IrOp::Dash(Vec::new(), 0.0),
             IrOp::Flatness(0.5),
+            IrOp::Overprint(true),
+            IrOp::Overprint(false),
         ]);
         assert_eq!(
             text(&page),
-            "2 w\n1 J\n2 j\n4 M\n[3 1] 0.5 d\n[] 0 d\n0.5 i\n"
+            "2 w\n1 J\n2 j\n4 M\n[3 1] 0.5 d\n[] 0 d\n0.5 i\n/GS1 gs\n/GS0 gs\n"
         );
     }
 

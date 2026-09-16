@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 440.0
+% expect-output: 404.0
+% expect-output: -468.68045
+% expect-output: 404.0
+% expect-output: -463.33493
+% expect-output: 503.71344
+% Scenario: tangent points at a rotated corner. An acute corner whose
+% tangent points lie some 930 units out amplifies any error in the
+% corner's angle; the current point is read back exactly and the
+% tangent distance is computed in double precision, so the readings
+% agree with the exact ones (-468.680446, 404, -463.334916, 503.713432)
+% to six significant digits, which is the precision the harness compares
+% numbers at. The current point, then the two tangent points, x before
+% y, one value per line.
+-45 rotate 440 404 moveto
+currentpoint exch = =
+464 404 371 414 50 arcto
+4 -1 roll = 3 -1 roll = exch = =
+stroke showpage

@@ -44,6 +44,10 @@ op_table! { graphics OPS {
     "upath" => upath, [Bool];
 }}
 
+op_table! { graphics OUTLINE_OPS {
+    "ustrokepath" => ustrokepath, [Any];
+}}
+
 /// The operators a user path may contain, in the order of their codes
 /// in the encoded form (PLRM3 §4.6.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -462,10 +466,10 @@ fn paint(i: &mut Interp, kind: Paint) -> Result<(), VmError> {
     if pattern::capture_cell(i, operator)? {
         return Ok(());
     }
-    let backend = i.backend()?;
-    let depth = backend.gstate_depth();
-    backend.gsave()?;
+    let depth = i.backend()?.gstate_depth();
+    i.gsave()?;
     let painted = (|| {
+        let backend = i.backend()?;
         backend.newpath()?;
         Walker::new(backend).run(backend, &steps)?;
         if let Some(matrix) = matrix {
@@ -477,7 +481,7 @@ fn paint(i: &mut Interp, kind: Paint) -> Result<(), VmError> {
             Paint::Stroke => backend.stroke(),
         }
     })();
-    let restored = backend.grestore_to(depth);
+    let restored = i.grestore_to(depth);
     painted?;
     restored?;
     drop(i, operands)
@@ -502,6 +506,36 @@ fn ueofill(i: &mut Interp) -> Result<(), VmError> {
 
 fn ustroke(i: &mut Interp) -> Result<(), VmError> {
     paint(i, Paint::Stroke)
+}
+
+/// `newpath uappend strokepath`, and in the second form the matrix
+/// concatenated between the walk and the outline with the CTM put back
+/// afterwards (PLRM3 §8.2 `ustrokepath`): the outline stays as the
+/// current path, which is the operator's whole effect. The operands
+/// stay on the stack when the walk fails.
+fn ustrokepath(i: &mut Interp) -> Result<(), VmError> {
+    let top = i.peek(0)?;
+    let matrix = six_numbers(i, top);
+    let (path, operands) = match matrix {
+        Some(_) => (i.peek(1)?, 2),
+        None => (top, 1),
+    };
+    let steps = parse(i, path)?;
+    i.set_declared_path_bbox(None);
+    let backend = i.backend()?;
+    backend.newpath()?;
+    Walker::new(backend).run(backend, &steps)?;
+    match matrix {
+        Some(matrix) => {
+            let ctm = backend.current_matrix();
+            backend.concat(matrix)?;
+            let outlined = backend.stroke_outline();
+            backend.set_matrix(ctm)?;
+            outlined?;
+        }
+        None => backend.stroke_outline()?,
+    }
+    drop(i, operands)
 }
 
 /// `bool upath`: the current path as an executable array in the current

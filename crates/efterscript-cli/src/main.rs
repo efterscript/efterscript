@@ -73,7 +73,10 @@ fn usage() -> ExitCode {
     eprintln!("       --no-subset             SubsetFonts false");
     eprintln!("       --lock <Key>            the job may not change <Key> (repeatable)");
     eprintln!(
-        "       --identity <Key>=<Value> a statusdict entry (repeatable; a string in parentheses)"
+        "       --identity <Key>=<Value> a statusdict entry (repeatable; a string in parentheses;"
+    );
+    eprintln!(
+        "                                product, version, revision, serialnumber reach systemdict too)"
     );
     eprintln!(
         "       --prelude <file.ps>     a program run once before the job, at the server level"

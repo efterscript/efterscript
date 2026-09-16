@@ -1,0 +1,25 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% Scenario: a seed reproduces the sequence. After 7 srand two rand
+% values and the rrand state are read; seeding again with 7 gives the
+% same pair and the same state; every rand value lies in 0 to 2^31 - 1;
+% reseeding from an rrand value continues the sequence. The values
+% themselves are never printed: another interpreter's generator
+% produces other numbers, only these properties agree.
+7 srand rand rand rrand /s1 exch def /b1 exch def /a1 exch def
+7 srand rand rand rrand /s2 exch def /b2 exch def /a2 exch def
+a1 a2 eq =
+b1 b2 eq =
+s1 s2 eq =
+a1 0 ge a1 2147483647 le and =
+b1 0 ge b1 2147483647 le and =
+rrand /s3 exch def rand rand s3 srand rand rand
+4 -1 roll 3 -1 roll eq 3 1 roll eq and =

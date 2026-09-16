@@ -135,6 +135,7 @@ pub mod output;
 pub mod pagedevice;
 pub mod pattern;
 pub mod pdfmark;
+pub mod random;
 pub mod resource;
 pub mod screen;
 pub mod shading;
@@ -178,6 +179,10 @@ const MODULES: &[&[OpEntry]] = &[
     form::OPS,
     cie::OPS,
     shading::OPS,
+    random::OPS,
+    graphics::STATE_OPS,
+    graphics::OUTLINE_OPS,
+    upath::OUTLINE_OPS,
 ];
 
 /// The complete operator table, built on first use.

@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: the mitre limit cuts a sharp corner to a bevel. The path
+% turns through about 11 degrees, where the mitre length is some ten
+% line widths (PLRM3 §8.2 setmiterlimit): under the default limit of
+% 10 the outline (page 1) and the stroke (page 2) show a bevel; under
+% a limit of 20 (pages 3 and 4) the mitre spike is drawn.
+/path { 120 200 moveto 420 200 lineto 120 260 lineto } def
+24 setlinewidth
+path strokepath fill
+showpage
+24 setlinewidth
+path stroke
+showpage
+24 setlinewidth 20 setmiterlimit
+path strokepath fill
+showpage
+24 setlinewidth 20 setmiterlimit
+path stroke
+showpage

@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: degenerate subpaths follow stroke's rules (PLRM3 §8.2
+% stroke, strokepath). A subpath of two coincident points and a closed
+% single-point subpath are dots with round caps (page 1 fills their
+% outline, page 2 strokes them); with butt caps they are nothing, and
+% so is a subpath of one moveto, so pages 3 and 4 are blank.
+40 setlinewidth 1 setlinecap
+200 300 moveto 200 300 lineto
+350 300 moveto closepath
+strokepath fill
+showpage
+40 setlinewidth 1 setlinecap
+200 300 moveto 200 300 lineto
+350 300 moveto closepath
+stroke
+showpage
+40 setlinewidth 0 setlinecap
+200 300 moveto 200 300 lineto
+350 300 moveto closepath
+450 300 moveto
+strokepath fill
+showpage
+40 setlinewidth 0 setlinecap
+200 300 moveto 200 300 lineto
+350 300 moveto closepath
+450 300 moveto
+stroke
+showpage

@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% Scenario: a user path's outline through a matrix. The second form
+% concatenates the matrix after the path is built and before the
+% outline, then restores the CTM (PLRM3 §8.2 ustrokepath): the outline
+% is twice as wide as the line width says, the CTM is unchanged
+% afterwards (compared element by element, since the default CTM is
+% the device's own), and page 2 gets the same outline from a doubled
+% line width by hand.
+15 setlinewidth 1 setlinecap
+/before matrix currentmatrix def
+{0 0 500 500 setbbox 120 150 moveto 360 220 lineto 220 500 lineto} [2 0 0 2 0 0] ustrokepath
+/after matrix currentmatrix def
+true 0 1 5 { dup before exch get exch after exch get eq and } for =
+fill
+showpage
+30 setlinewidth 1 setlinecap
+120 150 moveto 360 220 lineto 220 500 lineto strokepath fill
+showpage

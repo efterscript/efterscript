@@ -437,6 +437,10 @@ pub enum IrOp {
     MiterLimit(f32),
     Dash(Vec<f32>, f32),
     Flatness(f32),
+    /// The overprint parameter in effect for the paints that follow;
+    /// absent until a program sets it, so a page without `setoverprint`
+    /// never carries one.
+    Overprint(bool),
     SetColorSpace(SpaceRef),
     SetColor(Vec<f32>),
     /// The colour is a tiling pattern, in the pattern space last set:

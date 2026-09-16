@@ -98,6 +98,7 @@ fn exec_with(program: &[u8], file: Option<Vec<u8>>) -> Run {
         io,
         capabilities: Capabilities {
             file: Some(Box::new(files)),
+            ..Default::default()
         },
         ..Default::default()
     };

@@ -89,6 +89,7 @@ fn exec_with(program: &str, file: &[u8]) -> Run {
         io,
         capabilities: Capabilities {
             file: Some(Box::new(Files(probe.clone()))),
+            ..Default::default()
         },
         ..Default::default()
     };

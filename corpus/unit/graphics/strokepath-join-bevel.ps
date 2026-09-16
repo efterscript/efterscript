@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a stroke's outline fills as the stroke, with bevel joins.
+% Page 1 fills the outline strokepath leaves of a path 30 wide turning
+% through 60 degrees with bevel joins (PLRM3 §8.2 strokepath,
+% setlinejoin); page 2 strokes the same path. Both paint the same area.
+/path { 120 150 moveto 420 150 lineto 270 410 lineto } def
+30 setlinewidth 2 setlinejoin
+path strokepath fill
+showpage
+30 setlinewidth 2 setlinejoin
+path stroke
+showpage

@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: integertype
+% expect-output: stringtype
+% expect-output: stringtype
+% expect-output: integertype
+% Scenario: the systemdict entries. product, version, and revision are
+% defined in systemdict (PLRM3 §8.2), product with the value statusdict
+% carries, and version and revision with statusdict's values where
+% statusdict has them (other interpreters keep only product there);
+% serialnumber is an integer. The values are not printed: another
+% interpreter answers with its own identity.
+systemdict /product get statusdict /product get eq =
+product statusdict /product get eq =
+statusdict /version known { version statusdict /version get eq } { true } ifelse =
+statusdict /revision known { revision statusdict /revision get eq } { true } ifelse =
+serialnumber type ==
+product type ==
+version type ==
+revision type ==

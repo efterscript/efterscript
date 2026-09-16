@@ -22,19 +22,15 @@ op_table! { OPS {
 const VM_MAXIMUM: i32 = 1 << 30;
 
 fn save(i: &mut Interp) -> Result<(), VmError> {
-    let depth = match i.graphics_backend() {
-        Some(backend) => {
-            let depth = backend.gstate_depth();
-            backend.gsave()?;
-            Some(depth)
-        }
-        None => None,
-    };
+    let depth = i.graphics_backend().map(|backend| backend.gstate_depth());
+    if depth.is_some() {
+        i.gsave()?;
+    }
     let save = match i.mem.save(depth.unwrap_or(0)) {
         Ok(save) => save,
         Err(e) => {
             if depth.is_some() {
-                let _ = i.backend()?.grestore();
+                let _ = i.grestore();
             }
             return Err(e);
         }
@@ -52,8 +48,8 @@ fn restore(i: &mut Interp) -> Result<(), VmError> {
     let (ostack, dstack) = (i.ostack.clone(), i.dstack.clone());
     let depth = i.mem.restore(save, &[&ostack, &dstack, &references])?;
     i.truncate_gstate_floors();
-    if let Some(backend) = i.graphics_backend() {
-        backend.grestore_to(depth)?;
+    if i.has_graphics_backend() {
+        i.grestore_to(depth)?;
     }
     i.pop()?;
     Ok(())
