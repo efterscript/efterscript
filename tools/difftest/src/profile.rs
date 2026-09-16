@@ -8,8 +8,9 @@
 //! Grammar: one `key = value` per line; blank lines and lines starting
 //! with `#` are ignored; a `"…"` string honours `\"` and `\\`; a bare
 //! value is a number. Keys: `name`, `version`, `ps2pdf`, `render`, `run`
-//! (strings, required), `text` and `error_marker` (strings, optional),
-//! `dpi`, `threshold`, `limit`, `timeout_ms` (numbers, optional).
+//! (strings, required), `render_color`, `text`, and `error_marker`
+//! (strings, optional), `dpi`, `threshold`, `limit`, `timeout_ms`
+//! (numbers, optional).
 //! Command strings carry the placeholders `{in}`, `{out}`, and `{dpi}`;
 //! the harness substitutes shell-quoted paths and the resolution, and a
 //! command runs through `sh -c` from the file's output directory.
@@ -35,6 +36,9 @@ pub struct Profile {
     /// `{in}` a PDF, `{out}` a path pattern with `%d` for the 1-based
     /// page number, `{dpi}` the resolution; one PNM per page.
     pub render: String,
+    /// As `render`, but one colour (`P6`) PNM per page; used for the
+    /// files that ask to be compared in colour.
+    pub render_color: Option<String>,
     /// `{in}` the PostScript file; standard output is the program's.
     pub run: String,
     /// `{in}` a PDF; standard output is its text.
@@ -50,11 +54,12 @@ pub struct Profile {
     pub timeout_ms: u64,
 }
 
-const STRING_KEYS: [&str; 7] = [
+const STRING_KEYS: [&str; 8] = [
     "name",
     "version",
     "ps2pdf",
     "render",
+    "render_color",
     "run",
     "text",
     "error_marker",
@@ -166,6 +171,10 @@ pub fn parse(text: &str) -> Result<Profile, String> {
     placeholders(&ps2pdf, "ps2pdf", &["{in}", "{out}"])?;
     let render = string("render")?;
     placeholders(&render, "render", &["{in}", "{out}"])?;
+    let render_color = string("render_color").ok();
+    if let Some(render_color) = &render_color {
+        placeholders(render_color, "render_color", &["{in}", "{out}"])?;
+    }
     let run = string("run")?;
     placeholders(&run, "run", &["{in}"])?;
     let text = string("text").ok();
@@ -185,6 +194,7 @@ pub fn parse(text: &str) -> Result<Profile, String> {
         version,
         ps2pdf,
         render,
+        render_color,
         run,
         text,
         error_marker,
@@ -284,6 +294,7 @@ mod tests {
         assert_eq!(p.name, "fake");
         assert_eq!(p.version, "1");
         assert_eq!(p.ps2pdf, "a {in} {out}");
+        assert_eq!(p.render_color, None);
         assert_eq!(p.text, None);
         assert_eq!(p.error_marker, None);
         assert_eq!(p.dpi, DEFAULT_DPI);
@@ -295,10 +306,11 @@ mod tests {
     #[test]
     fn every_key_comments_and_escapes_are_read() {
         let text = format!(
-            "# a comment\n\n{MINIMAL}text = \"t \\\"q\\\" \\\\ {{in}}\"  # trailing\n  dpi = 72\nthreshold=0\nlimit = 0.25 # note\ntimeout_ms = 500\nerror_marker = \"Oops: \"\n"
+            "# a comment\n\n{MINIMAL}text = \"t \\\"q\\\" \\\\ {{in}}\"  # trailing\n  dpi = 72\nthreshold=0\nlimit = 0.25 # note\ntimeout_ms = 500\nerror_marker = \"Oops: \"\nrender_color = \"d {{in}} {{out}} {{dpi}}\"\n"
         );
         let p = parse(&text).unwrap();
         assert_eq!(p.text.as_deref(), Some("t \"q\" \\ {in}"));
+        assert_eq!(p.render_color.as_deref(), Some("d {in} {out} {dpi}"));
         assert_eq!(p.error_marker.as_deref(), Some("Oops: "));
         assert_eq!(p.dpi, 72);
         assert_eq!(p.threshold, 0);
@@ -324,6 +336,15 @@ mod tests {
         assert!(err(&MINIMAL.replace("{out} {dpi}", "{dpi}")).contains("`render` lacks the {out}"));
         assert!(err(&MINIMAL.replace("c {in}", "c")).contains("`run` lacks the {in}"));
         assert!(err(&format!("{MINIMAL}text = \"t\"\n")).contains("`text` lacks the {in}"));
+        assert!(
+            err(&format!("{MINIMAL}render_color = \"d {{in}}\"\n"))
+                .contains("`render_color` lacks the {out}")
+        );
+        assert!(
+            err(&format!("{MINIMAL}render_color = \"d {{out}}\"\n"))
+                .contains("`render_color` lacks the {in}")
+        );
+        assert!(err(&format!("{MINIMAL}render_color = 1\n")).contains("must be a quoted string"));
         assert!(
             err(&format!("{MINIMAL}error_marker = \"\"\n"))
                 .contains("`error_marker` must not be empty")

@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: undefined
+% Scenario: a white point is required. A CIE-based dictionary without
+% WhitePoint is undefined (PLRM3 Table 4.6 marks it required).
+[/CIEBasedA << >>] setcolorspace

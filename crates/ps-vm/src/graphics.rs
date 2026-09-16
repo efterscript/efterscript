@@ -195,6 +195,33 @@ pub enum SpaceSpec {
         /// `(hival + 1) × base components` bytes.
         lookup: Vec<u8>,
     },
+    /// A calibrated gray space (ISO 32000-1 §8.6.5.2): the single-stage
+    /// form a `CIEBasedA` space collapses to. `white` and `black` are
+    /// tristimulus values; `gamma` is the exponent applied to the one
+    /// component.
+    CalGray {
+        white: [f32; 3],
+        black: [f32; 3],
+        gamma: f32,
+    },
+    /// A calibrated RGB space (ISO 32000-1 §8.6.5.3): the single-stage
+    /// form a `CIEBasedABC` space collapses to. `matrix` maps the decoded
+    /// components to XYZ, three elements per input component, the same
+    /// element order as the manual's `MatrixABC`.
+    CalRGB {
+        white: [f32; 3],
+        black: [f32; 3],
+        gamma: [f32; 3],
+        matrix: [f32; 9],
+    },
+    /// The L*a*b* space (ISO 32000-1 §8.6.5.4) every other CIE-based
+    /// space is carried as: L* runs 0 to 100, `range` bounds a* and b*
+    /// as `[amin amax bmin bmax]`.
+    Lab {
+        white: [f32; 3],
+        black: [f32; 3],
+        range: [f32; 4],
+    },
     /// The pattern space (PLRM3 §4.9): a colour is a pattern instance,
     /// given to the backend as a [`PatternInfo`] beside the components of
     /// `base`, the underlying space an uncoloured pattern is painted in;
@@ -208,8 +235,11 @@ impl SpaceSpec {
     /// Number of colour components a colour in this space has.
     pub fn components(&self) -> usize {
         match self {
-            SpaceSpec::DeviceGray | SpaceSpec::Separation { .. } | SpaceSpec::Indexed { .. } => 1,
-            SpaceSpec::DeviceRGB => 3,
+            SpaceSpec::DeviceGray
+            | SpaceSpec::Separation { .. }
+            | SpaceSpec::Indexed { .. }
+            | SpaceSpec::CalGray { .. } => 1,
+            SpaceSpec::DeviceRGB | SpaceSpec::CalRGB { .. } | SpaceSpec::Lab { .. } => 3,
             SpaceSpec::DeviceCMYK => 4,
             SpaceSpec::DeviceN { names, .. } => names.len(),
             SpaceSpec::Pattern { base } => base.as_ref().map_or(0, |b| b.components()),
@@ -234,17 +264,44 @@ impl SpaceSpec {
             SpaceSpec::Separation { .. } => "Separation",
             SpaceSpec::DeviceN { .. } => "DeviceN",
             SpaceSpec::Indexed { .. } => "Indexed",
+            SpaceSpec::CalGray { .. } => "CalGray",
+            SpaceSpec::CalRGB { .. } => "CalRGB",
+            SpaceSpec::Lab { .. } => "Lab",
             SpaceSpec::Pattern { .. } => "Pattern",
         }
     }
 
+    /// The values component `index` may take, as the space clamps them:
+    /// the index range of an Indexed space, L* and the a*/b* ranges of a
+    /// Lab space, the unit interval otherwise.
+    pub fn component_limits(&self, index: usize) -> (f32, f32) {
+        match self.component_space() {
+            Some(SpaceSpec::Indexed { hival, .. }) => (0.0, f32::from(*hival)),
+            Some(SpaceSpec::Lab { range, .. }) => match index {
+                0 => (0.0, 100.0),
+                1 => (range[0], range[1]),
+                _ => (range[2], range[3]),
+            },
+            _ => (0.0, 1.0),
+        }
+    }
+
     /// The colour selected when the space is set: black, which for
-    /// Separation and DeviceN means full tint.
+    /// Separation and DeviceN means full tint, and for a Lab space the
+    /// value nearest zero its ranges allow.
     pub fn initial_color(&self) -> Vec<f32> {
         match self {
-            SpaceSpec::DeviceGray | SpaceSpec::DeviceRGB | SpaceSpec::Indexed { .. } => {
-                vec![0.0; self.components()]
-            }
+            SpaceSpec::DeviceGray
+            | SpaceSpec::DeviceRGB
+            | SpaceSpec::Indexed { .. }
+            | SpaceSpec::CalGray { .. }
+            | SpaceSpec::CalRGB { .. } => vec![0.0; self.components()],
+            SpaceSpec::Lab { .. } => (0..3)
+                .map(|k| {
+                    let (lo, hi) = self.component_limits(k);
+                    0.0f32.clamp(lo, hi.max(lo))
+                })
+                .collect(),
             SpaceSpec::DeviceCMYK => vec![0.0, 0.0, 0.0, 1.0],
             SpaceSpec::Separation { .. } | SpaceSpec::DeviceN { .. } => {
                 vec![1.0; self.components()]
@@ -575,6 +632,19 @@ impl ProcRef {
     pub const IDENTITY: ProcRef = ProcRef(0);
 }
 
+/// The colour a program set in a CIE-based space (PLRM3 §4.8.3), kept
+/// beside the boundary colour the backend paints with: `space` is the
+/// VM's handle for the space as the program gave it and `components` the
+/// program's values clamped to the space's ranges, unused trailing
+/// entries zero. The backend stores it with the graphics state and hands
+/// it back unchanged, as it does a pattern instance; it never interprets
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CieColor {
+    pub space: u32,
+    pub components: [f32; 4],
+}
+
 /// A halftone screen as `setscreen` records it (PLRM3 §7.4): frequency in
 /// lines per inch, angle in degrees, and the spot function. Recorded so
 /// the getters answer; never applied.
@@ -815,6 +885,31 @@ pub trait GraphicsBackend {
     fn current_pattern(&self) -> Option<PatternInfo> {
         None
     }
+
+    // --- values kept for the VM ------------------------------------------------------
+
+    /// Attaches `color` to the current colour: what `currentcolor` and
+    /// `currentcolorspace` report while a CIE-based space is current.
+    /// Cleared by `set_color_space`, kept by `set_color` and
+    /// `set_pattern`, saved and restored with the state. A backend that
+    /// keeps nothing accepts and ignores it.
+    fn set_cie_color(&mut self, color: CieColor) -> Result<(), VmError> {
+        let _ = color;
+        Ok(())
+    }
+    fn current_cie_color(&self) -> Option<CieColor> {
+        None
+    }
+    /// The colour rendering dictionary `setcolorrendering` installed,
+    /// held by reference like a transfer function; `None` is the
+    /// interpreter's default instance. Recorded, never applied.
+    fn set_color_rendering(&mut self, dict: Option<ProcRef>) -> Result<(), VmError> {
+        let _ = dict;
+        Ok(())
+    }
+    fn color_rendering(&self) -> Option<ProcRef> {
+        None
+    }
     /// Starts capturing `pattern`'s cell: until `end_pattern_cell`, marks
     /// go into the pattern's own resource in pattern space, clipped to
     /// its box, and page operations are refused. Returns `false` and
@@ -1013,6 +1108,55 @@ mod tests {
         assert_eq!(uncoloured.initial_color(), vec![0.0, 0.0, 0.0, 1.0]);
         assert_eq!(uncoloured.component_space(), Some(&SpaceSpec::DeviceCMYK));
         assert_eq!(indexed.component_space(), Some(&indexed));
+        assert_eq!(indexed.component_limits(0), (0.0, 1.0));
+        assert_eq!(uncoloured.component_limits(3), (0.0, 1.0));
+    }
+
+    #[test]
+    fn calibrated_spaces_have_pdf_arity_and_ranges() {
+        let white = [0.95, 1.0, 1.07];
+        let gray = SpaceSpec::CalGray {
+            white,
+            black: [0.0; 3],
+            gamma: 1.8,
+        };
+        assert_eq!(gray.components(), 1);
+        assert_eq!(gray.family(), "CalGray");
+        assert_eq!(gray.initial_color(), vec![0.0]);
+        assert_eq!(gray.component_limits(0), (0.0, 1.0));
+        let rgb = SpaceSpec::CalRGB {
+            white,
+            black: [0.0; 3],
+            gamma: [1.0; 3],
+            matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        };
+        assert_eq!(rgb.components(), 3);
+        assert_eq!(rgb.family(), "CalRGB");
+        assert_eq!(rgb.initial_color(), vec![0.0; 3]);
+        let lab = SpaceSpec::Lab {
+            white,
+            black: [0.0; 3],
+            range: [-100.0, 100.0, -100.0, 100.0],
+        };
+        assert_eq!(lab.components(), 3);
+        assert_eq!(lab.family(), "Lab");
+        assert_eq!(lab.initial_color(), vec![0.0; 3]);
+        assert_eq!(lab.component_limits(0), (0.0, 100.0));
+        assert_eq!(lab.component_limits(2), (-100.0, 100.0));
+        let offset = SpaceSpec::Lab {
+            white,
+            black: [0.0; 3],
+            range: [10.0, 20.0, -50.0, -40.0],
+        };
+        assert_eq!(offset.initial_color(), vec![0.0, 10.0, -40.0]);
+        assert_eq!(
+            SpaceSpec::Pattern {
+                base: Some(Box::new(lab.clone()))
+            }
+            .component_limits(1),
+            (-100.0, 100.0)
+        );
+        assert_eq!(lab.component_space(), Some(&lab));
     }
 
     /// The pattern and form hooks have defaults, so a backend without

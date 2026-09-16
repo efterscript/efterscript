@@ -1,0 +1,29 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% divergence: cie-rendering-path
+% Scenario: a converted image. An eight-bit RGB image in a monitor-like
+% CIEBasedABC space whose decode procedures are piecewise (a linear toe
+% under a power curve), which does not collapse: the samples are
+% converted through the procedures and the matrix to eight-bit L*a*b*
+% samples, and the image reaches the page in the Lab resource with the
+% decode array [0 100 amin amax bmin bmax].
+[/CIEBasedABC <<
+  /WhitePoint [0.95 1 1.09]
+  /DecodeABC [
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+  ]
+  /MatrixABC [0.41 0.21 0.02  0.36 0.72 0.12  0.18 0.07 0.95]
+>>] setcolorspace
+gsave
+100 100 translate 200 200 scale
+<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+   /ImageMatrix [2 0 0 -2 0 2]
+   /Decode [0 1 0 1 0 1]
+   /DataSource <ff0000 00ff00 0000ff ffffff>
+>> image
+grestore
+showpage

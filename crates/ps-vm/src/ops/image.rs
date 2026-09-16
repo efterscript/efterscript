@@ -20,6 +20,14 @@
 //! marker or the source's end, and handed on flagged as encoded, the
 //! dictionary's dimensions and depth describing the samples a decoder
 //! would produce.
+//!
+//! An image in a CIE-based space that does not collapse (see `cie`) has
+//! its samples converted to L*a*b* once they are complete, through a
+//! conversion job; its default `Decode` is the space's ranges. One whose
+//! data arrived encoded cannot be converted and is handed on as it is,
+//! in the device space of its component count.
+
+use std::rc::Rc;
 
 use crate::error::VmError;
 use crate::graphics::{Encoded, ImageSpec, SpaceSpec};
@@ -27,8 +35,9 @@ use crate::interp::{Frame, Interp, LoopFrame};
 use crate::jpeg::{MarkerWalker, Walk};
 use crate::object::{Access, Handle, Object, Type};
 use crate::ops::array::{bytes, items};
+use crate::ops::cie::{self, CieSpace};
 use crate::ops::file::{drain_to_marker, file_operand};
-use crate::ops::graphics::read_matrix;
+use crate::ops::graphics::{current_cie, read_matrix};
 use crate::ops::pattern;
 
 /// Sample data being collected for one image.
@@ -45,6 +54,9 @@ pub struct ImageAcquisition {
     pub(crate) sources: Vec<Object>,
     planes: Vec<Vec<u8>>,
     current: usize,
+    /// The CIE space the samples convert through, when the image's space
+    /// is one that does not collapse.
+    cie: Option<Rc<CieSpace>>,
 }
 
 impl ImageAcquisition {
@@ -59,6 +71,7 @@ impl ImageAcquisition {
             sources: Vec::new(),
             planes: Vec::new(),
             current: 0,
+            cie: None,
         })
     }
 
@@ -155,12 +168,12 @@ pub(crate) fn imagemask(i: &mut Interp) -> Result<(), VmError> {
 
 fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
     let top = i.peek(0)?;
-    let (spec, source, operands) = if top.ty() == Type::Dict {
-        let (spec, source) = from_dict(i, top, is_mask)?;
-        (spec, source, 1)
+    let (spec, source, converting, operands) = if top.ty() == Type::Dict {
+        let (spec, source, converting) = from_dict(i, top, is_mask)?;
+        (spec, source, converting, 1)
     } else {
         let (spec, source) = from_operands(i, is_mask)?;
-        (spec, source, 5)
+        (spec, source, None, 5)
     };
     let operator = if is_mask { "imagemask" } else { "image" };
     // A mask is painted with the current colour, so a pattern's cell is
@@ -174,7 +187,8 @@ fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
     } else {
         pattern::colour_allowed(i)?;
     }
-    let acquisition = ImageAcquisition::new(spec, operator)?;
+    let mut acquisition = ImageAcquisition::new(spec, operator)?;
+    acquisition.cie = converting;
     acquire(i, acquisition, &[source], operands)
 }
 
@@ -354,6 +368,7 @@ pub(crate) fn finish(i: &mut Interp, acquisition: ImageAcquisition) -> Result<()
         mut spec,
         needed,
         mut data,
+        cie,
         ..
     } = acquisition;
     if data.len() < needed {
@@ -361,6 +376,13 @@ pub(crate) fn finish(i: &mut Interp, acquisition: ImageAcquisition) -> Result<()
         let rows = data.len().checked_div(row).unwrap_or(0);
         data.truncate(rows * row);
         spec.height = u32::try_from(rows).map_err(|_| VmError::LimitCheck)?;
+    }
+    if let Some(space) = cie
+        && spec.encoded.is_none()
+        && !spec.is_mask
+    {
+        let job = cie::image_job(space, spec, &data, "image")?;
+        return cie::start_job(i, job);
     }
     let backend = i.backend()?;
     if spec.is_mask {
@@ -405,21 +427,26 @@ fn decode_array(i: &Interp, object: Object, components: usize) -> Result<Vec<f32
     Ok(values)
 }
 
-/// The space an `image` paints in: the current colour space.
+/// A sample space with the CIE space behind it, when there is one, and
+/// whether that space collapsed.
+type SampleSpace = (Option<SpaceSpec>, Option<(Rc<CieSpace>, bool)>);
+
 /// The space the samples are in: none for a mask, DeviceGray for the
 /// operand form (PLRM3 §4.10.5), the current colour space for the
-/// dictionary form.
+/// dictionary form — with the CIE space behind it when there is one.
 fn sample_space(
     i: &mut Interp,
     is_mask: bool,
     from_operands: bool,
-) -> Result<Option<SpaceSpec>, VmError> {
+) -> Result<SampleSpace, VmError> {
     if is_mask {
-        Ok(None)
+        Ok((None, None))
     } else if from_operands {
-        Ok(Some(SpaceSpec::DeviceGray))
+        Ok((Some(SpaceSpec::DeviceGray), None))
     } else {
-        Ok(Some(i.backend()?.current_color_space()))
+        let space = i.backend()?.current_color_space();
+        let cie = current_cie(i)?.map(|(_, space, collapsed)| (space, collapsed));
+        Ok((Some(space), cie))
     }
 }
 
@@ -431,7 +458,7 @@ fn from_operands(i: &mut Interp, is_mask: bool) -> Result<(ImageSpec, Object), V
     let third = i.peek(2)?;
     let height = dimension(i.peek(3)?)?;
     let width = dimension(i.peek(4)?)?;
-    let color_space = sample_space(i, is_mask, true)?;
+    let (color_space, _) = sample_space(i, is_mask, true)?;
     let components = color_space.as_ref().map_or(1, SpaceSpec::components);
     let (bits_per_component, decode) = if is_mask {
         let polarity = third.as_bool().ok_or(VmError::TypeCheck)?;
@@ -474,7 +501,12 @@ fn required(i: &mut Interp, dict: Object, key: &str) -> Result<Object, VmError> 
 
 // The Level 2 dictionary form. `MultipleDataSources` other than `false`
 // and image types other than 1 are outside what the backend accepts.
-fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<(ImageSpec, Object), VmError> {
+// The third result is the CIE space the samples convert through.
+fn from_dict(
+    i: &mut Interp,
+    dict: Object,
+    is_mask: bool,
+) -> Result<(ImageSpec, Object, Option<Rc<CieSpace>>), VmError> {
     if let Some(kind) = entry(i, dict, "ImageType")?
         && kind.as_i32() != Some(1)
     {
@@ -495,11 +527,27 @@ fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<(ImageSpec, 
         Some(flag) => flag.as_bool().ok_or(VmError::TypeCheck)?,
         None => false,
     };
-    let color_space = sample_space(i, is_mask, false)?;
-    let components = color_space.as_ref().map_or(1, SpaceSpec::components);
-    let decode = match entry(i, dict, "Decode")? {
-        Some(array) => decode_array(i, array, components)?,
-        None => default_decode(color_space.as_ref(), bits_per_component, components),
+    let (color_space, cie) = sample_space(i, is_mask, false)?;
+    let components = match &cie {
+        Some((space, _)) => space.components(),
+        None => color_space.as_ref().map_or(1, SpaceSpec::components),
+    };
+    let decode = match (entry(i, dict, "Decode")?, &cie) {
+        (Some(array), _) => decode_array(i, array, components)?,
+        (None, Some((space, _))) => space.ranges().to_vec(),
+        (None, None) => default_decode(color_space.as_ref(), bits_per_component, components),
+    };
+    let converting = cie.and_then(|(space, collapsed)| (!collapsed).then_some(space));
+    // The samples of a converting space have the family's component
+    // count, not the boundary space's three: until the conversion
+    // replaces it, the device space of that count stands in.
+    let color_space = match &converting {
+        Some(space) => Some(match space.components() {
+            1 => SpaceSpec::DeviceGray,
+            3 => SpaceSpec::DeviceRGB,
+            _ => SpaceSpec::DeviceCMYK,
+        }),
+        None => color_space,
     };
     Ok((
         ImageSpec {
@@ -514,6 +562,7 @@ fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<(ImageSpec, 
             encoded: None,
         },
         source,
+        converting,
     ))
 }
 

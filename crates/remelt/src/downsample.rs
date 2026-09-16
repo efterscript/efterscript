@@ -499,6 +499,31 @@ mod tests {
     }
 
     #[test]
+    fn a_lab_image_is_colour_and_its_encoded_samples_average() {
+        // L*a*b* samples are linear in their encoded bytes, so a Lab
+        // image is reduced like any three-component image.
+        let lab = SpaceSpec::Lab {
+            white: [0.9505, 1.0, 1.089],
+            black: [0.0; 3],
+            range: [-128.0, 127.0, -128.0, 127.0],
+        };
+        assert_eq!(
+            Class::of(&spec(Some(lab.clone()), 8, 2, 2)),
+            Ok(Class::Color)
+        );
+        assert_eq!(
+            average_bytes(
+                &[0, 128, 255, 100, 128, 255, 0, 128, 0, 100, 128, 0],
+                2,
+                2,
+                3,
+                2
+            ),
+            [50, 128, 128]
+        );
+    }
+
+    #[test]
     fn a_mask_is_subsampled_even_when_averaging_is_asked() {
         let mask = image(spec(None, 1, 8, 8), vec![0b1000_0000; 8]);
         let params = Params {

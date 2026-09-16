@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: undefined
+% Scenario: a table family needs its table. A CIEBasedDEF dictionary
+% without a Table entry is undefined, the error for a missing required
+% entry (as for a missing WhitePoint).
+[/CIEBasedDEF << /WhitePoint [0.9505 1 1.089] >>] setcolorspace

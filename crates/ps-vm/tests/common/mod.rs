@@ -12,8 +12,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontInfo, FontRef, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin,
-    MarkValue, Matrix, PatternInfo, Point, Rect, Seg, SpaceSpec, VmError,
+    Bounds, CieColor, FontInfo, FontRef, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap,
+    LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Seg, SpaceSpec, VmError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +83,8 @@ pub struct State {
     space: SpaceSpec,
     color: Vec<f32>,
     pattern: Option<PatternInfo>,
+    cie: Option<CieColor>,
+    color_rendering: Option<ProcRef>,
     font: Option<FontRef>,
     // The current point in device space, as a real backend would keep it;
     // part of the state, since the path is.
@@ -102,6 +104,8 @@ impl Default for State {
             space: SpaceSpec::DeviceGray,
             color: vec![0.0],
             pattern: None,
+            cie: None,
+            color_rendering: None,
             font: None,
             current: None,
         }
@@ -178,7 +182,12 @@ impl GraphicsBackend for Recording {
 
     fn initgraphics(&mut self) -> Result<(), VmError> {
         self.record(Call::InitGraphics);
-        self.state = State::default();
+        // Kept across `initgraphics`, as the real backend keeps it.
+        let color_rendering = self.state.color_rendering;
+        self.state = State {
+            color_rendering,
+            ..State::default()
+        };
         Ok(())
     }
 
@@ -267,6 +276,7 @@ impl GraphicsBackend for Recording {
         self.state.color = space.initial_color();
         self.state.space = space.clone();
         self.state.pattern = None;
+        self.state.cie = None;
         Ok(())
     }
 
@@ -464,6 +474,24 @@ impl GraphicsBackend for Recording {
         self.state.pattern
     }
 
+    fn set_cie_color(&mut self, color: CieColor) -> Result<(), VmError> {
+        self.state.cie = Some(color);
+        Ok(())
+    }
+
+    fn current_cie_color(&self) -> Option<CieColor> {
+        self.state.cie
+    }
+
+    fn set_color_rendering(&mut self, dict: Option<ProcRef>) -> Result<(), VmError> {
+        self.state.color_rendering = dict;
+        Ok(())
+    }
+
+    fn color_rendering(&self) -> Option<ProcRef> {
+        self.state.color_rendering
+    }
+
     /// Captures each instance once per page, inside a saved state that
     /// starts from the initial colour, as the real backend does.
     fn begin_pattern_cell(&mut self, pattern: &PatternInfo) -> Result<bool, VmError> {
@@ -477,6 +505,7 @@ impl GraphicsBackend for Recording {
         self.state.space = SpaceSpec::DeviceGray;
         self.state.color = vec![0.0];
         self.state.pattern = None;
+        self.state.cie = None;
         Ok(true)
     }
 

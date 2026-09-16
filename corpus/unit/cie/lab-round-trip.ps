@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a Lab-defined space round-trips. A CIEBasedABC dictionary
+% shaped as the L*a*b* transformation itself (the first stage forms the
+% three arguments of the function g, the second applies g and the white
+% point) does not collapse, so it is carried as a Lab space with the
+% same white point; the components set come back as the fills' L*a*b*
+% components within rounding.
+/G { dup 0.20690 ge { dup dup mul mul } { 0.13793 sub 0.12842 mul } ifelse } def
+[/CIEBasedABC <<
+  /WhitePoint [0.9505 1 1.089]
+  /RangeABC [0 100 -128 127 -128 127]
+  /DecodeABC [ { 116 div 0.137931 add } bind { 0.002 mul } bind { 0.005 mul } bind ]
+  /MatrixABC [1 1 1  1 0 0  0 0 -1]
+  /RangeLMN [-1 2 -1 2 -1 2]
+  /DecodeLMN [ { G 0.9505 mul } bind { G } bind { G 1.089 mul } bind ]
+>>] setcolorspace
+50 20 -30 setcolor
+100 100 200 100 rectfill
+80 -60 60 setcolor
+100 300 200 100 rectfill
+showpage

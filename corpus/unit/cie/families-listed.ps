@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% expect-output: 0
+% expect-output: 0
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% Scenario: the families are listed. The four CIE-based families are
+% members of ColorSpaceFamily, and ColorRendering and ColorSpace are
+% categories.
+/CIEBasedDEFG /ColorSpaceFamily resourcestatus == == ==
+/CIEBasedA /ColorSpaceFamily resourcestatus 3 1 roll pop pop ==
+/CIEBasedABC /ColorSpaceFamily resourcestatus 3 1 roll pop pop ==
+/CIEBasedDEF /ColorSpaceFamily resourcestatus 3 1 roll pop pop ==
+/ColorRendering /Category resourcestatus 3 1 roll pop pop ==
+/ColorSpace /Category resourcestatus 3 1 roll pop pop ==

@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% divergence: cie-rendering-path
+% Scenario: an Indexed space over a converting base. The lookup table's
+% bytes are unit-range components of the monitor-like base space; they
+% are converted once, when the space is set, into L*a*b* bytes over a
+% Lab base, and the indices select the converted entries.
+[/Indexed
+  [/CIEBasedABC <<
+    /WhitePoint [0.95 1 1.09]
+    /DecodeABC [
+      { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+      { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+      { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+    ]
+    /MatrixABC [0.41 0.21 0.02  0.36 0.72 0.12  0.18 0.07 0.95]
+  >>]
+  3 <ff0000 00ff00 0000ff 808080>
+] setcolorspace
+0 setcolor 100 100 200 100 rectfill
+1 setcolor 100 300 200 100 rectfill
+2 setcolor 100 500 200 100 rectfill
+3 setcolor 350 100 200 100 rectfill
+showpage

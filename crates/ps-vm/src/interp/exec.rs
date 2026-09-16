@@ -87,6 +87,8 @@ enum LoopStep {
     /// A pattern cell's or form body's procedure has returned: end the
     /// capture and finish the operator.
     FinishPaintProcedure,
+    /// A CIE conversion has every result it needs: finish its operator.
+    FinishCie,
     Failed(VmError, &'static str),
 }
 
@@ -659,6 +661,39 @@ impl Interp {
                     }
                 }
             }
+            // The procedure in flight left its result on the operand
+            // stack; the next call, if any, is issued with its input.
+            LoopFrame::CieDecode { job } => {
+                let operator = job.operator();
+                let collected = match job.take_pending() {
+                    None => Ok(()),
+                    Some(depth) => match self.ostack.pop() {
+                        None => Err(VmError::StackUnderflow),
+                        Some(result) => match result.as_number() {
+                            Some(n) => {
+                                self.ostack.truncate(depth);
+                                job.deliver(f64::from(n));
+                                Ok(())
+                            }
+                            None => Err(VmError::TypeCheck),
+                        },
+                    },
+                };
+                match collected {
+                    Err(e) => LoopStep::Failed(e, operator),
+                    Ok(()) => match job.advance() {
+                        Some((body, input)) => {
+                            job.issue(self.ostack.len());
+                            LoopStep::Iterate {
+                                body,
+                                values: one(Object::real(input)),
+                                operator,
+                            }
+                        }
+                        None => LoopStep::FinishCie,
+                    },
+                }
+            }
             LoopFrame::ImageData { body, acquisition } => {
                 let operator = acquisition.operator_name();
                 if !acquisition.started {
@@ -712,6 +747,16 @@ impl Interp {
                 };
                 let operator = acquisition.operator_name();
                 if let Err(e) = ops::image::finish(self, *acquisition) {
+                    let command = self.operator(operator).unwrap_or(Object::null());
+                    self.raise(e, command);
+                }
+            }
+            LoopStep::FinishCie => {
+                let Some(Frame::Loop(LoopFrame::CieDecode { job })) = self.pop_frame() else {
+                    unreachable!("frame checked above");
+                };
+                let operator = job.operator();
+                if let Err(e) = ops::cie::finish_job(self, *job) {
                     let command = self.operator(operator).unwrap_or(Object::null());
                     self.raise(e, command);
                 }

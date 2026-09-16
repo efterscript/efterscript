@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a table-driven space. A CIEBasedDEF space with a 2x2x2 table
+% and no procedures; the entry at corner (h, i, j) holds the bytes
+% (10 + 30k, 20 + 30k, 30 + 30k) with k = 4h + 2i + j. A colour at a
+% corner converts that corner's entry (scaled onto the default RangeABC,
+% then XYZ through the identity matrices) to L*a*b*; a colour halfway
+% along an edge interpolates between two entries.
+[/CIEBasedDEF <<
+  /WhitePoint [0.9505 1 1.089]
+  /Table [2 2 2 [<0a141e28323c46505a646e78> <828c96a0aab4bec8d2dce6f0>]]
+>>] setcolorspace
+1 0 1 setcolor
+100 100 200 100 rectfill
+0.5 0 0 setcolor
+100 300 200 100 rectfill
+showpage

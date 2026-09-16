@@ -69,10 +69,13 @@
 //! Colour spaces are described by family: `DeviceGray`, `DeviceRGB`,
 //! `DeviceCMYK`, `Separation (<name>) alt=<space> tint=<len> bytes`,
 //! `DeviceN (<name>) (<name>)… alt=<space> tint=<len> bytes`,
-//! `Indexed base=<space> hival=<n> lookup=<len> bytes`, and `Pattern`
-//! or `Pattern base=<space>` for a pattern space, with nested
-//! spaces written inline. Names use PostScript string escapes. Sample
-//! data, lookup tables, and tint procedures appear as byte counts only.
+//! `Indexed base=<space> hival=<n> lookup=<len> bytes`, `CalGray
+//! white=<x> <y> <z> black=<x> <y> <z> gamma=<g>`, `CalRGB white=…
+//! black=… gamma=<g> <g> <g> matrix=<nine numbers>`, `Lab white=…
+//! black=… range=<amin> <amax> <bmin> <bmax>`, and `Pattern` or
+//! `Pattern base=<space>` for a pattern space, with nested spaces
+//! written inline. Names use PostScript string escapes. Sample data,
+//! lookup tables, and tint procedures appear as byte counts only.
 //!
 //! Operations use PDF's operator names where one exists:
 //!
@@ -353,6 +356,38 @@ fn space(spec: &SpaceSpec) -> String {
             space(base),
             hival,
             lookup.len()
+        ),
+        SpaceSpec::CalGray {
+            white,
+            black,
+            gamma,
+        } => format!(
+            "CalGray white={} black={} gamma={}",
+            fmt_reals(white),
+            fmt_reals(black),
+            fmt_real(*gamma)
+        ),
+        SpaceSpec::CalRGB {
+            white,
+            black,
+            gamma,
+            matrix,
+        } => format!(
+            "CalRGB white={} black={} gamma={} matrix={}",
+            fmt_reals(white),
+            fmt_reals(black),
+            fmt_reals(gamma),
+            fmt_reals(matrix)
+        ),
+        SpaceSpec::Lab {
+            white,
+            black,
+            range,
+        } => format!(
+            "Lab white={} black={} range={}",
+            fmt_reals(white),
+            fmt_reals(black),
+            fmt_reals(range)
         ),
         SpaceSpec::Pattern { base } => match base {
             Some(base) => format!("Pattern base={}", space(base)),
@@ -776,6 +811,48 @@ mod tests {
             tint_source: Vec::new(),
         };
         assert_eq!(space(&n), "DeviceN (A) (B) alt=DeviceGray tint=0 bytes");
+    }
+
+    #[test]
+    fn calibrated_spaces_print_their_parameters() {
+        let white = [0.9505, 1.0, 1.089];
+        let gray = SpaceSpec::CalGray {
+            white,
+            black: [0.0; 3],
+            gamma: 2.2,
+        };
+        assert_eq!(
+            space(&gray),
+            "CalGray white=0.9505 1 1.089 black=0 0 0 gamma=2.2"
+        );
+        let rgb = SpaceSpec::CalRGB {
+            white,
+            black: [0.01, 0.01, 0.01],
+            gamma: [1.8; 3],
+            matrix: [0.4, 0.2, 0.02, 0.35, 0.7, 0.1, 0.2, 0.1, 0.95],
+        };
+        assert_eq!(
+            space(&rgb),
+            "CalRGB white=0.9505 1 1.089 black=0.01 0.01 0.01 gamma=1.8 1.8 1.8 matrix=0.4 0.2 0.02 0.35 0.7 0.1 0.2 0.1 0.95"
+        );
+        let lab = SpaceSpec::Lab {
+            white,
+            black: [0.0; 3],
+            range: [-100.0, 100.0, -100.0, 100.0],
+        };
+        assert_eq!(
+            space(&lab),
+            "Lab white=0.9505 1 1.089 black=0 0 0 range=-100 100 -100 100"
+        );
+        let indexed = SpaceSpec::Indexed {
+            base: Box::new(gray),
+            hival: 1,
+            lookup: vec![0, 255],
+        };
+        assert_eq!(
+            space(&indexed),
+            "Indexed base=CalGray white=0.9505 1 1.089 black=0 0 0 gamma=2.2 hival=1 lookup=2 bytes"
+        );
     }
 
     #[test]

@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 1.0
+% expect-output: 0.0
+% expect-output: 0.0
+% expect-output: 0.0
+% Scenario: a calibrated RGB space is selected (PLRM3 section 4.8.3).
+% A CIEBasedABC dictionary with only its white point is accepted; the
+% initial colour is zero in every component, and currentrgbcolor,
+% currentgray, and currentcmykcolor answer the initial values of their
+% device spaces rather than converting.
+[/CIEBasedABC << /WhitePoint [0.9505 1 1.089] >>] setcolorspace
+currentcolor == == ==
+currentrgbcolor == == ==
+currentgray ==
+currentcmykcolor == == == ==

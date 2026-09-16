@@ -1,0 +1,20 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a converted colour under save and restore. The colour set in
+% a non-collapsing space before save is what restore brings back: the
+% second fill is painted with the first colour's L*a*b* again, the
+% conversion having run when the colour was set.
+[/CIEBasedA <<
+  /WhitePoint [0.9505 1 1.089]
+  /DecodeA {2 exp} bind
+  /MatrixA [0.47525 0.5 0.5445]
+>>] setcolorspace
+0.8 setcolor
+/snapshot save def
+0.2 setcolor
+100 100 200 100 rectfill
+snapshot restore
+100 300 200 100 rectfill
+showpage

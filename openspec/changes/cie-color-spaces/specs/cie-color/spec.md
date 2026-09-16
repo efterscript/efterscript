@@ -107,8 +107,11 @@ image.
 `setcolorrendering` SHALL take a dictionary carrying `ColorRenderingType`
 1 and record it in the graphics state without applying it;
 `currentcolorrendering` SHALL return it; `findcolorrendering` SHALL
-take a rendering-intent name and leave a colour rendering name and
-`true`. `ColorRendering` SHALL be a regular category with a default
+take a rendering-intent name or string and leave a colour rendering
+name and a boolean: the name of an instance the `ColorRendering`
+category holds under the composed name of PLRM3 §7.1.3 with `true`, or
+the default instance's name with `false` when there is none.
+`ColorRendering` SHALL be a regular category with a default
 instance, `ColorSpace` a regular category, and `ColorSpaceFamily` SHALL
 list `CIEBasedA`, `CIEBasedABC`, `CIEBasedDEF`, and `CIEBasedDEFG`. The
 `UseCIEColor` page-device key SHALL be accepted and recorded.
@@ -117,6 +120,11 @@ list `CIEBasedA`, `CIEBasedABC`, `CIEBasedDEF`, and `CIEBasedDEFG`. The
 
 - **WHEN** `/DefaultColorRendering /ColorRendering findresource setcolorrendering currentcolorrendering /ColorRenderingType get` is executed
 - **THEN** the stack holds `1` and a fill afterwards is unchanged
+
+#### Scenario: An intent without an instance proposes the default
+
+- **WHEN** `/Perceptual findcolorrendering` is executed with no instance defined for it
+- **THEN** the stack holds `/DefaultColorRendering false`
 
 #### Scenario: The families are listed
 

@@ -1,0 +1,23 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Lab white=0.9505 1 1.089 black=0 0 0 range=-128 127 -128 127
+ops:
+cs 0
+sc 42 0 0
+m 100 100
+l 300 100
+l 300 200
+l 100 200
+h
+f
+sc 69.8242 0 0
+m 100 300
+l 300 300
+l 300 400
+l 100 400
+h
+f

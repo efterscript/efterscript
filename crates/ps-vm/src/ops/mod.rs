@@ -117,6 +117,7 @@ macro_rules! op_table {
 pub mod arith;
 pub mod array;
 pub mod cidinit;
+pub mod cie;
 pub mod control;
 pub mod dict;
 pub mod distiller;
@@ -173,6 +174,7 @@ const MODULES: &[&[OpEntry]] = &[
     pattern::OPS,
     pattern::PAINT_OPS,
     form::OPS,
+    cie::OPS,
 ];
 
 /// The complete operator table, built on first use.

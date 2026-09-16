@@ -220,7 +220,7 @@ fn every_listed_category_resolves() {
     assert!(matches!(&outcome, Outcome::Error(e) if e.name == "undefined"));
     assert_eq!(
         out.text(),
-        "ok\n".repeat(14) + "0\n/Font\n/Category\ntrue\n0\n0\nfalse\n"
+        "ok\n".repeat(16) + "0\n/Font\n/Category\ntrue\n0\n0\nfalse\n"
     );
 }
 

@@ -9,11 +9,14 @@
 //! and colour-space parsing. The group enters `systemdict` only when a
 //! backend is installed.
 
+use std::rc::Rc;
+
 use crate::error::VmError;
 use crate::graphics::{Bounds, GraphicsBackend, LineCap, LineJoin, Matrix, Point, Rect, SpaceSpec};
 use crate::interp::{Frame, Interp, LoopFrame, scan_error};
 use crate::object::{Object, Type};
 use crate::ops::array::{bytes, items};
+use crate::ops::cie::{self, CieEntry, CieSpace, Family, cie_color};
 use crate::ops::{image, output, pattern};
 use crate::scanner::scan_all;
 
@@ -906,10 +909,35 @@ fn device_space(family: &[u8]) -> Option<SpaceSpec> {
     }
 }
 
+/// A CIE-based family's array (`params` after the name) as the boundary
+/// carries it: the collapsed calibrated space when the dictionary's
+/// transformation is a single stage, else `Lab` (see `ops::cie`). The
+/// parsed dictionary comes with it, and whether it collapsed.
+fn cie_space(
+    i: &mut Interp,
+    family: Family,
+    params: &[Object],
+) -> Result<(SpaceSpec, CieSpace, bool), VmError> {
+    let space = cie::parse(i, family, params)?;
+    match space.collapse(i) {
+        Some(spec) => Ok((spec, space, true)),
+        None => {
+            let lab = space.lab();
+            Ok((lab, space, false))
+        }
+    }
+}
+
 /// A colour space from its name or array form. Families outside what
 /// the IR carries are `undefined`; an Indexed lookup given as a
-/// procedure is `typecheck`, since only string tables are captured.
-pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<SpaceSpec, VmError> {
+/// procedure is `typecheck`, since only string tables are captured. A
+/// CIE-based family nested inside another space is carried as its
+/// boundary form alone.
+pub(crate) fn parse_space(
+    i: &mut Interp,
+    object: Object,
+    depth: usize,
+) -> Result<SpaceSpec, VmError> {
     if depth > MAX_SPACE_NESTING {
         return Err(VmError::LimitCheck);
     }
@@ -935,6 +963,9 @@ pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<Sp
         } else {
             Err(VmError::RangeCheck)
         };
+    }
+    if let Some(family) = Family::from_name(&family) {
+        return cie_space(i, family, rest).map(|(spec, _, _)| spec);
     }
     match (family.as_slice(), rest) {
         (b"Pattern", &[]) => Ok(SpaceSpec::Pattern { base: None }),
@@ -996,7 +1027,13 @@ pub(crate) fn parse_space(i: &Interp, object: Object, depth: usize) -> Result<Sp
 
 /// The array form of a colour space, rebuilt from the specification; a
 /// tint transform is re-scanned from its captured source. A device space
-/// nested as an alternate or base is given as its bare name.
+/// nested as an alternate or base is given as its bare name. A
+/// calibrated space is only rebuilt when the backend kept no record of
+/// the array it came from (`currentcolorspace` answers with that array
+/// otherwise): `CalGray` and `CalRGB` as the single-stage `CIEBasedA`
+/// and `CIEBasedABC` dictionaries they are, `Lab` as a `CIEBasedABC`
+/// dictionary with its ranges and points and no procedures — a stand-in,
+/// since the procedures were never captured as text.
 pub(crate) fn space_object(
     i: &mut Interp,
     space: &SpaceSpec,
@@ -1050,6 +1087,48 @@ pub(crate) fn space_object(
             Object::integer(i32::from(*hival)),
             i.mem.alloc_string(lookup.clone()),
         ],
+        SpaceSpec::CalGray {
+            white,
+            black,
+            gamma,
+        } => {
+            let family = i.intern("CIEBasedA");
+            let dict = calibrated_dict(i, white, black)?;
+            let decode = gamma_procedure(i, *gamma)?;
+            put_entry(i, dict, "DecodeA", decode)?;
+            let matrix = reals_array(i, white)?;
+            put_entry(i, dict, "MatrixA", matrix)?;
+            vec![family, dict]
+        }
+        SpaceSpec::CalRGB {
+            white,
+            black,
+            gamma,
+            matrix,
+        } => {
+            let family = i.intern("CIEBasedABC");
+            let dict = calibrated_dict(i, white, black)?;
+            let mut decodes = Vec::with_capacity(3);
+            for &g in gamma {
+                decodes.push(gamma_procedure(i, g)?);
+            }
+            let decodes = i.mem.alloc_array(decodes)?;
+            put_entry(i, dict, "DecodeABC", decodes)?;
+            let matrix = reals_array(i, matrix)?;
+            put_entry(i, dict, "MatrixABC", matrix)?;
+            vec![family, dict]
+        }
+        SpaceSpec::Lab {
+            white,
+            black,
+            range,
+        } => {
+            let family = i.intern("CIEBasedABC");
+            let dict = calibrated_dict(i, white, black)?;
+            let ranges = reals_array(i, &[0.0, 100.0, range[0], range[1], range[2], range[3]])?;
+            put_entry(i, dict, "RangeABC", ranges)?;
+            vec![family, dict]
+        }
         SpaceSpec::Pattern { base } => match base {
             Some(base) => vec![family, space_object(i, base, depth + 1)?],
             None => vec![family],
@@ -1058,7 +1137,31 @@ pub(crate) fn space_object(
     i.mem.alloc_array(items)
 }
 
-fn procedure_object(i: &mut Interp, source: &[u8]) -> Result<Object, VmError> {
+fn put_entry(i: &mut Interp, dict: Object, key: &str, value: Object) -> Result<(), VmError> {
+    let key = i.intern(key);
+    i.mem.dict_put(dict, key, value)
+}
+
+/// A fresh dictionary with `WhitePoint` and `BlackPoint`.
+fn calibrated_dict(i: &mut Interp, white: &[f32; 3], black: &[f32; 3]) -> Result<Object, VmError> {
+    let dict = i.mem.new_dict(6);
+    let white = reals_array(i, white)?;
+    put_entry(i, dict, "WhitePoint", white)?;
+    let black = reals_array(i, black)?;
+    put_entry(i, dict, "BlackPoint", black)?;
+    Ok(dict)
+}
+
+/// The procedure `{ gamma exp }`, or the empty procedure for a gamma of 1.
+fn gamma_procedure(i: &mut Interp, gamma: f32) -> Result<Object, VmError> {
+    if gamma == 1.0 {
+        return i.mem.alloc_procedure(Vec::new());
+    }
+    let exp = i.operator("exp").ok_or(VmError::Undefined)?;
+    i.mem.alloc_procedure(vec![Object::real(gamma), exp])
+}
+
+pub(crate) fn procedure_object(i: &mut Interp, source: &[u8]) -> Result<Object, VmError> {
     let tokens = scan_all(source, &mut i.mem, &mut ()).map_err(|e| scan_error(e.kind))?;
     match tokens.first() {
         Some(&(object, _)) if is_array(object) && object.is_executable() => Ok(object),
@@ -1066,24 +1169,145 @@ fn procedure_object(i: &mut Interp, source: &[u8]) -> Result<Object, VmError> {
     }
 }
 
+/// The family a colour-space array names outright, when it is CIE-based.
+fn top_level_cie_family(i: &Interp, object: Object) -> Result<Option<Family>, VmError> {
+    if !is_array(object) {
+        return Ok(None);
+    }
+    let elements = items(i, object)?;
+    match elements.first() {
+        Some(first) if first.ty() == Type::Name => Ok(Family::from_name(&name_bytes(i, *first)?)),
+        _ => Ok(None),
+    }
+}
+
+/// The parsed CIE space under `[/Indexed base hival lookup]` when the
+/// base names a CIE family whose transformation does not collapse: its
+/// lookup table needs converting before the space is set.
+fn indexed_cie_base(i: &mut Interp, object: Object) -> Result<Option<CieSpace>, VmError> {
+    let elements = items(i, object)?;
+    let &[_, base, _, _] = elements.as_slice() else {
+        return Ok(None);
+    };
+    let Some(family) = top_level_cie_family(i, base)? else {
+        return Ok(None);
+    };
+    let params = items(i, base)?;
+    let (_, space, collapsed) = cie_space(i, family, &params[1..])?;
+    Ok((!collapsed).then_some(space))
+}
+
+/// `setcolorspace` with a CIE-based array on top: the boundary space is
+/// set as for any other, the array is attached to the colour so that
+/// `currentcolorspace` and `currentcolor` can answer with the program's
+/// own objects, and the initial colour of the CIE space is clamped and
+/// set — through a conversion job when the space does not collapse. An
+/// array that only contains a CIE-based space (as the base of an
+/// Indexed or Pattern space) is attached for the same reason with no
+/// parsed space of its own; an Indexed space over a non-collapsing base
+/// has its lookup table converted first and is set when that is done.
+fn set_cie_space(i: &mut Interp, object: Object, family: Option<Family>) -> Result<(), VmError> {
+    let (space, parsed) = match family {
+        Some(family) => {
+            let elements = items(i, object)?;
+            let (spec, cie, collapsed) = cie_space(i, family, &elements[1..])?;
+            (spec, Some((Rc::new(cie), collapsed)))
+        }
+        None => (parse_space(i, object, 0)?, None),
+    };
+    let Some((cie, collapsed)) = parsed else {
+        if let SpaceSpec::Indexed { hival, lookup, .. } = &space
+            && let Some(base) = indexed_cie_base(i, object)?
+        {
+            let job = cie::indexed_job(Rc::new(base), object, *hival, lookup, "setcolorspace");
+            return cie::start_job(i, job);
+        }
+        i.backend()?.set_color_space(&space)?;
+        if cie::mentions_calibrated(&space) {
+            let id = i.register_cie(CieEntry {
+                array: object,
+                space: None,
+                collapsed: false,
+            })?;
+            i.backend()?.set_cie_color(cie_color(id, &[]))?;
+        }
+        return Ok(());
+    };
+    i.backend()?.set_color_space(&space)?;
+    let initial = cie.initial_components();
+    let id = i.register_cie(CieEntry {
+        array: object,
+        space: Some(cie.clone()),
+        collapsed,
+    })?;
+    let backend = i.backend()?;
+    backend.set_cie_color(cie_color(id, &initial))?;
+    if collapsed {
+        return backend.set_color(&initial);
+    }
+    cie::start_job(i, cie::color_job(cie, id, &initial, "setcolorspace"))
+}
+
 fn setcolorspace(i: &mut Interp) -> Result<(), VmError> {
     pattern::colour_allowed(i)?;
-    let space = parse_space(i, i.peek(0)?, 0)?;
-    i.backend()?.set_color_space(&space)?;
+    let object = i.peek(0)?;
+    set_cie_space(i, object, top_level_cie_family(i, object)?)?;
     drop(i, 1)
 }
 
+/// The CIE space the current colour was set in, with its id and whether
+/// it collapsed: `None` when the current space is not a CIE-based one.
+pub(crate) fn current_cie(i: &mut Interp) -> Result<Option<(u32, Rc<CieSpace>, bool)>, VmError> {
+    let Some(color) = i.backend()?.current_cie_color() else {
+        return Ok(None);
+    };
+    Ok(i.cie_entry(color.space).and_then(|entry| {
+        entry
+            .space
+            .as_ref()
+            .map(|space| (color.space, space.clone(), entry.collapsed))
+    }))
+}
+
 fn currentcolorspace(i: &mut Interp) -> Result<(), VmError> {
-    let space = i.backend()?.current_color_space();
-    let array = space_object(i, &space, 0)?;
+    let attached = i
+        .backend()?
+        .current_cie_color()
+        .and_then(|color| i.cie_entry(color.space))
+        .map(|entry| entry.array);
+    let array = match attached {
+        Some(array) => array,
+        None => {
+            let space = i.backend()?.current_color_space();
+            space_object(i, &space, 0)?
+        }
+    };
     i.push(array)
 }
 
 // `setcolor` takes as many numbers as the current space has components;
 // the backend decides what range they must lie in. In a pattern space
-// the colour is a pattern instance on top of the components.
+// the colour is a pattern instance on top of the components; in a
+// CIE-based space the components are clamped to the space's ranges
+// without error (PLRM3 §4.8.3) and kept for `currentcolor`; a space that
+// does not collapse converts them to L*a*b* through a job.
 fn setcolor(i: &mut Interp) -> Result<(), VmError> {
     pattern::colour_allowed(i)?;
+    if let Some((id, cie, collapsed)) = current_cie(i)? {
+        let count = cie.components();
+        let mut components = Vec::with_capacity(count);
+        for k in 0..count {
+            components.push(num_at(i, count - 1 - k)?);
+        }
+        let clamped = cie.clamp(&components);
+        drop(i, count)?;
+        if collapsed {
+            let backend = i.backend()?;
+            backend.set_color(&clamped)?;
+            return backend.set_cie_color(cie_color(id, &clamped));
+        }
+        return cie::start_job(i, cie::color_job(cie, id, &clamped, "setcolor"));
+    }
     let space = i.backend()?.current_color_space();
     if let SpaceSpec::Pattern { .. } = space {
         let instance = pattern::instance_of(i, i.peek(0)?)?;
@@ -1100,8 +1324,16 @@ fn setcolor(i: &mut Interp) -> Result<(), VmError> {
 
 /// The components of the current colour, and in a pattern space the
 /// instance above them (PLRM3 §4.9.2) — or the initial null of §4.9.1
-/// alone while no instance has been set.
+/// alone while no instance has been set. In a CIE-based space, the
+/// program's components as clamped.
 fn currentcolor(i: &mut Interp) -> Result<(), VmError> {
+    if let Some((_, cie, _)) = current_cie(i)? {
+        let color = i.backend()?.current_cie_color().expect("attached");
+        for &value in &color.components[..cie.components()] {
+            push_real(i, value)?;
+        }
+        return Ok(());
+    }
     let (space, color) = current_device_color(i)?;
     let instance = match space {
         SpaceSpec::Pattern { .. } => match pattern::current_instance_dict(i)? {

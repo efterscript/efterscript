@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: the XYZ space. A CIEBasedABC space with only its white point
+% and the ranges the tristimulus components take is carried as a CalRGB
+% space with unit gammas and the identity matrix.
+[/CIEBasedABC <<
+  /WhitePoint [0.9505 1 1.089]
+  /RangeABC [0 0.9505 0 1 0 1]
+  /RangeLMN [0 0.9505 0 1 0 1]
+>>] setcolorspace
+0.5 0.6 0.7 setcolor
+100 100 200 100 rectfill
+showpage

@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: [/DeviceRGB]
+% expect-output: true
+% expect-output: [/DeviceRGB]
+% expect-output: /typecheck
+% expect-output: /typecheck
+% Scenario: the ColorSpace category is regular (PLRM3 section 3.9.2):
+% an array is defined and found, selected with setcolorspace, and
+% reported by currentcolorspace; anything but an array is typecheck.
+/X [/DeviceRGB] /ColorSpace defineresource pop
+/X /ColorSpace findresource ==
+/X /ColorSpace resourcestatus 3 1 roll pop pop ==
+/X /ColorSpace findresource setcolorspace currentcolorspace ==
+{ /Y /DeviceRGB /ColorSpace defineresource } stopped pop $error /errorname get ==
+{ /Z 5 /ColorSpace defineresource } stopped pop $error /errorname get ==

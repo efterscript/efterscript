@@ -33,9 +33,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use ps_vm::{
-    Bounds, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend, ImageSpec, LineCap,
-    LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg, SpaceSpec,
-    VmError,
+    Bounds, CieColor, FontInfo, FontRef, FontSource, FormInfo, Glyph, GraphicsBackend, ImageSpec,
+    LineCap, LineJoin, MarkValue, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg,
+    SpaceSpec, VmError,
 };
 
 use crate::arc;
@@ -871,6 +871,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         self.gstate.color = space.initial_color();
         self.gstate.space = space.clone();
         self.gstate.pattern = None;
+        self.gstate.cie = None;
         Ok(())
     }
 
@@ -1053,6 +1054,24 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
 
     fn transfers(&self) -> [ProcRef; 4] {
         self.gstate.transfers
+    }
+
+    fn set_cie_color(&mut self, color: CieColor) -> Result<(), VmError> {
+        self.gstate.cie = Some(color);
+        Ok(())
+    }
+
+    fn current_cie_color(&self) -> Option<CieColor> {
+        self.gstate.cie
+    }
+
+    fn set_color_rendering(&mut self, dict: Option<ProcRef>) -> Result<(), VmError> {
+        self.gstate.color_rendering = dict;
+        Ok(())
+    }
+
+    fn color_rendering(&self) -> Option<ProcRef> {
+        self.gstate.color_rendering
     }
 
     fn image(&mut self, spec: &ImageSpec, data: &[u8]) -> Result<(), VmError> {

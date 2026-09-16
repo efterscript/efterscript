@@ -13,8 +13,8 @@
 use std::rc::Rc;
 
 use ps_vm::{
-    Bounds, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point, ProcRef, Rect, Screen, Seg,
-    SpaceSpec, VmError,
+    Bounds, CieColor, FontRef, LineCap, LineJoin, Matrix, PatternInfo, Point, ProcRef, Rect,
+    Screen, Seg, SpaceSpec, VmError,
 };
 
 /// The inside rule of a fill or clip.
@@ -164,6 +164,9 @@ pub struct GState {
     /// space without an instance is the initial null colour of PLRM3
     /// §4.9.1, which paints nothing.
     pub pattern: Option<PatternInfo>,
+    /// What the VM attached to the colour while a CIE-based space is
+    /// current; cleared when the space changes, kept otherwise.
+    pub cie: Option<CieColor>,
     pub line_width: f32,
     pub line_cap: LineCap,
     pub line_join: LineJoin,
@@ -185,6 +188,8 @@ pub struct GState {
     pub screens: [Screen; 4],
     /// The transfer functions, likewise.
     pub transfers: [ProcRef; 4],
+    /// The colour rendering dictionary, likewise; `None` is the default.
+    pub color_rendering: Option<ProcRef>,
 }
 
 impl Default for GState {
@@ -194,6 +199,7 @@ impl Default for GState {
             space: SpaceSpec::DeviceGray,
             color: vec![0.0],
             pattern: None,
+            cie: None,
             line_width: 1.0,
             line_cap: LineCap::Butt,
             line_join: LineJoin::Miter,
@@ -207,15 +213,16 @@ impl Default for GState {
             font: None,
             screens: [Screen::DEFAULT; 4],
             transfers: [ProcRef::IDENTITY; 4],
+            color_rendering: None,
         }
     }
 }
 
 impl GState {
     /// What `initgraphics` leaves: the defaults with the device untouched
-    /// (media box and null device kept) and the font, screens, and
-    /// transfer functions kept, since `initgraphics` and `showpage` do
-    /// not reset them (PLRM3 §8.2).
+    /// (media box and null device kept) and the font, screens, transfer
+    /// functions, and colour rendering kept, since `initgraphics` and
+    /// `showpage` do not reset them (PLRM3 §8.2).
     pub fn reinitialized(&self) -> GState {
         GState {
             media_box: self.media_box,
@@ -223,6 +230,7 @@ impl GState {
             font: self.font,
             screens: self.screens,
             transfers: self.transfers,
+            color_rendering: self.color_rendering,
             ..GState::default()
         }
     }
@@ -293,13 +301,17 @@ impl GState {
     }
 
     fn clamped(&self, components: &[f32]) -> Vec<f32> {
-        let limit = match self.space.component_space() {
-            Some(SpaceSpec::Indexed { hival, .. }) => f32::from(*hival),
-            _ => 1.0,
-        };
         components
             .iter()
-            .map(|&c| if c.is_nan() { 0.0 } else { c.clamp(0.0, limit) })
+            .enumerate()
+            .map(|(k, &c)| {
+                let (lo, hi) = self.space.component_limits(k);
+                if c.is_nan() {
+                    lo
+                } else {
+                    c.clamp(lo, hi.max(lo))
+                }
+            })
             .collect()
     }
 }
@@ -352,6 +364,29 @@ mod tests {
         };
         state.set_color(&[7.0]).unwrap();
         assert_eq!(state.color, vec![3.0]);
+        state.space = SpaceSpec::Lab {
+            white: [0.95, 1.0, 1.07],
+            black: [0.0; 3],
+            range: [-50.0, 50.0, -20.0, 20.0],
+        };
+        state.set_color(&[150.0, -80.0, f32::NAN]).unwrap();
+        assert_eq!(state.color, vec![100.0, -50.0, -20.0]);
+    }
+
+    #[test]
+    fn the_vm_colour_survives_a_colour_change_but_not_a_space_change() {
+        let mut state = GState::default();
+        let attached = CieColor {
+            space: 3,
+            components: [0.5, 0.0, 0.0, 0.0],
+        };
+        state.cie = Some(attached);
+        state.color_rendering = Some(ProcRef(2));
+        state.set_color(&[0.25]).unwrap();
+        assert_eq!(state.cie, Some(attached));
+        let again = state.reinitialized();
+        assert_eq!(again.cie, None);
+        assert_eq!(again.color_rendering, Some(ProcRef(2)));
     }
 
     #[test]

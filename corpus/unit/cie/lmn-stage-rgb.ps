@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a calibrated RGB space through the LMN stage collapses to
+% CalRGB. With the ABC stage left at its defaults, three DecodeLMN
+% exponents and a MatrixLMN are carried as the CalRGB gammas and matrix
+% (the same element order in both, three per input component); the
+% components set are the components written.
+[/CIEBasedABC <<
+  /WhitePoint [0.95 1 1.07]
+  /DecodeLMN [{1.8 exp} bind {1.8 exp} bind {1.8 exp} bind]
+  /MatrixLMN [0.4 0.2 0.02 0.35 0.7 0.1 0.2 0.1 0.95]
+>>] setcolorspace
+0.2 0.4 0.6 setcolor
+100 100 200 100 rectfill
+0.9 0.1 0.1 setcolor
+100 300 200 100 rectstroke
+showpage

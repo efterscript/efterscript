@@ -72,6 +72,9 @@ later profile-based colour extending a finished model.
   resources and their dump.
 - `remelt`: ADDED requirement for writing `CalGray`, `CalRGB`, and `Lab`
   spaces and colours in them.
+- `expected-divergences`: ADDED requirement
+  `cie-rendering-path` (converted colour is the exact L*a*b*, which the
+  reference's rendering path renders differently for saturated blues).
 
 ## Impact
 

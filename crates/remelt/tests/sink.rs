@@ -302,6 +302,168 @@ fn devicen_and_indexed_spaces_are_written_by_arity_and_inline() {
     assert!(text.contains(" 1 <00FF> ]"));
 }
 
+/// The calibrated spaces are arrays whose dictionary carries only what
+/// differs from the defaults beside the white point.
+#[test]
+fn calibrated_spaces_are_written_with_their_non_default_entries() {
+    let white = [0.9505, 1.0, 1.089];
+    let mut page = Page::new(LETTER);
+    let gray = page.resources.intern_space(&SpaceSpec::CalGray {
+        white,
+        black: [0.0; 3],
+        gamma: 2.2,
+    });
+    let plain_gray = page.resources.intern_space(&SpaceSpec::CalGray {
+        white,
+        black: [0.0; 3],
+        gamma: 1.0,
+    });
+    let rgb = page.resources.intern_space(&SpaceSpec::CalRGB {
+        white,
+        black: [0.01, 0.01, 0.01],
+        gamma: [1.8; 3],
+        matrix: [0.4, 0.2, 0.02, 0.35, 0.7, 0.1, 0.2, 0.1, 0.95],
+    });
+    let xyz = page.resources.intern_space(&SpaceSpec::CalRGB {
+        white,
+        black: [0.0; 3],
+        gamma: [1.0; 3],
+        matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    });
+    let lab = page.resources.intern_space(&SpaceSpec::Lab {
+        white,
+        black: [0.0; 3],
+        range: [-100.0, 100.0, -100.0, 100.0],
+    });
+    let narrow_lab = page.resources.intern_space(&SpaceSpec::Lab {
+        white,
+        black: [0.0; 3],
+        range: [-50.0, 50.0, -60.0, 60.0],
+    });
+    page.ops = vec![
+        IrOp::SetColorSpace(gray),
+        IrOp::SetColor(vec![0.5]),
+        IrOp::SetColorSpace(rgb),
+        IrOp::SetColor(vec![0.2, 0.4, 0.6]),
+        IrOp::SetColorSpace(lab),
+        IrOp::SetColor(vec![50.0, 20.0, -30.0]),
+        IrOp::Fill {
+            path: line(),
+            rule: FillRule::NonZero,
+        },
+        IrOp::SetColorSpace(plain_gray),
+        IrOp::SetColorSpace(xyz),
+        IrOp::SetColorSpace(narrow_lab),
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let bytes = distil_pages(vec![page], uncompressed());
+    let pdf = check(&bytes);
+    assert_eq!(
+        content(&pdf, 0),
+        "/CS0 cs\n/CS0 CS\n0.5 scn\n0.5 SCN\n/CS2 cs\n/CS2 CS\n0.2 0.4 0.6 scn\n0.2 0.4 0.6 SCN\n\
+         /CS4 cs\n/CS4 CS\n50 20 -30 scn\n50 20 -30 SCN\n10 10 m\n100 10 l\nf\n\
+         /CS1 cs\n/CS1 CS\n/CS3 cs\n/CS3 CS\n/CS5 cs\n/CS5 CS\n"
+    );
+    let reals = |value: &Value| -> Vec<f64> { array(value).iter().map(number).collect() };
+    let entries = |name: &str, family: &[u8]| -> Vec<(Vec<u8>, Value)> {
+        let space = array(color_space(&pdf, 0, name));
+        assert_eq!(space.len(), 2, "{name}");
+        assert_eq!(space[0].as_name(), family, "{name}");
+        let Value::Dict(entries) = &space[1] else {
+            panic!("{name}: the second element is a dictionary");
+        };
+        entries.clone()
+    };
+    let keys = |entries: &[(Vec<u8>, Value)]| -> Vec<String> {
+        entries
+            .iter()
+            .map(|(k, _)| String::from_utf8_lossy(k).into_owned())
+            .collect()
+    };
+    let get = |entries: &[(Vec<u8>, Value)], key: &str| -> Value {
+        entries
+            .iter()
+            .find(|(k, _)| k == key.as_bytes())
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| panic!("no {key}"))
+    };
+
+    let gray = entries("CS0", b"CalGray");
+    assert_eq!(keys(&gray), ["WhitePoint", "Gamma"]);
+    assert_eq!(reals(&get(&gray, "WhitePoint")), [0.9505, 1.0, 1.089]);
+    assert_eq!(number(&get(&gray, "Gamma")), 2.2);
+    let plain = entries("CS1", b"CalGray");
+    assert_eq!(keys(&plain), ["WhitePoint"]);
+
+    let rgb = entries("CS2", b"CalRGB");
+    assert_eq!(keys(&rgb), ["WhitePoint", "BlackPoint", "Gamma", "Matrix"]);
+    assert_eq!(reals(&get(&rgb, "BlackPoint")), [0.01, 0.01, 0.01]);
+    assert_eq!(reals(&get(&rgb, "Gamma")), [1.8, 1.8, 1.8]);
+    assert_eq!(
+        reals(&get(&rgb, "Matrix")),
+        [0.4, 0.2, 0.02, 0.35, 0.7, 0.1, 0.2, 0.1, 0.95]
+    );
+    let xyz = entries("CS3", b"CalRGB");
+    assert_eq!(keys(&xyz), ["WhitePoint"]);
+
+    let lab = entries("CS4", b"Lab");
+    assert_eq!(keys(&lab), ["WhitePoint"]);
+    let narrow = entries("CS5", b"Lab");
+    assert_eq!(keys(&narrow), ["WhitePoint", "Range"]);
+    assert_eq!(reals(&get(&narrow, "Range")), [-50.0, 50.0, -60.0, 60.0]);
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/CS0 [ /CalGray << /WhitePoint [ 0.9505 1 1.089 ] /Gamma 2.2 >> ]"));
+}
+
+/// An image in a Lab space carries its decode array only when it is not
+/// the reader's default for Lab (ISO 32000-1 Table 90).
+#[test]
+fn a_lab_image_omits_the_default_lab_decode() {
+    let lab = SpaceSpec::Lab {
+        white: [0.9505, 1.0, 1.089],
+        black: [0.0; 3],
+        range: [-100.0, 100.0, -100.0, 100.0],
+    };
+    let mut page = Page::new(LETTER);
+    let default = page.resources.add_image(
+        &image_spec(
+            Some(lab.clone()),
+            8,
+            vec![0.0, 100.0, -100.0, 100.0, -100.0, 100.0],
+        ),
+        &[0; 12],
+    );
+    let unit = page.resources.add_image(
+        &image_spec(Some(lab), 8, vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0]),
+        &[0; 12],
+    );
+    page.ops = vec![
+        IrOp::Image {
+            image: default,
+            matrix: Matrix::IDENTITY,
+        },
+        IrOp::Image {
+            image: unit,
+            matrix: Matrix::IDENTITY,
+        },
+    ]
+    .into_iter()
+    .map(Op::from)
+    .collect();
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let first = xobject(&pdf, 0, "Im0");
+    assert!(first.get("Decode").is_none());
+    assert_eq!(array(first.get("ColorSpace").unwrap())[0].as_name(), b"Lab");
+    let second = xobject(&pdf, 0, "Im1");
+    let decode: Vec<f64> = array(second.get("Decode").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(decode, [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
+}
+
 #[test]
 fn a_gray_image_becomes_an_xobject_painted_through_its_matrix() {
     let mut page = Page::new(LETTER);

@@ -23,6 +23,7 @@ use crate::graphics::{
 use crate::io::Io;
 use crate::memory::Memory;
 use crate::object::{Access, CompositeRef, Handle, Object, Type};
+use crate::ops::cie::CieEntry;
 use crate::ops::{self, Num, OpEntry, Visibility};
 use crate::source::SliceSource;
 
@@ -296,6 +297,8 @@ pub struct Interp {
     pub(crate) cidfont_category: Category,
     pub(crate) pattern_category: Category,
     pub(crate) form_category: Category,
+    pub(crate) color_rendering_category: Category,
+    pub(crate) color_space_category: Category,
     /// The built-in `FontSetInit` procedure set.
     pub(crate) font_set_init: Object,
     /// The built-in `CIDInit` procedure set.
@@ -331,6 +334,17 @@ pub struct Interp {
     // never looked up, since the state that referred to it was restored.
     graphics_procs: Vec<Object>,
     graphics_proc_index: HashMap<CompositeRef, ProcRef>,
+    // The colour rendering dictionary of a VM without a backend; `None`
+    // is the default instance.
+    color_rendering_without_backend: Option<ProcRef>,
+    // The `DefaultColorRendering` instance, built on first use.
+    default_color_rendering: Option<Object>,
+    // The colour-space arrays involving a CIE-based space, by the id the
+    // graphics state's `CieColor` carries; append-only on the same
+    // argument as `graphics_procs`, and indexed by the array so a space
+    // set repeatedly from one object is one entry.
+    cie_spaces: Vec<CieEntry>,
+    cie_index: HashMap<CompositeRef, u32>,
     server_password: i32,
     server_level: bool,
     prelude_ran: bool,
@@ -457,6 +471,8 @@ impl Interp {
         let global_cidfonts = mem.new_dict(8);
         let global_patterns = mem.new_dict(8);
         let global_forms = mem.new_dict(8);
+        let global_color_renderings = mem.new_dict(8);
+        let global_color_spaces = mem.new_dict(8);
         let font_set_init = ops::fontset::init_dict(&mut mem).expect("fresh dictionary");
         let cid_init = ops::cidinit::init_dict(&mut mem).expect("fresh dictionary");
         let standard_encoding = ops::font::encoding_array(&mut mem, &ps_fonts::STANDARD_ENCODING)
@@ -481,6 +497,8 @@ impl Interp {
         let local_cidfonts = mem.new_dict(8);
         let local_patterns = mem.new_dict(8);
         let local_forms = mem.new_dict(8);
+        let local_color_renderings = mem.new_dict(8);
+        let local_color_spaces = mem.new_dict(8);
 
         let mut name = |text: &str| mem.intern(text.as_bytes()).expect("short name");
         let atoms = Atoms {
@@ -544,6 +562,14 @@ impl Interp {
                 local: local_forms,
                 global: global_forms,
             },
+            color_rendering_category: Category {
+                local: local_color_renderings,
+                global: global_color_renderings,
+            },
+            color_space_category: Category {
+                local: local_color_spaces,
+                global: global_color_spaces,
+            },
             font_set_init,
             cid_init,
             loaded_procsets: [false; 2],
@@ -558,6 +584,10 @@ impl Interp {
             screens_without_backend: [Screen::DEFAULT; 4],
             transfers_without_backend: [ProcRef::IDENTITY; 4],
             graphics_procs: vec![identity_proc],
+            color_rendering_without_backend: None,
+            default_color_rendering: None,
+            cie_spaces: Vec::new(),
+            cie_index: HashMap::new(),
             graphics_proc_index: HashMap::new(),
             server_password,
             server_level: false,
@@ -868,6 +898,55 @@ impl Interp {
     /// The procedure behind a `ProcRef` of the graphics state.
     pub fn graphics_proc(&self, id: ProcRef) -> Option<Object> {
         self.graphics_procs.get(id.0 as usize).copied()
+    }
+
+    /// The colour rendering dictionary in the graphics state, by
+    /// reference, as [`Interp::transfers`]; `None` is the default
+    /// instance.
+    pub fn color_rendering(&self) -> Option<ProcRef> {
+        match &self.graphics {
+            Some(backend) => backend.color_rendering(),
+            None => self.color_rendering_without_backend,
+        }
+    }
+
+    pub(crate) fn set_color_rendering(&mut self, dict: Option<ProcRef>) -> Result<(), VmError> {
+        match self.graphics.as_deref_mut() {
+            Some(backend) => backend.set_color_rendering(dict),
+            None => {
+                self.color_rendering_without_backend = dict;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn default_color_rendering(&self) -> Option<Object> {
+        self.default_color_rendering
+    }
+
+    pub(crate) fn set_default_color_rendering(&mut self, dict: Object) {
+        self.default_color_rendering = dict.into();
+    }
+
+    // --- CIE-based colour spaces ------------------------------------------------
+
+    /// The id the graphics state refers to a CIE-involving colour-space
+    /// array by, allocated on first use of that array object.
+    pub(crate) fn register_cie(&mut self, entry: CieEntry) -> Result<u32, VmError> {
+        let key = entry.array.composite_ref().ok_or(VmError::TypeCheck)?;
+        if let Some(&id) = self.cie_index.get(&key) {
+            self.cie_spaces[id as usize] = entry;
+            return Ok(id);
+        }
+        let id = u32::try_from(self.cie_spaces.len()).map_err(|_| VmError::LimitCheck)?;
+        self.cie_spaces.push(entry);
+        self.cie_index.insert(key, id);
+        Ok(id)
+    }
+
+    /// The entry behind a `CieColor`'s space id.
+    pub(crate) fn cie_entry(&self, id: u32) -> Option<&CieEntry> {
+        self.cie_spaces.get(id as usize)
     }
 
     /// The instance id the graphics state refers to `dict` by, allocated

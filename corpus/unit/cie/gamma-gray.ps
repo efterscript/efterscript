@@ -1,0 +1,17 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a gamma gray space collapses to CalGray. A CIEBasedA space
+% whose DecodeA is a single exponent, whose MatrixA is the white point,
+% and whose LMN stage is the identity is carried as a CalGray space
+% with that gamma; the fill's component passes through unchanged.
+[/CIEBasedA <<
+  /WhitePoint [0.9505 1 1.089]
+  /DecodeA {2.2 exp} bind
+  /MatrixA [0.9505 1 1.089]
+  /RangeLMN [0 0.9505 0 1 0 1.089]
+>>] setcolorspace
+0.5 setcolor
+100 100 200 100 rectfill
+showpage

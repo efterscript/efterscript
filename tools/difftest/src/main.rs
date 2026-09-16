@@ -23,6 +23,9 @@
 //!   reference (a scenario of a build without a backend, a limit the
 //!   reference never reaches); `run` ignores it, `oracle` reports the
 //!   file as skipped with the reason and runs nothing for it.
+//! - `% oracle: colour` — the pages are compared in colour, through the
+//!   profile's colour rasteriser; `run` ignores it, `oracle` reports the
+//!   file as skipped when the profile has no colour rasteriser.
 //!
 //! Declarations are read from the leading comment block only.
 //!
@@ -70,6 +73,8 @@ pub struct Expectation {
     pub divergence: Option<String>,
     /// Why the oracle tier is to skip the file, when it declares so.
     pub oracle_skip: Option<String>,
+    /// Whether the oracle tier compares the file's pages in colour.
+    pub oracle_colour: bool,
 }
 
 impl Default for Expectation {
@@ -81,6 +86,7 @@ impl Default for Expectation {
             requires: Vec::new(),
             divergence: None,
             oracle_skip: None,
+            oracle_colour: false,
         }
     }
 }
@@ -134,6 +140,7 @@ pub fn expectation(program: &str) -> Expectation {
     let mut requires = Vec::new();
     let mut divergence = None;
     let mut oracle_skip = None;
+    let mut oracle_colour = false;
     for line in program.lines() {
         let line = line.trim_end_matches('\r');
         if line.trim().is_empty() {
@@ -152,11 +159,15 @@ pub fn expectation(program: &str) -> Expectation {
             requires.extend(rest.split_whitespace().map(str::to_string));
         } else if let Some(rest) = line.strip_prefix("% divergence:") {
             divergence = Some(rest.trim().to_string());
-        } else if let Some(rest) = line.strip_prefix("% oracle:")
-            && let Some(reason) = rest.trim_start().strip_prefix("skip")
-            && reason.is_empty() | reason.starts_with(char::is_whitespace)
-        {
-            oracle_skip = Some(reason.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("% oracle:") {
+            let rest = rest.trim();
+            if rest == "colour" {
+                oracle_colour = true;
+            } else if let Some(reason) = rest.strip_prefix("skip")
+                && (reason.is_empty() || reason.starts_with(char::is_whitespace))
+            {
+                oracle_skip = Some(reason.trim().to_string());
+            }
         }
     }
     let mut output = lines.join("\n");
@@ -170,6 +181,7 @@ pub fn expectation(program: &str) -> Expectation {
         requires,
         divergence,
         oracle_skip,
+        oracle_colour,
     }
 }
 
@@ -687,6 +699,14 @@ mod tests {
         assert_eq!(expectation("% oracle: skipping\n").oracle_skip, None);
         assert_eq!(expectation("% oracle: later\n").oracle_skip, None);
         assert_eq!(expectation("1 =\n% oracle: skip late\n").oracle_skip, None);
+        let e = expectation("%!PS\n% oracle: colour \n1 =");
+        assert!(e.oracle_colour);
+        assert_eq!(e.oracle_skip, None);
+        assert!(!expectation("% oracle: coloured\n").oracle_colour);
+        assert!(!expectation("1 =\n% oracle: colour\n").oracle_colour);
+        let e = expectation("% oracle: colour\n% oracle: skip why\n");
+        assert!(e.oracle_colour);
+        assert_eq!(e.oracle_skip.as_deref(), Some("why"));
     }
 
     #[test]

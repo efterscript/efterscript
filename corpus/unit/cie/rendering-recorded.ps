@@ -1,0 +1,27 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% expect-output: 1
+% expect-output: true
+% expect-output: false
+% expect-output: /DefaultColorRendering
+% expect-output: true
+% Scenario: a rendering dictionary is recorded (PLRM3 section 7.1). The
+% default instance of the ColorRendering category is installed with
+% setcolorrendering and read back by currentcolorrendering, a fill
+% afterwards is unchanged (nothing applies the dictionary), and
+% findcolorrendering proposes the default instance as an alternate for
+% an intent no instance is defined for.
+/DefaultColorRendering /ColorRendering findresource setcolorrendering
+currentcolorrendering /ColorRenderingType get ==
+currentcolorrendering /DefaultColorRendering /ColorRendering findresource eq ==
+/Perceptual findcolorrendering == ==
+gsave
+<< /ColorRenderingType 1 /WhitePoint [0.9 1 1]
+   /TransformPQR [{exch pop exch pop exch pop exch pop} dup dup] >> setcolorrendering
+grestore
+currentcolorrendering /DefaultColorRendering /ColorRendering findresource eq ==
+0.5 setgray
+100 100 200 100 rectfill
+showpage

@@ -6,9 +6,13 @@
 //! as `/CSn` (n the IR's `SpaceRef` index); a Separation or DeviceN tint
 //! transform is a Type 4 function stream (ISO 32000-1 §7.10.5) whose body
 //! is the captured PostScript source verbatim, unchecked against the
-//! calculator subset; a pattern space with an underlying space is the
-//! array form `[/Pattern base]`, while one without is selected by its
-//! family name like a device space and listed nowhere. Images are image
+//! calculator subset; a calibrated space is the array form of ISO
+//! 32000-1 §8.6.5 (`[/CalGray dict]`, `[/CalRGB dict]`, `[/Lab dict]`)
+//! whose dictionary carries only the entries that differ from their
+//! defaults beside the required `WhitePoint`; a pattern space with an
+//! underlying space is the array form `[/Pattern base]`, while one
+//! without is selected by its family name like a device space and
+//! listed nowhere. Images are image
 //! XObjects `/Imn` (§8.9.5) with their samples in the Flate container,
 //! reduced first when the downsampling parameters say so (see
 //! `downsample`); an image that arrived as a DCT stream keeps its bytes
@@ -78,9 +82,46 @@ enum Form {
         hival: u16,
         lookup: Vec<u8>,
     },
+    CalGray {
+        white: [f32; 3],
+        black: [f32; 3],
+        gamma: f32,
+    },
+    CalRGB {
+        white: [f32; 3],
+        black: [f32; 3],
+        gamma: [f32; 3],
+        matrix: [f32; 9],
+    },
+    Lab {
+        white: [f32; 3],
+        black: [f32; 3],
+        range: [f32; 4],
+    },
     Pattern {
         base: Option<Box<Form>>,
     },
+}
+
+const IDENTITY_3X3: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+const DEFAULT_LAB_RANGE: [f32; 4] = [-100.0, 100.0, -100.0, 100.0];
+
+/// Writes `key` as an array of `values`.
+fn put_reals(d: &mut DictBuilder<'_>, key: &str, values: &[f32]) {
+    d.key(key).array(|a| {
+        for &value in values {
+            a.real(value);
+        }
+    });
+}
+
+/// The entries every calibrated space's dictionary opens with: the white
+/// point, and the black point when it is not the default zero.
+fn put_points(d: &mut DictBuilder<'_>, white: &[f32; 3], black: &[f32; 3]) {
+    put_reals(d, "WhitePoint", white);
+    if *black != [0.0; 3] {
+        put_reals(d, "BlackPoint", black);
+    }
 }
 
 impl Form {
@@ -127,6 +168,49 @@ impl Form {
                 base.put(a.item());
                 a.int(i64::from(*hival));
                 a.hex_string(lookup);
+            }),
+            Form::CalGray {
+                white,
+                black,
+                gamma,
+            } => v.array(|a| {
+                a.name("CalGray");
+                a.dict(|d| {
+                    put_points(d, white, black);
+                    if *gamma != 1.0 {
+                        d.key("Gamma").real(*gamma);
+                    }
+                });
+            }),
+            Form::CalRGB {
+                white,
+                black,
+                gamma,
+                matrix,
+            } => v.array(|a| {
+                a.name("CalRGB");
+                a.dict(|d| {
+                    put_points(d, white, black);
+                    if *gamma != [1.0; 3] {
+                        put_reals(d, "Gamma", gamma);
+                    }
+                    if *matrix != IDENTITY_3X3 {
+                        put_reals(d, "Matrix", matrix);
+                    }
+                });
+            }),
+            Form::Lab {
+                white,
+                black,
+                range,
+            } => v.array(|a| {
+                a.name("Lab");
+                a.dict(|d| {
+                    put_points(d, white, black);
+                    if *range != DEFAULT_LAB_RANGE {
+                        put_reals(d, "Range", range);
+                    }
+                });
             }),
             Form::Pattern { base: None } => v.name("Pattern"),
             Form::Pattern { base: Some(base) } => v.array(|a| {
@@ -217,6 +301,35 @@ fn write_space<W: Write>(
             hival: *hival,
             lookup: lookup.clone(),
         },
+        SpaceSpec::CalGray {
+            white,
+            black,
+            gamma,
+        } => Form::CalGray {
+            white: *white,
+            black: *black,
+            gamma: *gamma,
+        },
+        SpaceSpec::CalRGB {
+            white,
+            black,
+            gamma,
+            matrix,
+        } => Form::CalRGB {
+            white: *white,
+            black: *black,
+            gamma: *gamma,
+            matrix: *matrix,
+        },
+        SpaceSpec::Lab {
+            white,
+            black,
+            range,
+        } => Form::Lab {
+            white: *white,
+            black: *black,
+            range: *range,
+        },
         SpaceSpec::Pattern { base } => Form::Pattern {
             base: match base {
                 Some(base) => Some(Box::new(write_space(doc, base, filter)?)),
@@ -232,12 +345,16 @@ fn corners(b: Bounds) -> [f32; 4] {
 }
 
 /// The `Decode` a reader assumes when none is written (ISO 32000-1
-/// Table 90): the full sample range for an Indexed space, `[0 1]` per
-/// component otherwise, and `[0 1]` for a mask.
+/// Table 90): the full sample range for an Indexed space, `[0 100]` and
+/// the a*/b* range for a Lab space, `[0 1]` per component otherwise, and
+/// `[0 1]` for a mask.
 fn default_decode(spec: &ImageSpec) -> Vec<f32> {
     match &spec.color_space {
         Some(SpaceSpec::Indexed { .. }) => {
             vec![0.0, 2f32.powi(i32::from(spec.bits_per_component)) - 1.0]
+        }
+        Some(SpaceSpec::Lab { range, .. }) => {
+            vec![0.0, 100.0, range[0], range[1], range[2], range[3]]
         }
         Some(space) => [0.0, 1.0].repeat(space.components()),
         None => vec![0.0, 1.0],

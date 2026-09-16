@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a monitor-like piecewise space converts to Lab. The decode
+% procedures are a linear toe under a power curve, so the space does not
+% collapse (a gamma would); a mid grey and the space's red are set and
+% filled, each converted through the procedures and the matrix.
+[/CIEBasedABC <<
+  /WhitePoint [0.95 1 1.09]
+  /DecodeABC [
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+    { dup 0.05 le { 12 div } { 0.06 add 1.06 div 2.2 exp } ifelse } bind
+  ]
+  /MatrixABC [0.41 0.21 0.02  0.36 0.72 0.12  0.18 0.07 0.95]
+>>] setcolorspace
+0.5 0.5 0.5 setcolor
+100 100 200 100 rectfill
+1 0 0 setcolor
+100 300 200 100 rectfill
+showpage

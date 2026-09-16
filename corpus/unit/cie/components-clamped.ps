@@ -1,0 +1,19 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.5
+% expect-output: 0.0
+% expect-output: 0.5
+% expect-output: 3
+% Scenario: components are clamped to their range without error (PLRM3
+% Table 4.6, RangeA). A component above the range reads back as the
+% maximum, one below as the minimum; a range that excludes zero gives
+% the nearest valid initial colour; setcolor consumes exactly the
+% family's components.
+[/CIEBasedA << /WhitePoint [0.9505 1 1.089] /RangeA [0 0.5] >>] setcolorspace
+2 setcolor currentcolor ==
+-1 setcolor currentcolor ==
+[/CIEBasedA << /WhitePoint [0.9505 1 1.089] /RangeA [0.5 1] >>] setcolorspace
+currentcolor ==
+1 2 3 [/CIEBasedABC << /WhitePoint [0.9505 1 1.089] >>] setcolorspace
+0.1 0.2 0.3 setcolor count ==

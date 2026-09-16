@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: MIT
 
 //! The resource operators (PLRM3 §3.9) over the `Font`, `Encoding`,
-//! `ProcSet`, `FontSet`, `CMap`, `CIDFont`, `Pattern`, and `Form`
-//! categories. Each category has a local and a global instance
-//! dictionary selected by the allocation mode, plus its built-in
-//! instances: the resident fonts, the two encoding arrays in
-//! `systemdict`, the `FontSetInit` and `CIDInit` procedure sets, and the
-//! predefined CMaps, loaded on first use. A built-in instance reports
-//! status 2 until it has been loaded — a resident face materialised, a
-//! predefined CMap's program run, a procedure set found — and 1 from
-//! then on; `restore` does not clear that, the loaded object living in
-//! global VM. `Pattern` and `Form` have no built-in instances; their
-//! `defineresource` checks the dictionary's shape (`pattern::check_dict`
-//! and `form::check_dict`), which other interpreters do not.
+//! `ProcSet`, `FontSet`, `CMap`, `CIDFont`, `Pattern`, `Form`,
+//! `ColorRendering`, and `ColorSpace` categories. Each category has a
+//! local and a global instance dictionary selected by the allocation
+//! mode, plus its built-in instances: the resident fonts, the two
+//! encoding arrays in `systemdict`, the `FontSetInit` and `CIDInit`
+//! procedure sets, the predefined CMaps, and the `DefaultColorRendering`
+//! dictionary, loaded on first use. A built-in font, procedure set, or
+//! CMap reports status 2 until it has been loaded — a resident face
+//! materialised, a predefined CMap's program run, a procedure set found
+//! — and 1 from then on; `restore` does not clear that, the loaded
+//! object living in global VM. `Pattern` and `Form` have no built-in
+//! instances; their `defineresource` checks the dictionary's shape
+//! (`pattern::check_dict` and `form::check_dict`), which other
+//! interpreters do not, as does `ColorRendering`'s
+//! (`cie::check_rendering_dict`); a `ColorSpace` instance is any array.
 //!
 //! The implicit categories (PLRM3 §3.9.4) — `FontType`, `FMapType`,
 //! `Filter`, `ColorSpaceFamily`, `Category`, `Generic` — describe this
@@ -28,7 +31,7 @@ use crate::interp::{Category, Frame, Interp, LoopFrame, ResourceKey};
 use crate::object::{Access, Object, Type};
 use crate::ops::array::bytes;
 use crate::ops::cidinit::{self, Resolved};
-use crate::ops::{font, form, pattern};
+use crate::ops::{cie, font, form, pattern};
 
 op_table! { OPS {
     "findresource" => findresource, [Any, Name];
@@ -48,6 +51,8 @@ enum Kind {
     CidFont,
     Pattern,
     Form,
+    ColorRendering,
+    ColorSpace,
     Implicit(Implicit),
 }
 
@@ -84,7 +89,11 @@ pub(crate) const FILTERS: [&str; 13] = [
     "SubFileDecode",
 ];
 /// The families the colour boundary carries, sorted.
-pub(crate) const COLOR_SPACE_FAMILIES: [&str; 7] = [
+pub(crate) const COLOR_SPACE_FAMILIES: [&str; 11] = [
+    "CIEBasedA",
+    "CIEBasedABC",
+    "CIEBasedDEF",
+    "CIEBasedDEFG",
     "DeviceCMYK",
     "DeviceGray",
     "DeviceN",
@@ -94,10 +103,12 @@ pub(crate) const COLOR_SPACE_FAMILIES: [&str; 7] = [
     "Separation",
 ];
 /// Every category name, the implicit ones included, sorted.
-pub(crate) const CATEGORIES: [&str; 14] = [
+pub(crate) const CATEGORIES: [&str; 16] = [
     "CIDFont",
     "CMap",
     "Category",
+    "ColorRendering",
+    "ColorSpace",
     "ColorSpaceFamily",
     "Encoding",
     "FMapType",
@@ -155,6 +166,7 @@ impl Implicit {
 
 const BUILTIN_ENCODINGS: [&str; 2] = ["ISOLatin1Encoding", "StandardEncoding"];
 const BUILTIN_PROCSETS: [&str; 2] = ["CIDInit", "FontSetInit"];
+const BUILTIN_RENDERINGS: [&str; 1] = ["DefaultColorRendering"];
 
 /// Status of an instance defined by the program, in VM.
 const STATUS_DEFINED: i32 = 0;
@@ -174,6 +186,8 @@ fn kind(i: &Interp, category: Object) -> Result<Kind, VmError> {
         b"CIDFont" => Ok(Kind::CidFont),
         b"Pattern" => Ok(Kind::Pattern),
         b"Form" => Ok(Kind::Form),
+        b"ColorRendering" => Ok(Kind::ColorRendering),
+        b"ColorSpace" => Ok(Kind::ColorSpace),
         name => Implicit::from_name(name)
             .map(Kind::Implicit)
             .ok_or(VmError::Undefined),
@@ -191,6 +205,8 @@ fn dicts(i: &Interp, kind: Kind) -> Option<Category> {
         Kind::CidFont => i.cidfont_category,
         Kind::Pattern => i.pattern_category,
         Kind::Form => i.form_category,
+        Kind::ColorRendering => i.color_rendering_category,
+        Kind::ColorSpace => i.color_space_category,
         Kind::Implicit(_) => return None,
     })
 }
@@ -229,6 +245,9 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
             }
             None => None,
         }),
+        Kind::ColorRendering if name == b"DefaultColorRendering" => {
+            cie::default_instance(i).map(Some)
+        }
         // Predefined CMaps are resolved by `findresource` itself, since
         // loading one runs a program.
         Kind::FontSet
@@ -236,6 +255,8 @@ fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, Vm
         | Kind::CidFont
         | Kind::Pattern
         | Kind::Form
+        | Kind::ColorRendering
+        | Kind::ColorSpace
         | Kind::Implicit(_) => Ok(None),
     }
 }
@@ -256,6 +277,8 @@ fn loaded(i: &Interp, kind: Kind, name: &[u8]) -> bool {
         | Kind::CidFont
         | Kind::Pattern
         | Kind::Form
+        | Kind::ColorRendering
+        | Kind::ColorSpace
         | Kind::Implicit(_) => false,
     }
 }
@@ -266,7 +289,13 @@ fn has_builtin(kind: Kind, name: &[u8]) -> bool {
         Kind::Encoding => BUILTIN_ENCODINGS.iter().any(|e| e.as_bytes() == name),
         Kind::ProcSet => BUILTIN_PROCSETS.iter().any(|p| p.as_bytes() == name),
         Kind::CMap => cidinit::is_predefined(name),
-        Kind::FontSet | Kind::CidFont | Kind::Pattern | Kind::Form | Kind::Implicit(_) => false,
+        Kind::ColorRendering => BUILTIN_RENDERINGS.iter().any(|r| r.as_bytes() == name),
+        Kind::FontSet
+        | Kind::CidFont
+        | Kind::Pattern
+        | Kind::Form
+        | Kind::ColorSpace
+        | Kind::Implicit(_) => false,
     }
 }
 
@@ -346,7 +375,7 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
                 return Ok(());
             }
         }
-        Kind::CMap | Kind::Pattern | Kind::Form => {
+        Kind::CMap | Kind::Pattern | Kind::Form | Kind::ColorRendering => {
             match kind {
                 Kind::CMap if !cidinit::is_cmap_dict(i, instance) => {
                     return Err(VmError::TypeCheck);
@@ -355,6 +384,9 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
                 // type, so `typecheck` (PLRM3 §8.2 `defineresource`).
                 Kind::Pattern => pattern::check_dict(i, instance, VmError::TypeCheck)?,
                 Kind::Form => form::check_dict(i, instance, VmError::TypeCheck)?,
+                Kind::ColorRendering => {
+                    cie::check_rendering_dict(i, instance, VmError::TypeCheck)?;
+                }
                 _ => {}
             }
             let key = i.mem.dict_key(key)?;
@@ -367,7 +399,7 @@ fn defineresource(i: &mut Interp) -> Result<(), VmError> {
             i.mem.dict_put(dict, key, instance)?;
             i.mem.dict_set_access(instance, Access::ReadOnly)?;
         }
-        Kind::Encoding | Kind::ProcSet | Kind::FontSet => {
+        Kind::Encoding | Kind::ProcSet | Kind::FontSet | Kind::ColorSpace => {
             let wanted = match kind {
                 Kind::ProcSet => Type::Dict,
                 _ => Type::Array,
@@ -408,7 +440,9 @@ fn undefineresource(i: &mut Interp) -> Result<(), VmError> {
         | Kind::CMap
         | Kind::CidFont
         | Kind::Pattern
-        | Kind::Form => {
+        | Kind::Form
+        | Kind::ColorRendering
+        | Kind::ColorSpace => {
             let key = i.mem.dict_key(key)?;
             let category = dicts(i, kind).expect("a defined category");
             i.mem.dict_undef(category.local, key)?;
@@ -446,7 +480,8 @@ fn keys(i: &mut Interp, kind: Kind, template: &[u8]) -> Result<Vec<ResourceKey>,
         Kind::Encoding => BUILTIN_ENCODINGS.to_vec(),
         Kind::ProcSet => BUILTIN_PROCSETS.to_vec(),
         Kind::CMap => cidinit::predefined_names(),
-        Kind::FontSet | Kind::CidFont | Kind::Pattern | Kind::Form => Vec::new(),
+        Kind::ColorRendering => BUILTIN_RENDERINGS.to_vec(),
+        Kind::FontSet | Kind::CidFont | Kind::Pattern | Kind::Form | Kind::ColorSpace => Vec::new(),
         Kind::Implicit(category) => {
             return Ok(category
                 .members()

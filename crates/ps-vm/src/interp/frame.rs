@@ -7,6 +7,7 @@ use crate::graphics::{FormInfo, Seg};
 use crate::names::Atom;
 use crate::object::{Handle, Object};
 use crate::ops::Num;
+use crate::ops::cie::CieJob;
 use crate::ops::image::ImageAcquisition;
 use crate::ops::show::ShowFrame;
 use crate::scanner::Scanner;
@@ -173,6 +174,17 @@ pub enum LoopFrame {
         info: FormInfo,
         started: bool,
     },
+    /// A CIE-based colour conversion (PLRM3 §4.8.3) on behalf of
+    /// `setcolor`, `setcolorspace`, or `image`, whose operands are
+    /// already consumed: each step runs one of the space's decode
+    /// procedures with its input on the operand stack and takes the one
+    /// number it leaves (`typecheck` otherwise), the stack cut back to
+    /// where the input went; the job continues natively between the
+    /// procedure stages and finishes the operator when the last result
+    /// is in.
+    CieDecode {
+        job: Box<CieJob>,
+    },
 }
 
 /// A resource instance's key as `resourceforall` enumerates it.
@@ -198,6 +210,7 @@ impl LoopFrame {
             | LoopFrame::FormBody { body, .. } => *body,
             LoopFrame::PathForAll { procs, .. } => procs[0],
             LoopFrame::Show(frame) => frame.procedure(),
+            LoopFrame::CieDecode { job } => job.current_procedure(),
         }
     }
 
@@ -213,6 +226,7 @@ impl LoopFrame {
             LoopFrame::PatternCell { dict, .. } | LoopFrame::FormBody { dict, .. } => {
                 objects.push(*dict);
             }
+            LoopFrame::CieDecode { job } => objects.extend(job.references()),
             _ => {}
         }
         objects

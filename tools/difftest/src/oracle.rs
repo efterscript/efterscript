@@ -27,8 +27,12 @@
 //! name a requirement in the expected-divergences registry, or the run
 //! aborts before comparing anything. A file carrying `% oracle: skip
 //! <reason>` is reported as `skipped` with the reason and nothing is run
-//! or compared for it. The exit status is non-zero only for `fail`.
-//! Everything the commands produce stays under `target/oracle/<path>/`.
+//! or compared for it. A file carrying `% oracle: colour` has both
+//! documents rendered by the profile's `render_color` rasteriser and
+//! its pages compared channel by channel; when the profile has no such
+//! rasteriser the file is reported as `skipped` with a note naming the
+//! missing key. The exit status is non-zero only for `fail`. Everything
+//! the commands produce stays under `target/oracle/<path>/`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
@@ -405,20 +409,23 @@ fn rendered_pages(dir: &Path, side: &str) -> Vec<PathBuf> {
     }
 }
 
+/// Renders `pdf` through the profile's grey rasteriser, or its colour
+/// one when `colour` (which the caller has checked the profile has).
 fn render(
     settings: &Settings<'_>,
     dir: &Path,
     side: &str,
     pdf: &Path,
+    colour: bool,
     deadline: Instant,
 ) -> Result<Vec<PathBuf>, String> {
     let pattern = dir.join(format!("{side}-%d.pnm"));
-    let command = profile::fill(
-        &settings.profile.render,
-        pdf,
-        Some(&pattern),
-        settings.profile.dpi,
-    );
+    let template = match (colour, &settings.profile.render_color) {
+        (true, Some(template)) => template,
+        (true, None) => return Err("the profile has no `render_color` rasteriser".to_string()),
+        (false, _) => &settings.profile.render,
+    };
+    let command = profile::fill(template, pdf, Some(&pattern), settings.profile.dpi);
     let stderr = dir.join(format!("render-{side}.stderr"));
     match run_command(
         &command,
@@ -621,11 +628,13 @@ fn blank(image: &pnm::Image) -> bool {
 
 /// How a file is expected to end: the error it declares, if any, and
 /// whether the reference interpreter's output showed the profile's
-/// error marker (`None` for a profile without one).
+/// error marker (`None` for a profile without one); and whether its
+/// pages are compared in colour.
 #[derive(Clone, Copy)]
 struct Ending<'a> {
     declared: Option<&'a str>,
     reference_error: Option<bool>,
+    colour: bool,
 }
 
 /// The document comparison: mismatches go into `report.reasons`; an
@@ -643,6 +652,7 @@ fn compare_documents(
     let Ending {
         declared,
         reference_error,
+        colour,
     } = ending;
     let ours_pdf = dir.join("ours.pdf");
     let ours_document = document(&actual.collected)?;
@@ -695,7 +705,7 @@ fn compare_documents(
     let ours = if actual.collected.pages.is_empty() {
         Vec::new()
     } else {
-        render(settings, dir, "ours", &ours_pdf, deadline)?
+        render(settings, dir, "ours", &ours_pdf, colour, deadline)?
     };
     if ours.len() != actual.collected.pages.len() {
         return Err(format!(
@@ -704,8 +714,11 @@ fn compare_documents(
             actual.collected.pages.len()
         ));
     }
-    let mut theirs = render(settings, dir, "theirs", &theirs_pdf, deadline)?;
+    let mut theirs = render(settings, dir, "theirs", &theirs_pdf, colour, deadline)?;
     report.pages_theirs = Some(theirs.len());
+    if colour && !theirs.is_empty() {
+        report.notes.push("compared in colour".to_string());
+    }
     // A converter may close a job that showed nothing with one empty
     // page; such a page is not a page the program showed.
     let theirs_text = if profile.text.is_some() {
@@ -946,6 +959,13 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         report.skip = Some(reason);
         return Checked::Report(report);
     }
+    if expected.oracle_colour && settings.profile.render_color.is_none() {
+        report.verdict = Verdict::Skipped;
+        report.skip = Some(
+            "compared in colour, which needs the profile's `render_color` rasteriser".to_string(),
+        );
+        return Checked::Report(report);
+    }
     let actual = execute_with_stdin(&bytes, expected.graphics, settings.prelude.as_deref());
     report.pages_ours = actual.collected.pages.len();
     let prepared = cleared.and_then(|()| std::fs::create_dir_all(&dir));
@@ -986,6 +1006,7 @@ pub fn check_file(settings: &Settings<'_>, path: &Path) -> Checked {
         Ending {
             declared: expected.error.as_deref(),
             reference_error,
+            colour: expected.oracle_colour,
         },
         &mut report,
         deadline,
@@ -1442,6 +1463,29 @@ while [ \"$n\" -le \"$total\" ]; do
 done
 ";
 
+    /// The rasteriser in colour: as `RENDER`, writing P6 pages with three
+    /// bytes per pixel.
+    const RENDER_COLOR: &str = "#!/bin/sh
+export LC_ALL=C
+in=$1; out=$2; dpi=$3
+count=$(grep -a -c '/MediaBox' \"$in\")
+fill=$(sed -n 's/^%fake-fill //p' \"$in\" | tail -n 1)
+n=1
+while [ \"$n\" -le \"$count\" ]; do
+  box=$(grep -a -o '/MediaBox \\[[^]]*\\]' \"$in\" | sed -n \"${n}p\")
+  set -- $box
+  w=$(( ( ($5 - $3) * dpi + 36 ) / 72 ))
+  h=$(( ( ($6 - $4) * dpi + 36 ) / 72 ))
+  v=255; c=0
+  if [ -n \"$fill\" ]; then set -- $fill; v=$1; c=$2; fi
+  file=$(printf \"$out\" \"$n\")
+  printf 'P6\\n%d %d\\n255\\n' \"$w\" \"$h\" > \"$file\"
+  if [ \"$c\" -gt 0 ]; then head -c $(( c * 3 )) /dev/zero | tr '\\0' \"\\\\$(printf '%03o' \"$v\")\" >> \"$file\"; fi
+  head -c $(( (w * h - c) * 3 )) /dev/zero | tr '\\0' '\\377' >> \"$file\"
+  n=$((n + 1))
+done
+";
+
     /// An interpreter whose output is the file's own declarations plus
     /// the control's `output` lines.
     const RUN: &str = "#!/bin/sh
@@ -1473,7 +1517,13 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             Self::build(limit, timeout_ms, text, "")
         }
 
-        /// A fixture whose profile also carries `extra` lines.
+        /// A fixture whose profile also has the colour rasteriser.
+        fn colour(limit: f64, timeout_ms: u64) -> Self {
+            Self::build(limit, timeout_ms, false, "render_color = \"colour\"\n")
+        }
+
+        /// A fixture whose profile also carries `extra` lines; the line
+        /// `render_color = "colour"` stands for the colour rasteriser.
         fn build(limit: f64, timeout_ms: u64, text: bool, extra: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
                 "efterscript-oracle-{}-{}",
@@ -1489,6 +1539,13 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             if text {
                 text_line = format!("text = \"sh {} {{in}}\"\n", script("text.sh", TEXT));
             }
+            let extra = extra.replace(
+                "render_color = \"colour\"",
+                &format!(
+                    "render_color = \"sh {} {{in}} {{out}} {{dpi}}\"",
+                    script("render_color.sh", RENDER_COLOR)
+                ),
+            );
             let profile_text = format!(
                 "name = \"fake\"\nversion = \"0\"\nps2pdf = \"sh {} {{in}} {{out}}\"\nrender = \"sh {} {{in}} {{out}} {{dpi}}\"\nrun = \"sh {} {{in}}\"\n{text_line}limit = {limit}\ntimeout_ms = {timeout_ms}\n{extra}",
                 script("ps2pdf.sh", PS2PDF),
@@ -1699,6 +1756,49 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
         assert_eq!(strict.check(&path).verdict, Verdict::Fail);
         strict.control("mark %fake-fill 240 1000\n");
         assert_eq!(strict.check(&path).verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn a_file_compared_in_colour_needs_the_colour_rasteriser() {
+        let colour = DRAWING.replacen("%!PS\n", "%!PS\n% oracle: colour\n", 1);
+        // Without `render_color` the file is skipped, naming the key.
+        let grey = Fixture::new(0.005, 20_000, false);
+        let path = grey.program("colour.ps", &colour);
+        let report = grey.check(&path);
+        assert_eq!(report.verdict, Verdict::Skipped);
+        assert!(
+            report.skip.as_deref().unwrap().contains("`render_color`"),
+            "{:?}",
+            report.skip
+        );
+        assert!(report.notes.is_empty() && report.fractions.is_empty());
+        // A file without the directive keeps the grey path.
+        let plain = grey.program("plain.ps", DRAWING);
+        assert_eq!(grey.check(&plain).verdict, Verdict::Pass);
+
+        // With it, both sides render as P6 and compare per channel.
+        let fixture = Fixture::colour(0.005, 20_000);
+        let path = fixture.program("colour.ps", &colour);
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Pass, "{:?}", report.reasons);
+        assert_eq!(report.fractions, [0.0]);
+        assert_eq!(report.notes, ["compared in colour"]);
+        let out = fixture.dir.join("out").join("external").join("colour.ps");
+        for side in ["ours", "theirs"] {
+            let page = std::fs::read(out.join(format!("{side}-1.pnm"))).unwrap();
+            assert!(page.starts_with(b"P6\n"), "{side}");
+        }
+        fixture.control("mark %fake-fill 0 1000\n");
+        let report = fixture.check(&path);
+        assert_eq!(report.verdict, Verdict::Fail);
+        assert!(report.fractions[0] > 0.005, "{:?}", report.fractions);
+        // The grey path of the same profile is untouched.
+        let plain = fixture.program("plain.ps", DRAWING);
+        let report = fixture.check(&plain);
+        assert_eq!(report.verdict, Verdict::Fail);
+        let out = fixture.dir.join("out").join("external").join("plain.ps");
+        let page = std::fs::read(out.join("theirs-1.pnm")).unwrap();
+        assert!(page.starts_with(b"P5\n"));
     }
 
     #[test]
@@ -2274,6 +2374,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("bitshift-zero-fill", 1),
                 ("capture-refuses-page-operators", 2),
                 ("cexec-defined", 1),
+                ("cie-rendering-path", 2),
                 ("cvrs-negative-unsigned", 1),
                 ("distiller-params-typecheck", 1),
                 ("distiller-params-unknown-keys", 1),

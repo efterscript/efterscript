@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a pass-through image. An eight-bit image in the XYZ space,
+% which collapses to CalRGB with unit gammas and the identity matrix,
+% keeps its samples; without a Decode entry the samples map onto the
+% space's RangeABC, which the image carries as its decode array.
+[/CIEBasedABC <<
+  /WhitePoint [0.9505 1 1.089]
+  /RangeABC [0 0.9505 0 1 0 1]
+  /RangeLMN [0 0.9505 0 1 0 1]
+>>] setcolorspace
+gsave
+100 100 translate 200 200 scale
+<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+   /ImageMatrix [2 0 0 -2 0 2]
+   /DataSource <ff0000 00ff00 0000ff 808080>
+>> image
+grestore
+showpage

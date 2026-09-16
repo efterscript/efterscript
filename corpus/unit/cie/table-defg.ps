@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a four-dimensional table. A CIEBasedDEFG space with a
+% 2x2x2x2 table whose entry number k = 8h + 4i + 2j + k' holds the bytes
+% (100 + 8k, 110 + 8k, 120 + 8k), near-neutral XYZ values through the
+% identity matrices; the colour of all ones takes the last entry, the
+% alternating corner (0, 1, 0, 1) entry 5, and all halves the mean of
+% the sixteen.
+[/CIEBasedDEFG <<
+  /WhitePoint [0.9505 1 1.089]
+  /Table [2 2 2 2 [
+    [<646e786c7680747e887c8690> <848e988c96a0949ea89ca6b0>]
+    [<a4aeb8acb6c0b4bec8bcc6d0> <c4ced8ccd6e0d4dee8dce6f0>]
+  ]]
+>>] setcolorspace
+1 1 1 1 setcolor
+100 100 200 100 rectfill
+0 1 0 1 setcolor
+100 300 200 100 rectfill
+0.5 0.5 0.5 0.5 setcolor
+100 500 200 100 rectfill
+showpage

@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: true
+% Scenario: the UseCIEColor page-device key (PLRM3 section 6.2.5) is
+% accepted and read back; the remapping it asks for is not performed.
+<< /UseCIEColor true >> setpagedevice
+currentpagedevice /UseCIEColor get ==
