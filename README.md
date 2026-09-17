@@ -1,148 +1,186 @@
 # EfterScript
 
-A memory-safe, embeddable interpreter for the PostScript® language, written in
-Rust, whose primary output is PDF. It executes a PostScript program, captures
-the marking operations it performs, and serialises them as archival-quality
-PDF — vectors stay vectors, text stays text, colour spaces are preserved.
-Nothing is rasterised.
+A memory-safe, embeddable interpreter compatible with the PostScript
+language, written in Rust, whose primary output is PDF. It executes a
+program, captures the marking operations it performs, and serialises them
+as archival-quality PDF: vectors stay vectors, text stays text, colour
+spaces are preserved. Nothing is rasterised.
 
-**Status:** pre-implementation. The architecture, scope, and process are
-decided; the first crates are being built.
+**Status:** working, pre-1.0. The language surface is complete through
+LanguageLevel 3 for the constructs that distillation needs: the full
+operator set for objects, control, files, and resources; filters; user
+paths, forms, and tiling patterns; device, Separation, DeviceN, Indexed,
+and CIE-based colour; shadings and function dictionaries; Type 1, Type 3,
+TrueType, CFF, and CID-keyed fonts with embedding, subsetting, and
+ToUnicode; `pdfmark`; the distillation parameter surface; and a printer
+identity layer. The distillation path produces PDF 1.7 with a hand-written
+writer and no external dependencies. A session library runs one job at a
+time from bytes fed in pieces, with a C interface and a WebAssembly
+build. Compatibility is measured, not promised: every behaviour is pinned
+by a corpus of hand-written programs with golden outputs, checked by a
+differential harness, and every deliberate departure from reference
+behaviour is recorded in a public registry. Not yet done: rasterisation
+(by design), a few LanguageLevel 3 features listed in the specs, and
+publication to the crate registry.
+
+## Try it
+
+```
+cargo build --release
+cargo run --release -p efterscript-cli -- pdf input.ps output.pdf
+cargo test --workspace
+cargo run -q -p difftest -- run
+```
+
+The command-line tool has three modes: `run` executes a program and prints
+its output, `ir` dumps the captured vector operations as text, and `pdf`
+distils. `--prelude` runs a program once at the server level before the
+job, and `--identity` seeds the printer identity.
 
 ## What it is for
 
-- Converting untrusted PostScript documents to PDF safely — in servers,
-  serverless functions, sandboxes, and browsers (WebAssembly is a supported
-  target).
-- Embedding a PostScript-language engine in other software through a clean
-  library API, with a command-line tool as a thin wrapper.
+- Converting untrusted documents in the PostScript language to PDF safely,
+  in servers, serverless functions, sandboxes, and browsers.
+- Embedding the engine in other software through a library API, with the
+  command-line tool as a thin wrapper.
+- Standing in for a network printer: the session library accepts a print
+  job as it arrives, answers the job's queries, and yields a PDF.
 
 ## Key values
 
 **Security by construction.** The interpreter holds no ambient authority.
-File access, pipes, devices, and host-font enumeration exist only as
-capabilities the embedder injects; a document cannot reach anything it was not
-explicitly handed. This replaces the traditional model of a fully capable
-interpreter with dangerous operators filtered out afterwards. Memory safety
-comes from Rust throughout the core; image and font decoders — historically
-the riskiest surface — run behind sandbox boundaries as replaceable
-dependencies rather than in-house code.
+Files, the clock, and the output sink exist only as capabilities the
+embedder injects; a document cannot reach anything it was not handed. The
+library crates contain no unsafe code and no external dependencies: the
+decoders for the filter chain, the image and font formats, and the PDF
+writer are all in-house safe Rust, so there is no third-party parser
+behind the boundary to sandbox. Unsafe code exists only in the C
+interface of the session library.
 
-**A strict layered architecture.** PostScript VM → PDF-shaped intermediate
-representation → pluggable backends. Each layer is independently usable and
-published as its own crate: the VM is a PostScript scripting engine on its
-own, the font layer serves any document tooling, the PDF writer knows nothing
-about PostScript. Raster, SVG, and GPU sinks are reserved slots, not v1 code.
+**A strict layered architecture.** The language VM dispatches graphics
+through a trait to a graphics layer that produces a PDF-shaped
+intermediate representation, which pluggable backends consume. Each layer
+is a crate on its own: the VM is a scripting engine by itself, the font
+layer serves any document tooling, the PDF writer knows nothing about the
+PostScript language. Raster and SVG sinks are reserved slots, not v1 code.
 
 **Vector-preserving distillation as the product.** PDF's imaging model is
-close to a superset of PostScript's, so distillation is capture-and-serialise,
-not render-and-embed. Fonts are embedded and subsetted; ToUnicode maps are
-derived from real encodings and CMaps rather than glyph-name guessing, so
-text extraction and accessibility work; DeviceN, Separation, and ICC colour
-pass through untouched; overprint is recorded, not simulated. Parameter
-compatibility with the established distillation configuration surface
-(`setdistillerparams`) is a goal.
+close to a superset of the language's, so distillation is capture and
+serialise, not render and embed. Fonts are embedded and subsetted;
+ToUnicode maps come from real encodings and CMaps rather than glyph-name
+guessing, so text extraction works; colour passes through unconverted,
+CIE-based colour as calibrated PDF colour; patterns, forms, and shadings
+become their PDF counterparts; overprint is recorded. The
+`setdistillerparams` parameter surface is honoured.
 
-**Library first, everywhere.** A clean embedding API, deterministic output
-for golden testing, pure-function parsers built for fuzzing, and marks-to-
-source traceability ("which tokens drew this?") for debugging and text
-extraction. The CLI comes second; WASM is first-class.
+**Library first, everywhere.** A small embedding API, deterministic output
+for golden testing, parsers built for fuzzing, and a text dump of the
+intermediate representation for debugging. The command line comes second;
+WebAssembly is a checked build target.
 
-**Test-driven at scale from day one.** A hand-written corpus authored from the
-published specification, a property-based PostScript program generator,
-semantic (never byte-exact) differential comparison against golden outputs,
-and a formal **expected divergence** verdict for deliberate compatibility
-decisions — so compatibility with decades of driver-generated PostScript is a
-measured, incremental property rather than a promise.
+**Test-driven at scale.** A hand-written corpus authored from the
+published language reference, a property-based program generator, a
+differential harness comparing our output with a reference converter's
+rendering, and a registry of expected divergences for deliberate
+compatibility decisions, so compatibility with decades of driver-generated
+programs is a measured, incremental property.
 
-**Permissive licensing and rigorous IP hygiene.** MIT, from the first commit.
+**Permissive licensing and strict IP hygiene.** MIT from the first commit.
 Every file carries an SPDX header; the language is implemented from the
-published specification and from black-box behavioural observation only.
-Reference material and any encumbered test inputs live outside this
-repository, which is treated as public even while private.
+published reference and from black-box observation only, never from
+another implementation's code; reference material and encumbered test
+inputs live outside this repository, which has been treated as public
+since day one.
 
 ## Explicit non-goals for v1
 
 Rasterisation of any kind, JIT compilation, transparency compositing,
-print-production colour (separations, trapping, screening), and a
-general-purpose multi-client print spooler. Each is a reserved slot revisited
-only by an explicit proposal; none is rejected outright.
+print-production colour management, and a multi-client print spooler.
+Each is a reserved slot revisited only by an explicit proposal.
 
 ## Repository layout
 
 ```
-crates/ps-vm           scanner, object model, stacks, save/restore, resources, errors
-crates/ps-graphics     graphics state and the PDF-shaped vector IR; sink traits
+crates/ps-vm           scanner, object model, stacks, save/restore, resources, operators
+crates/ps-graphics     graphics state, capture, and the PDF-shaped vector IR
 crates/ps-fonts        Type 1 / CFF / TrueType parsing, metrics, subsetting, ToUnicode
+crates/codec           inflate, deflate, LZW, predictors
 crates/pdf-out         low-level PDF serialisation, zero PostScript knowledge
 crates/remelt          the distillation engine: policies, pdfmark, PDF writing
-crates/platen          session front-end: a job fed in pieces, replies and error reports
-                       read back, a PDF at the end; C ABI and Emscripten build
+crates/platen          session front-end: a job fed in pieces, replies and errors
+                       read back, a PDF at the end; C ABI and WebAssembly build
                        (see crates/platen/docs/embedding.md)
-crates/efterscript-cli PostScript-to-PDF command-line tool
-tools/psgen            property-based PostScript program generator
-tools/difftest         differential test harness
+crates/efterscript-cli the command-line tool
+tools/psgen            property-based program generator
+tools/difftest         corpus runner and differential harness
 corpus/                unit inputs, generator seeds, golden outputs (text, diffable)
 openspec/              decision registry (see below)
 xtask/                 workspace automation (`cargo xtask`)
 ```
 
-Internal crate names come from letterpress vocabulary: *remelt* (recasting old
-type into new) and *platen* (the plate that presses paper against type).
+Published crates carry the `efterscript-` prefix; the directory names
+above are the private-phase names. Internal codenames come from
+letterpress vocabulary: *remelt* (recasting old type into new) and
+*platen* (the plate that presses paper against type).
 
 ## Development process: OpenSpec
 
-This project is spec-driven and uses [OpenSpec](https://github.com/Fission-AI/OpenSpec)
-as its decision registry. Architecture, policies, scope decisions, and every
+The project is spec-driven and uses [OpenSpec](https://github.com/Fission-AI/OpenSpec)
+as its decision registry. Architecture, policies, scope, and every
 recorded divergence from reference behaviour live in `openspec/` as
-proposals and delta specs. One governing rule: the published PostScript
-Language Reference owns language semantics and is *cited*, never paraphrased;
-the corpus owns behavioural truth; OpenSpec owns what neither covers.
+proposals, designs, and specs; the archived changes carry implementation
+notes explaining what the code does and why. One governing rule: the
+published language reference owns semantics and is cited by section,
+never paraphrased; the corpus owns behavioural truth; OpenSpec owns what
+neither covers.
 
-Significant changes start as an OpenSpec proposal. Trivial fixes may be
-committed directly.
+Contributions of behaviour start as an OpenSpec proposal, which is how a
+change is discussed before code exists. Documentation and trivial fixes
+are committed directly.
 
 ## Testing tiers
 
-The standard pipeline runs entirely on the public corpus in this repository
-and must stay self-sufficient. An additional private tier is activated by
-setting `EFTERSCRIPT_HELLBOX` to a local checkout and skips cleanly with a
-message when unset.
+The standard pipeline runs entirely on the public corpus in this
+repository and must stay self-sufficient. A private tier is activated by
+setting `EFTERSCRIPT_HELLBOX` to a local checkout of the reference vault
+and skips cleanly with a message when unset.
 
-That private tier exists because much of the reference material this project
-depends on is freely *available* but not freely *redistributable*. The
-PostScript Language Reference, Adobe's font and technical notes, printer
-vendors' developer documentation, and the PDF specifications can all be
-downloaded from their publishers and are legitimate to read and implement
-from — but they remain copyrighted, and committing copies here would be
-republishing them. The same applies to test inputs: a PostScript job captured
-from a real printer driver embeds the driver vendor's own prologue code,
-licensed conformance suites come with their own terms, and reference outputs
-from commercial converters or hardware are fine to keep privately but not to
-publish. All of that lives in a separate vault, one directory per source with
-its provenance recorded, and only material we hold redistribution rights to —
+The private tier exists because much of the reference material this
+project depends on is freely available but not freely redistributable.
+The language reference, the font and technical notes, printer vendors'
+developer documentation, and the PDF specifications can be downloaded
+from their publishers and are legitimate to read and implement from, but
+they remain copyrighted, and committing copies here would be republishing
+them. The same applies to test inputs: a job captured from a real printer
+driver embeds the driver vendor's own prologue, licensed conformance
+suites have their own terms, and reference outputs from commercial
+converters or hardware are fine to keep privately but not to publish. All
+of that lives in a separate vault, one directory per source with its
+provenance recorded, and only material we hold redistribution rights to,
 hand-written test files, generator seeds, our own outputs, and clean-room
-reproductions of behaviours the private material revealed — ever graduates
+reproductions of behaviours the private material revealed, ever graduates
 into this repository. The rule is applied per file at commit time: if the
-answer to "may we redistribute this?" needs a lawyer, it stays in the vault.
+answer to "may we redistribute this?" needs a lawyer, it stays in the
+vault.
 
 ## AI notice
 
 This project contains AI-generated code. Large parts of the codebase,
-documentation, and test corpus are produced with AI coding assistants under
-human direction and review. Every commit to this repository is made by a
-human maintainer; agents may prepare and stage changes but cannot commit or
-push (enforced by the repository's hooks and tool settings). Contributors
-should assume any file may have been machine-authored and review accordingly.
-The same IP-hygiene rules apply to AI-produced content as to human-written
-content: implemented from the published specification, no copied code, no
-reproduced manual text.
+documentation, and test corpus are produced with AI coding assistants
+under human direction and review. Every commit is made by a human
+maintainer; agents may prepare and stage changes but cannot commit or
+push, enforced by the repository's hooks and tool settings. Contributors
+should assume any file may have been machine-authored and review
+accordingly. The same IP-hygiene rules apply to AI-produced content as to
+human-written content: implemented from the published reference, no
+copied code, no reproduced manual text.
 
 ## License and trademarks
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
 
-PostScript is a registered trademark of Adobe. EfterScript is an independent
-implementation of the PostScript language and is not affiliated with or
-endorsed by Adobe. Other product and typeface names are trademarks of their respective
-owners and are used nominatively.
+PostScript is a registered trademark of Adobe. EfterScript is an
+independent interpreter compatible with the PostScript language and is
+not affiliated with or endorsed by Adobe. Other product and typeface
+names are trademarks of their respective owners and are used
+nominatively.
