@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 6.0
+% expect-output: 0.0
+% expect-output: 112.0
+% expect-output: 100.0
+% Scenario: setcharwidth under a scale. The glyph procedure doubles the
+% coordinate system, declares width 300 0 there, sets its own gray, and
+% fills: the glyph's width in glyph space is 600 with no box (the glyph
+% is not colour-independent), and at size 10 each glyph advances 6.
+% Expect: 6.0 0.0, then 112.0 100.0.
+/r { 1000 mul round 1000 div } def
+/Bar 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 600 800] def
+  /BuildGlyph {
+    pop pop
+    2 2 scale
+    300 0 setcharwidth
+    0.5 setgray
+    0 0 moveto 250 0 lineto 250 400 lineto closepath fill
+  } def
+end definefont pop
+/Bar findfont 10 scalefont setfont
+(a) stringwidth r exch r = =
+100 100 moveto (aa) show currentpoint r exch r = =
+showpage

@@ -30,7 +30,9 @@ use std::rc::Rc;
 use ps_fonts::{CMap, Glyph as ProgramGlyph, OutlineOp, Program, ResidentFace};
 
 use crate::error::VmError;
-use crate::graphics::{Bounds, FontInfo, FontRef, FontSource, Glyph, Matrix, Point};
+use crate::graphics::{
+    Bounds, FontInfo, FontRef, FontSource, Glyph, Matrix, Point, apply64, compose64, envelope64,
+};
 use crate::interp::{Frame, Interp, LoopFrame};
 use crate::object::{Object, Type};
 use crate::ops::array::items;
@@ -1037,6 +1039,70 @@ fn finish_glyph(i: &mut Interp, f: &mut ShowFrame, run: RunningGlyph) -> Result<
     Ok(())
 }
 
+/// The metrics a glyph procedure declares: its width vector, the box a
+/// `setcachedevice` gives, and for `setcachedevice2` the writing-mode-1
+/// width and the vertical origin.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Metrics {
+    pub(crate) width: (f32, f32),
+    pub(crate) bbox: Option<Bounds>,
+    pub(crate) vertical: Option<Vertical>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Vertical {
+    pub(crate) width: (f32, f32),
+    pub(crate) origin: (f32, f32),
+}
+
+/// `metrics`, declared under the CTM `current`, carried into glyph
+/// space, whose CTM is `glyph` (PLRM3 §5.4 and the `setcachedevice`
+/// entry: the operands are glyph-space numbers, which the reference
+/// reads through the CTM in effect at the call). Vectors go through the
+/// delta transform of `current × glyph⁻¹`, the box through the full
+/// transform and its axis-aligned envelope, computed in double precision
+/// and rounded once. An unchanged CTM returns the operands untouched, so
+/// a procedure that declares before transforming sees no rounding; a
+/// singular glyph matrix has no inverse and does the same.
+pub(crate) fn into_glyph_space(current: Matrix, glyph: Matrix, metrics: Metrics) -> Metrics {
+    if current == glyph {
+        return metrics;
+    }
+    let Some(back) = glyph.inverse64() else {
+        return metrics;
+    };
+    let carry = compose64(current.as_f64(), back);
+    let [a, b, c, d, _, _] = carry;
+    let vector = |(x, y): (f32, f32)| {
+        let (x, y) = (f64::from(x), f64::from(y));
+        (single(a * x + c * y), single(b * x + d * y))
+    };
+    let bbox = metrics.bbox.map(|box_| {
+        let corners = [
+            (box_.llx, box_.lly),
+            (box_.urx, box_.lly),
+            (box_.urx, box_.ury),
+            (box_.llx, box_.ury),
+        ]
+        .map(|(x, y)| apply64(carry, f64::from(x), f64::from(y)));
+        let [llx, lly, urx, ury] = envelope64(&corners);
+        Bounds::new(single(llx), single(lly), single(urx), single(ury))
+    });
+    Metrics {
+        width: vector(metrics.width),
+        bbox,
+        vertical: metrics.vertical.map(|v| Vertical {
+            width: vector(v.width),
+            origin: vector(v.origin),
+        }),
+    }
+}
+
+// Adding zero turns a negative zero into a plain one.
+fn single(value: f64) -> f32 {
+    value as f32 + 0.0
+}
+
 /// The glyph whose procedure is running innermost, for the width
 /// operators.
 pub(crate) fn running_glyph(i: &mut Interp) -> Option<&mut RunningGlyph> {
@@ -1143,6 +1209,97 @@ mod tests {
         assert!(f.procedure().ty() == Type::Null);
         f.next = 3;
         assert_eq!(next_code(&f), None);
+    }
+
+    fn declared(width: (f32, f32), bbox: Option<Bounds>) -> Metrics {
+        Metrics {
+            width,
+            bbox,
+            vertical: None,
+        }
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    fn bounds_near(a: Option<Bounds>, b: Bounds) -> bool {
+        let a = a.expect("a box");
+        near(a.llx, b.llx) && near(a.lly, b.lly) && near(a.urx, b.urx) && near(a.ury, b.ury)
+    }
+
+    #[test]
+    fn metrics_under_an_unchanged_ctm_are_the_operands_bit_for_bit() {
+        let glyph = Matrix([0.02, 0.0, 0.0, 0.02, 100.1, 100.7]);
+        let metrics = declared((1000.3, 0.1), Some(Bounds::new(-1.5, -2.5, 750.7, 751.9)));
+        assert_eq!(into_glyph_space(glyph, glyph, metrics), metrics);
+    }
+
+    #[test]
+    fn a_scale_before_the_declaration_shrinks_width_and_box() {
+        let glyph = Matrix([0.02, 0.0, 0.0, 0.02, 100.0, 100.0]);
+        let current = Matrix::scaling(0.5, 0.5).then(glyph);
+        let carried = into_glyph_space(
+            current,
+            glyph,
+            declared((1200.0, 0.0), Some(Bounds::new(0.0, 0.0, 1200.0, 1200.0))),
+        );
+        assert!(near(carried.width.0, 600.0) && near(carried.width.1, 0.0));
+        assert!(bounds_near(
+            carried.bbox,
+            Bounds::new(0.0, 0.0, 600.0, 600.0)
+        ));
+        assert_eq!(carried.vertical, None);
+    }
+
+    #[test]
+    fn a_translation_moves_the_box_and_leaves_the_width() {
+        let glyph = Matrix([0.02, 0.0, 0.0, 0.02, 100.0, 100.0]);
+        let current = Matrix::translation(50.0, -20.0).then(glyph);
+        let carried = into_glyph_space(
+            current,
+            glyph,
+            declared((600.0, 0.0), Some(Bounds::new(0.0, 0.0, 100.0, 200.0))),
+        );
+        assert!(near(carried.width.0, 600.0) && near(carried.width.1, 0.0));
+        assert!(bounds_near(
+            carried.bbox,
+            Bounds::new(50.0, -20.0, 150.0, 180.0)
+        ));
+    }
+
+    #[test]
+    fn a_rotation_turns_the_width_and_envelopes_the_box() {
+        let glyph = Matrix([0.02, 0.0, 0.0, 0.02, 100.0, 100.0]);
+        let current = Matrix::rotation(90.0).then(glyph);
+        let carried = into_glyph_space(
+            current,
+            glyph,
+            Metrics {
+                width: (600.0, 0.0),
+                bbox: Some(Bounds::new(0.0, 0.0, 600.0, 400.0)),
+                vertical: Some(Vertical {
+                    width: (0.0, -1000.0),
+                    origin: (300.0, 800.0),
+                }),
+            },
+        );
+        assert!(near(carried.width.0, 0.0) && near(carried.width.1, 600.0));
+        assert!(bounds_near(
+            carried.bbox,
+            Bounds::new(-400.0, 0.0, 0.0, 600.0)
+        ));
+        let vertical = carried.vertical.expect("carried");
+        assert!(near(vertical.width.0, 1000.0) && near(vertical.width.1, 0.0));
+        assert!(near(vertical.origin.0, -800.0) && near(vertical.origin.1, 300.0));
+    }
+
+    #[test]
+    fn a_singular_glyph_matrix_leaves_the_operands() {
+        let glyph = Matrix::scaling(0.0, 0.02);
+        let current = Matrix::scaling(2.0, 2.0).then(glyph);
+        let metrics = declared((500.0, 0.0), None);
+        assert_eq!(into_glyph_space(current, glyph, metrics), metrics);
     }
 
     #[test]

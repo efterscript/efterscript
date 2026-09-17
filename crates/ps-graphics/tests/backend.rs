@@ -948,6 +948,53 @@ fn type3_fonts_intern_by_family_and_encoding() {
 }
 
 #[test]
+fn glyph_matrix_is_the_ctm_at_begin_glyph_of_the_innermost_glyph() {
+    let (mut g, pages) = backend();
+    g.define_font(0, &square_font(7)).unwrap();
+    assert_eq!(g.glyph_matrix(), None);
+    g.concat(Matrix::scaling(2.0, 2.0)).unwrap();
+    g.set_font(Some(font(0, 20.0))).unwrap();
+    g.moveto(p(10.0, 10.0)).unwrap();
+    g.gsave().unwrap();
+    let outer = font(0, 20.0)
+        .matrix
+        .then(Matrix::translation(10.0, 10.0))
+        .then(g.current_matrix());
+    g.set_matrix(outer).unwrap();
+    g.begin_glyph(font(0, 20.0), 97, b"a", false).unwrap();
+    assert_eq!(g.glyph_matrix(), Some(outer));
+    // A change inside the procedure leaves the record alone.
+    g.concat(Matrix::scaling(0.5, 0.5)).unwrap();
+    assert_eq!(g.glyph_matrix(), Some(outer));
+    assert_ne!(g.current_matrix(), outer);
+    // A glyph shown from inside the procedure has its own record.
+    g.gsave().unwrap();
+    let inner = Matrix::translation(3.0, 4.0).then(g.current_matrix());
+    g.set_matrix(inner).unwrap();
+    g.begin_glyph(font(0, 20.0), 98, b"b", true).unwrap();
+    assert_eq!(g.glyph_matrix(), Some(inner));
+    g.end_glyph((0.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    assert_eq!(g.glyph_matrix(), Some(outer));
+    g.end_glyph((1000.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    assert_eq!(g.glyph_matrix(), None);
+    // The outer glyph painted nothing but declared a width: a blank
+    // procedure, so the font has an entry for the code.
+    g.show(&[glyph(97, 1000.0)]).unwrap();
+    g.showpage().unwrap();
+    let pages = pages.borrow();
+    let FontSpec::Type3 { glyphs, .. } = &pages[0].resources.fonts[0] else {
+        panic!("a Type 3 resource");
+    };
+    assert_eq!(glyphs.len(), 1);
+    let blank = &glyphs[b"a".as_slice()];
+    assert!(blank.ops.is_empty());
+    assert_eq!((blank.width, blank.bbox), ((1000.0, 0.0), None));
+    assert!(pages[0].dump().contains("glyph /a 1000 0 {\n}\n"));
+}
+
+#[test]
 fn measured_and_abandoned_glyphs_store_nothing() {
     let (mut g, pages) = backend();
     g.define_font(0, &square_font(7)).unwrap();

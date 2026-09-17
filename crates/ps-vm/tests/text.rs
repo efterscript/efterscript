@@ -307,6 +307,146 @@ fn stringwidth_measures_type3_glyphs_without_showing() {
     assert!(calls.contains(&Call::GRestoreTo(0)));
 }
 
+/// The `end_glyph` calls of a run, in order.
+fn end_glyphs(run: &Run) -> Vec<((f32, f32), Option<Bounds>)> {
+    run.calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::EndGlyph(width, bbox) => Some((width, bbox)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn metrics_approx(
+    got: ((f32, f32), Option<Bounds>),
+    width: (f32, f32),
+    bbox: Option<Bounds>,
+) -> bool {
+    let (w, b) = got;
+    approx(w.0, width.0)
+        && approx(w.1, width.1)
+        && match (b, bbox) {
+            (None, None) => true,
+            (Some(b), Some(want)) => {
+                approx(b.llx, want.llx)
+                    && approx(b.lly, want.lly)
+                    && approx(b.urx, want.urx)
+                    && approx(b.ury, want.ury)
+            }
+            _ => false,
+        }
+}
+
+/// A Type 3 font whose glyph procedure runs `prefix` before declaring
+/// `metrics` (the operator's operands and name) and filling a box.
+fn transformed_font(prefix: &str, metrics: &str) -> String {
+    format!(
+        "/T << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding \
+         /FontBBox [0 0 1000 1000] /BuildGlyph {{ pop pop {prefix} {metrics} \
+         0 0 500 500 rectfill }} >> definefont 20 scalefont setfont \
+         100 100 moveto (aa) show currentpoint (a) stringwidth"
+    )
+}
+
+#[test]
+fn metrics_declared_after_a_scale_are_carried_into_glyph_space() {
+    let run = exec(&transformed_font(
+        "0.5 0.5 scale",
+        "1200 0 0 0 1200 1200 setcachedevice",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let ends = end_glyphs(&run);
+    assert_eq!(ends.len(), 3);
+    let box_ = Some(Bounds::new(0.0, 0.0, 600.0, 600.0));
+    assert!(ends.iter().all(|&e| metrics_approx(e, (600.0, 0.0), box_)));
+    assert!(glyphs_approx(
+        &run.shows()[0],
+        &[(97, 600.0, 0.0), (97, 600.0, 0.0)]
+    ));
+    let numbers = run.top_numbers(4);
+    assert!(approx(numbers[0], 124.0) && approx(numbers[1], 100.0));
+    assert!(approx(numbers[2], 12.0) && approx(numbers[3], 0.0));
+}
+
+#[test]
+fn metrics_declared_after_a_translation_move_the_box_only() {
+    let run = exec(&transformed_font(
+        "100 -50 translate",
+        "700 0 0 0 500 500 setcachedevice",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let ends = end_glyphs(&run);
+    let box_ = Some(Bounds::new(100.0, -50.0, 600.0, 450.0));
+    assert!(ends.iter().all(|&e| metrics_approx(e, (700.0, 0.0), box_)));
+    let numbers = run.top_numbers(4);
+    assert!(approx(numbers[0], 128.0) && approx(numbers[2], 14.0));
+}
+
+#[test]
+fn metrics_declared_after_a_rotation_turn_the_width_and_envelope_the_box() {
+    let run = exec(&transformed_font(
+        "90 rotate",
+        "600 0 0 0 600 400 setcachedevice",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let ends = end_glyphs(&run);
+    let box_ = Some(Bounds::new(-400.0, 0.0, 0.0, 600.0));
+    assert!(ends.iter().all(|&e| metrics_approx(e, (0.0, 600.0), box_)));
+    let numbers = run.top_numbers(4);
+    assert!(approx(numbers[0], 100.0) && approx(numbers[1], 124.0));
+    assert!(approx(numbers[2], 0.0) && approx(numbers[3], 12.0));
+}
+
+#[test]
+fn setcharwidth_and_setcachedevice2_follow_the_same_rule() {
+    let run = exec(&transformed_font("2 2 scale", "300 0 setcharwidth"));
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert!(
+        end_glyphs(&run)
+            .iter()
+            .all(|&e| metrics_approx(e, (600.0, 0.0), None))
+    );
+    assert!(approx(run.top_numbers(4)[2], 12.0));
+    let run = exec(&transformed_font(
+        "0.5 0.5 scale",
+        "1000 0 0 0 1000 1000 0 -2000 500 1800 setcachedevice2",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let box_ = Some(Bounds::new(0.0, 0.0, 500.0, 500.0));
+    assert!(
+        end_glyphs(&run)
+            .iter()
+            .all(|&e| metrics_approx(e, (500.0, 0.0), box_))
+    );
+}
+
+#[test]
+fn metrics_declared_before_any_change_are_the_operands_bit_for_bit() {
+    let run = exec(&transformed_font(
+        "",
+        "1000.25 0.5 0 0 750.125 750 setcachedevice 0.5 0.5 scale",
+    ));
+    assert_eq!(run.outcome, Outcome::Ok);
+    let box_ = Some(Bounds::new(0.0, 0.0, 750.125, 750.0));
+    assert!(
+        end_glyphs(&run)
+            .iter()
+            .all(|&(w, b)| w == (1000.25, 0.5) && b == box_)
+    );
+}
+
+#[test]
+fn a_singular_font_matrix_leaves_declared_metrics_alone() {
+    let run = exec(
+        "/T << /FontType 3 /FontMatrix [0 0 0 0.001 0 0] /Encoding StandardEncoding \
+         /BuildGlyph { pop pop 0.5 0.5 scale 800 0 setcharwidth } >> definefont setfont \
+         100 100 moveto (a) show",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    assert!(end_glyphs(&run).contains(&((800.0, 0.0), None)));
+}
+
 #[test]
 fn setcharwidth_glyphs_carry_no_box_and_buildchar_gets_the_code() {
     let run = exec(
@@ -489,6 +629,54 @@ fn restore_returns_to_the_font_of_the_save() {
     assert!(glyphs_approx(&shows[0], &[(97, 500.0, 0.0)]));
     assert!(glyphs_approx(&shows[1], &[(97, 556.0, 0.0)]));
     assert!(run.calls().contains(&Call::GRestoreTo(0)));
+}
+
+#[test]
+fn findfont_enters_resident_faces_in_the_directory() {
+    let run = exec_without_backend(
+        "FontDirectory /Helvetica known /Helvetica findfont pop FontDirectory /Helvetica known \
+         /Helvetica /Font resourcestatus pop pop \
+         /s save def /Courier findfont pop FontDirectory /Courier known \
+         s restore FontDirectory /Courier known \
+         /Helvetica undefinefont FontDirectory /Helvetica known \
+         /Helvetica findfont pop FontDirectory /Helvetica known \
+         /Helvetica /Font findresource pop FontDirectory /Helvetica known \
+         /Arial findfont pop FontDirectory /Arial known /Arial /Font resourcestatus pop pop \
+         true setglobal /Times-Roman findfont pop false setglobal \
+         GlobalFontDirectory /Times-Roman known FontDirectory /Times-Roman known",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    let stack = run.interp.ostack();
+    let flags: Vec<Option<bool>> = stack.iter().map(|o| o.as_bool()).collect();
+    assert_eq!(flags[0..2], [Some(false), Some(true)]);
+    assert_eq!(stack[2].as_i32(), Some(1));
+    // The registration is a local-VM dictionary change and goes with
+    // the restore.
+    assert_eq!(flags[3..5], [Some(true), Some(false)]);
+    assert_eq!(flags[5..8], [Some(false), Some(true), Some(true)]);
+    assert_eq!(flags[8], Some(true));
+    assert_eq!(stack[9].as_i32(), Some(1));
+    assert_eq!(flags[10..12], [Some(true), Some(true)]);
+    assert_eq!(run.interp.font_substitutions().len(), 1);
+    // Cached, not re-materialised: the same dictionary comes back.
+    let run =
+        exec_without_backend("/Helvetica findfont /Helvetica undefinefont /Helvetica findfont eq");
+    assert_eq!(run.interp.ostack()[0].as_bool(), Some(true));
+}
+
+#[test]
+fn a_font_the_program_defines_wins_over_a_registered_face() {
+    let run = exec(
+        "/Courier findfont pop /Courier << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] \
+         /Encoding StandardEncoding /BuildGlyph { pop pop 500 0 setcharwidth } >> definefont pop \
+         /Courier findfont /FontType get /Courier /Font resourcestatus pop pop \
+         /Courier findfont 10 scalefont setfont 0 0 moveto (a) show currentpoint pop",
+    );
+    assert_eq!(run.outcome, Outcome::Ok);
+    let stack = run.interp.ostack();
+    assert_eq!(stack[0].as_i32(), Some(3));
+    assert_eq!(stack[1].as_i32(), Some(0));
+    assert!(approx(stack[2].as_number().unwrap(), 5.0));
 }
 
 #[test]

@@ -1,0 +1,16 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+font 0 type3 0.001 0 0 0.001 0 0 bbox=[-400 0 0 600] enc=[97 /a]
+glyph /a 0 600 [-400 0 0 600] {
+  m 0 0
+  l 0 600
+  l -400 300
+  h
+  f
+}
+ops:
+text 0 0.02 0 0 0.02 100 100 (aa) 0 600 0 600

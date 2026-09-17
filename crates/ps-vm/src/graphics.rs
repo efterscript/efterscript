@@ -143,6 +143,21 @@ impl Matrix {
     }
 }
 
+/// `first` followed by `then`, in double precision: what `Matrix::then`
+/// computes, for compositions that round once at the end.
+pub fn compose64(first: [f64; 6], then: [f64; 6]) -> [f64; 6] {
+    let [a, b, c, d, tx, ty] = first;
+    let [a2, b2, c2, d2, tx2, ty2] = then;
+    [
+        a * a2 + b * c2,
+        a * b2 + b * d2,
+        c * a2 + d * c2,
+        c * b2 + d * d2,
+        tx * a2 + ty * c2 + tx2,
+        tx * b2 + ty * d2 + ty2,
+    ]
+}
+
 /// `m` applied to `(x, y)` in double precision.
 pub fn apply64(m: [f64; 6], x: f64, y: f64) -> (f64, f64) {
     let [a, b, c, d, tx, ty] = m;
@@ -1141,6 +1156,13 @@ pub trait GraphicsBackend {
     /// with `setcachedevice` (colour-independent) and absent for one
     /// declared with `setcharwidth`.
     fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError>;
+    /// The CTM `begin_glyph` recorded for the innermost glyph being
+    /// captured — the matrix of glyph space — so the metric operators can
+    /// carry operands declared under a changed CTM back into it; `None`
+    /// outside a glyph or for a backend that keeps no such record.
+    fn glyph_matrix(&self) -> Option<Matrix> {
+        None
+    }
 
     // --- patterns and forms --------------------------------------------------------
 

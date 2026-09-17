@@ -170,6 +170,8 @@ enum Target {
 /// how to bring geometry into the target's space.
 struct Capture {
     target: Target,
+    /// The CTM the capture began under: the target's space.
+    ctm: Matrix,
     /// Default user space to the target's space, kept in double precision
     /// so the round trip through the CTM leaves no residue; `None` when
     /// that CTM was singular, in which case nothing can be kept.
@@ -383,6 +385,7 @@ impl<S: PageSink> Graphics<S> {
         let outer_emitter = std::mem::replace(&mut self.emitter, emitter);
         self.captures.push(Capture {
             target,
+            ctm,
             to_target: ctm.inverse64(),
             outer_ops,
             outer_emitter,
@@ -1258,8 +1261,10 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
 
     /// Stores the captured procedure under the glyph's name in its font's
     /// resource, unless the glyph was only measured or declared nothing
-    /// (`(0, 0)` and no box: an abandoned procedure). A name already
-    /// captured keeps its first procedure.
+    /// (`(0, 0)` and no box: an abandoned procedure). A glyph that
+    /// declared a width and painted nothing — a space — is stored with an
+    /// empty procedure, so the font has an entry for every code shown. A
+    /// name already captured keeps its first procedure.
     fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError> {
         if !matches!(
             self.captures.last().map(|c| &c.target),
@@ -1278,7 +1283,7 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
             unreachable!("checked above");
         };
         let abandoned = width == (0.0, 0.0) && bbox.is_none();
-        if measure || abandoned || ops.is_empty() || self.gstate.null_device {
+        if measure || abandoned || self.gstate.null_device {
             return Ok(());
         }
         let index = self.font_resource(font)?;
@@ -1287,6 +1292,14 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         };
         glyphs.entry(name).or_insert(GlyphProc { ops, width, bbox });
         Ok(())
+    }
+
+    fn glyph_matrix(&self) -> Option<Matrix> {
+        self.captures
+            .iter()
+            .rev()
+            .find(|c| matches!(c.target, Target::Glyph { .. }))
+            .map(|c| c.ctm)
     }
 
     fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {

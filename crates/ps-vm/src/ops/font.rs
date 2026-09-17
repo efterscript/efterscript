@@ -16,15 +16,15 @@
 use ps_fonts::{Encoding, ResidentFace};
 
 use crate::error::VmError;
-use crate::graphics::{FontRef, Matrix};
-use crate::interp::Interp;
+use crate::graphics::{Bounds, FontRef, Matrix};
+use crate::interp::{Category, Interp};
 use crate::memory::Memory;
 use crate::object::{Access, Object, Type};
 use crate::ops::array::{bytes, items};
 use crate::ops::cidinit::{self, Resolved};
 use crate::ops::graphics::read_matrix;
 use crate::ops::pagedevice::in_global;
-use crate::ops::show::{self, Variant};
+use crate::ops::show::{self, Metrics, Variant, Vertical};
 
 op_table! { OPS {
     "definefont" => definefont, [Any, Dict];
@@ -304,11 +304,18 @@ pub(crate) fn define(i: &mut Interp, key: Object, font: Object) -> Result<Option
         Kind::Simple | Kind::Type0 => i.font_category,
         Kind::CidFont => i.cidfont_category,
     };
+    register(i, category, key, font)?;
+    Ok(Some(font))
+}
+
+/// Enters `font` under `key` in the directory of the current allocation
+/// mode — both directories in global mode, where `FontDirectory` stands
+/// for the global one.
+fn register(i: &mut Interp, category: Category, key: Object, font: Object) -> Result<(), VmError> {
     if i.mem.current_global() {
         i.mem.dict_put(category.global, key, font)?;
     }
-    i.mem.dict_put(category.local, key, font)?;
-    Ok(Some(font))
+    i.mem.dict_put(category.local, key, font)
 }
 
 fn definefont(i: &mut Interp) -> Result<(), VmError> {
@@ -408,22 +415,53 @@ pub(crate) fn key_text(i: &mut Interp, key: Object) -> Result<Vec<u8>, VmError> 
 }
 
 /// `findfont`: the directories, then the resident set by exact name,
-/// then substitution when the configuration allows it.
+/// then substitution when the configuration allows it. A face found
+/// outside the directories is entered there under the requested key
+/// (PLRM3 §8.2 `findfont`, `FontDirectory`: the directory holds the
+/// fonts loaded into VM), so the key enumerates and is found there
+/// next time; a definition the program makes under the key replaces it.
 pub(crate) fn find(i: &mut Interp, key: Object) -> Result<Object, VmError> {
     let text = key_text(i, key)?;
     let key = i.mem.dict_key(key)?;
     if let Some(font) = defined(i, key)? {
         return Ok(font);
     }
-    if let Some(face) = ResidentFace::from_postscript_name(&text) {
-        return resident(i, face);
-    }
-    if !i.fonts_config.substitute {
-        return Err(VmError::InvalidFont);
-    }
-    let font = ps_fonts::substitute(&text);
-    i.record_substitution(text, font.postscript_name());
-    resident(i, font)
+    let face = match ResidentFace::from_postscript_name(&text) {
+        Some(face) => face,
+        None if i.fonts_config.substitute => {
+            let face = ps_fonts::substitute(&text);
+            i.record_substitution(text, face.postscript_name());
+            face
+        }
+        None => return Err(VmError::InvalidFont),
+    };
+    find_resident(i, key, face)
+}
+
+/// The dictionary of a resident face, entered in the font directory of
+/// the current allocation mode under `key`; what `findfont` and
+/// `findresource` return for a face not yet loaded.
+pub(crate) fn find_resident(
+    i: &mut Interp,
+    key: Object,
+    face: ResidentFace,
+) -> Result<Object, VmError> {
+    let font = resident(i, face)?;
+    let category = i.font_category;
+    register(i, category, key, font)?;
+    Ok(font)
+}
+
+/// Whether the directory entry `dict` under `name` is one `findfont`
+/// made for a resident face — the face's own dictionary (not a copy)
+/// under its own name or under a name substitution resolved — so that
+/// `resourcestatus` still reports the loaded built-in it is; the same
+/// dictionary the program defined under a key of its own is a
+/// definition like any other.
+pub(crate) fn found_as_resident(i: &Interp, name: &[u8], dict: Object) -> bool {
+    i.resident_fonts.iter().flatten().any(|d| d.eq(dict))
+        && (ResidentFace::from_postscript_name(name).is_some()
+            || i.font_substitutions().iter().any(|s| s.requested == name))
 }
 
 fn findfont(i: &mut Interp) -> Result<(), VmError> {
@@ -718,39 +756,71 @@ fn charpath(i: &mut Interp) -> Result<(), VmError> {
 
 // --- glyph width declarations ---------------------------------------------------------
 
-/// Records the width (and, for a cached glyph, the box) of the glyph
-/// whose procedure is running; outside one the operator is `undefined`.
-fn declare_width(
-    i: &mut Interp,
-    width: (f32, f32),
-    bbox: Option<crate::graphics::Bounds>,
-    operands: usize,
-) -> Result<(), VmError> {
-    let run = show::running_glyph(i).ok_or(VmError::Undefined)?;
-    run.width = Some(width);
-    run.bbox = bbox;
+/// Records the metrics of the glyph whose procedure is running, carried
+/// from the CTM at the call into glyph space when the backend keeps
+/// one; outside a glyph the operator is `undefined`. The writing-mode-1
+/// metrics are carried and then left: this VM shows in writing mode 0.
+fn declare(i: &mut Interp, metrics: Metrics, operands: usize) -> Result<(), VmError> {
+    if show::running_glyph(i).is_none() {
+        return Err(VmError::Undefined);
+    }
+    let metrics = match i
+        .graphics_backend()
+        .map(|b| (b.current_matrix(), b.glyph_matrix()))
+    {
+        Some((current, Some(glyph))) => show::into_glyph_space(current, glyph, metrics),
+        _ => metrics,
+    };
+    let run = show::running_glyph(i).expect("checked above");
+    run.width = Some(metrics.width);
+    run.bbox = metrics.bbox;
     drop(i, operands)
 }
 
 fn setcachedevice(i: &mut Interp) -> Result<(), VmError> {
-    let bbox =
-        crate::graphics::Bounds::new(num_at(i, 3)?, num_at(i, 2)?, num_at(i, 1)?, num_at(i, 0)?);
+    let bbox = Bounds::new(num_at(i, 3)?, num_at(i, 2)?, num_at(i, 1)?, num_at(i, 0)?);
     let width = (num_at(i, 5)?, num_at(i, 4)?);
-    declare_width(i, width, Some(bbox), 6)
+    declare(
+        i,
+        Metrics {
+            width,
+            bbox: Some(bbox),
+            vertical: None,
+        },
+        6,
+    )
 }
 
-// The vertical-mode operands are read and dropped: this VM shows in
-// writing mode 0 only.
 fn setcachedevice2(i: &mut Interp) -> Result<(), VmError> {
-    let bbox =
-        crate::graphics::Bounds::new(num_at(i, 7)?, num_at(i, 6)?, num_at(i, 5)?, num_at(i, 4)?);
+    let origin = (num_at(i, 1)?, num_at(i, 0)?);
+    let width1 = (num_at(i, 3)?, num_at(i, 2)?);
+    let bbox = Bounds::new(num_at(i, 7)?, num_at(i, 6)?, num_at(i, 5)?, num_at(i, 4)?);
     let width = (num_at(i, 9)?, num_at(i, 8)?);
-    declare_width(i, width, Some(bbox), 10)
+    declare(
+        i,
+        Metrics {
+            width,
+            bbox: Some(bbox),
+            vertical: Some(Vertical {
+                width: width1,
+                origin,
+            }),
+        },
+        10,
+    )
 }
 
 fn setcharwidth(i: &mut Interp) -> Result<(), VmError> {
     let width = (num_at(i, 1)?, num_at(i, 0)?);
-    declare_width(i, width, None, 2)
+    declare(
+        i,
+        Metrics {
+            width,
+            bbox: None,
+            vertical: None,
+        },
+        2,
+    )
 }
 
 #[cfg(test)]

@@ -1,0 +1,31 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 12.0
+% expect-output: 0.0
+% expect-output: 136.0
+% expect-output: 100.0
+% Scenario: a scale before setcachedevice. The glyph procedure halves
+% the coordinate system and then declares width 1200 and box
+% 0 0 1200 1200 in that space, so in glyph space the width is 600 and
+% the box 0 0 600 600: at size 20 each glyph advances 12, stringwidth
+% agrees with show, and the captured glyph's line reads 600 and
+% [0 0 600 600] with the triangle inside it.
+% Expect: 12.0 0.0, then 136.0 100.0.
+/r { 1000 mul round 1000 div } def
+/Tri 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 0 600 600] def
+  /BuildGlyph {
+    pop pop
+    0.5 0.5 scale
+    1200 0 0 0 1200 1200 setcachedevice
+    0 0 moveto 1200 0 lineto 600 1200 lineto closepath fill
+  } def
+end definefont pop
+/Tri findfont 20 scalefont setfont
+(a) stringwidth r exch r = =
+100 100 moveto (aaa) show currentpoint r exch r = =
+showpage

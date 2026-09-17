@@ -229,7 +229,10 @@ fn defined(i: &mut Interp, kind: Kind, key: Object) -> Result<Option<Object>, Vm
 fn builtin(i: &mut Interp, kind: Kind, name: &[u8]) -> Result<Option<Object>, VmError> {
     match kind {
         Kind::Font => match ResidentFace::from_postscript_name(name) {
-            Some(std) => font::resident(i, std).map(Some),
+            Some(std) => {
+                let key = i.mem.intern(name).map_err(|_| VmError::LimitCheck)?;
+                font::find_resident(i, key, std).map(Some)
+            }
             None => Ok(None),
         },
         Kind::Encoding => Ok(match name {
@@ -331,8 +334,11 @@ fn resourcestatus(i: &mut Interp) -> Result<(), VmError> {
     let kind = kind(i, i.peek(0)?)?;
     let key = i.peek(1)?;
     let key = i.mem.dict_key(key)?;
-    let status = if defined(i, kind, key)?.is_some() {
-        Some(STATUS_DEFINED)
+    let status = if let Some(instance) = defined(i, kind, key)? {
+        let name = key.as_name().map(|a| i.mem.name_text(a));
+        let found = kind == Kind::Font
+            && name.is_some_and(|name| font::found_as_resident(i, name, instance));
+        Some(if found { STATUS_LOADED } else { STATUS_DEFINED })
     } else if let Kind::Implicit(category) = kind {
         category.has(i, key).then_some(STATUS_DEFINED)
     } else {

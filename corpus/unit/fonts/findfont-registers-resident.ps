@@ -1,0 +1,36 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% backend: none
+% expect-output: false
+% expect-output: true
+% expect-output: true
+% expect-output: true
+% expect-output: 1
+% expect-output: true
+% expect-output: 3
+% expect-output: 0
+% expect-output: true
+% expect-output: true
+% Scenario: findfont enters a resident face in FontDirectory. Before
+% findfont the key is unknown; after it the key is known, the directory
+% has grown, forall enumerates it, and the face still reports as a
+% loaded built-in. A font the program defines under a key already found
+% wins and reports as defined; in global allocation mode the face
+% enters GlobalFontDirectory; a substituted key is entered too.
+% Expect: false, true, true, true, 1, true, 3, 0, true, true.
+FontDirectory /Helvetica known =
+FontDirectory length
+/Helvetica findfont pop
+FontDirectory /Helvetica known =
+FontDirectory length exch gt =
+false FontDirectory { pop /Helvetica eq or } forall =
+/Helvetica /Font resourcestatus pop pop =
+/Courier findfont pop FontDirectory /Courier known =
+/Courier << /FontType 3 /FontMatrix [0.001 0 0 0.001 0 0] /Encoding StandardEncoding
+  /FontBBox [0 0 1000 1000] /BuildGlyph { pop pop 500 0 setcharwidth } >> definefont pop
+/Courier findfont /FontType get =
+/Courier /Font resourcestatus pop pop =
+true setglobal /Times-Roman findfont pop false setglobal
+GlobalFontDirectory /Times-Roman known =
+/Arial findfont pop FontDirectory /Arial known =

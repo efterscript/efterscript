@@ -1,0 +1,58 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 39.0
+% expect-output: 0.0
+% expect-output: 111.0
+% expect-output: 700.0
+% Scenario: a bitmap Type 3 font in the shape a printer driver
+% downloads. The font matrix is the identity and the glyph procedure
+% saves, scales by the normalisation factor, declares its metrics in
+% pixel units, translates to the bitmap's offset, scales to the
+% bitmap's size, paints it with imagemask from a string data procedure,
+% and restores. The declared widths and boxes are carried through the
+% normalisation into glyph space: the line advances by the declared
+% widths times the factor, and each glyph box encloses its bitmap.
+% Expect: 39.0 0.0, then 111.0 700.0.
+/r { 1000 mul round 1000 div } def
+/Px 12 dict dup begin
+  /FontType 3 def
+  /FontMatrix [1 0 0 1 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [0 -0.25 1.125 1.25] def
+  /Norm 0.125 def
+  /Scratch 4 dict def
+  % advance, bitmap width and height, x and y offset, all in pixels
+  /Info <<
+    /a [8 8 8 1 0]
+    /b [6 6 10 1 0]
+    /c [8 8 8 1 -2]
+    /space [4 0 0 0 0]
+  >> def
+  /Bits <<
+    /a <3C4281818181423C>
+    /b <808080F0888888F00000>
+    /c <8040201008040201>
+  >> def
+  /BuildChar {
+    exch begin
+    Scratch begin
+    /name Encoding 3 -1 roll get def
+    save
+    Norm dup scale
+    Info name known { Info name get } { Info /space get } ifelse aload pop
+    /oy exch def /ox exch def /h exch def /w exch def /adv exch def
+    adv 0 ox oy w ox add h oy add setcachedevice
+    w 0 ne {
+      ox oy translate newpath 0 0 moveto
+      w h scale
+      w h true [w 0 0 h neg 0 h] { Bits name get } imagemask
+    } if
+    restore
+    end end
+  } def
+end definefont pop
+/Px findfont 12 scalefont setfont
+(ab c) stringwidth r exch r = =
+72 700 moveto (ab c) show currentpoint r exch r = =
+showpage

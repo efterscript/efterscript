@@ -132,6 +132,8 @@ pub struct Recording {
     /// which `begin_*` answers `false` for; cleared by `showpage`.
     pub cells: HashSet<u64>,
     pub bodies: HashSet<u64>,
+    /// The CTM at each open `begin_glyph`, innermost last.
+    pub glyph_ctms: Vec<Matrix>,
 }
 
 impl Recording {
@@ -147,6 +149,7 @@ impl Recording {
             stack: Vec::new(),
             cells: HashSet::new(),
             bodies: HashSet::new(),
+            glyph_ctms: Vec::new(),
         }
     }
 
@@ -462,12 +465,18 @@ impl GraphicsBackend for Recording {
         measure: bool,
     ) -> Result<(), VmError> {
         self.record(Call::BeginGlyph(font, code, name.to_vec(), measure));
+        self.glyph_ctms.push(self.state.ctm);
         Ok(())
     }
 
     fn end_glyph(&mut self, width: (f32, f32), bbox: Option<Bounds>) -> Result<(), VmError> {
         self.record(Call::EndGlyph(width, bbox));
+        self.glyph_ctms.pop();
         Ok(())
+    }
+
+    fn glyph_matrix(&self) -> Option<Matrix> {
+        self.glyph_ctms.last().copied()
     }
 
     fn set_pattern(&mut self, pattern: &PatternInfo, components: &[f32]) -> Result<(), VmError> {

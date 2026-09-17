@@ -1,0 +1,26 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+img 0 8x8 bpc=1 cs=mask decode=[1 0] 8 bytes
+img 1 6x10 bpc=1 cs=mask decode=[1 0] 10 bytes
+img 2 8x8 bpc=1 cs=mask decode=[1 0] 8 bytes
+img 3 8x8 bpc=1 cs=mask decode=[1 0] 8 bytes
+img 4 6x10 bpc=1 cs=mask decode=[1 0] 10 bytes
+img 5 8x8 bpc=1 cs=mask decode=[1 0] 8 bytes
+font 0 type3 1 0 0 1 0 0 bbox=[0 -0.25 1.125 1.25] enc=[32 /space 97 /a 98 /b 99 /c]
+glyph /a 1 0 [0.125 0 1.125 1] {
+  Do img 3 1 0 0 1 0.125 0
+}
+glyph /b 0.75 0 [0.125 0 0.875 1.25] {
+  Do img 4 0.75 0 0 1.25 0.125 0
+}
+glyph /c 1 0 [0.125 -0.25 1.125 0.75] {
+  Do img 5 1 0 0 1 0.125 -0.25
+}
+glyph /space 0.5 0 [0 0 0 0] {
+}
+ops:
+text 0 12 0 0 12 72 700 (ab c) 1 0 0.75 0 0.5 0 1 0

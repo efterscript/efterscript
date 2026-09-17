@@ -1,0 +1,31 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0.0
+% expect-output: 12.0
+% expect-output: 100.0
+% expect-output: 124.0
+% Scenario: a rotation before setcachedevice. The glyph procedure turns
+% the coordinate system a quarter turn (as an exact matrix, so the
+% golden carries no trigonometric residue) and declares width 600 0 and box
+% 0 0 600 400 in the turned space: in glyph space the width vector is
+% 0 600 and the box the axis-aligned envelope of the turned corners,
+% -400 0 0 600. At size 20 each glyph moves the current point up by 12.
+% Expect: 0.0 12.0, then 100.0 124.0.
+/r { 1000 mul round 1000 div } def
+/Turn 7 dict dup begin
+  /FontType 3 def
+  /FontMatrix [0.001 0 0 0.001 0 0] def
+  /Encoding StandardEncoding def
+  /FontBBox [-400 0 0 600] def
+  /BuildGlyph {
+    pop pop
+    [0 1 -1 0 0 0] concat
+    600 0 0 0 600 400 setcachedevice
+    0 0 moveto 600 0 lineto 300 400 lineto closepath fill
+  } def
+end definefont pop
+/Turn findfont 20 scalefont setfont
+(a) stringwidth r exch r = =
+100 100 moveto (aa) show currentpoint r exch r = =
+showpage
