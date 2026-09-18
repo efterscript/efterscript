@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-vm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone: nightly-only, see the root manifest's `exclude`.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+efterscript-vm = { path = "..", features = ["fuzzing"] }
+
+[[bin]]
+name = "scan"
+path = "fuzz_targets/scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jpeg"
+path = "fuzz_targets/jpeg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "program"
+path = "fuzz_targets/program.rs"
+test = false
+doc = false
+bench = false

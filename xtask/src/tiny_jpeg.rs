@@ -256,13 +256,19 @@ mod tests {
             &stream[at..],
             [0x28, 0x03, 0x40, 0x0C, 0xFF, 0x00, 0xBF, 0xFF, 0xD9]
         );
-        assert_eq!(ps_vm::jpeg::stream_len(&stream), Some(stream.len()));
+        assert_eq!(
+            efterscript_vm::jpeg::stream_len(&stream),
+            Some(stream.len())
+        );
         let mut longer = stream.clone();
         longer.extend_from_slice(b"after");
-        assert_eq!(ps_vm::jpeg::stream_len(&longer), Some(stream.len()));
+        assert_eq!(
+            efterscript_vm::jpeg::stream_len(&longer),
+            Some(stream.len())
+        );
         // Other greys code other categories; the walker still finds the end.
         let other = encode(&[0, 255, 128, 129]);
-        assert_eq!(ps_vm::jpeg::stream_len(&other), Some(other.len()));
+        assert_eq!(efterscript_vm::jpeg::stream_len(&other), Some(other.len()));
         assert_eq!(category(0), 0);
         assert_eq!(category(-1), 1);
         assert_eq!(category(-512), 10);

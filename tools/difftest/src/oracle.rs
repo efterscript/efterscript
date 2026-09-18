@@ -41,8 +41,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use ps_graphics::{Collected, DocMark};
-use remelt::{Options, PdfSink};
+use efterscript_graphics::{Collected, DocMark};
+use efterscript_remelt::{Options, PdfSink};
 
 use crate::pnm;
 use crate::profile::{self, Profile};
@@ -2312,15 +2312,15 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
 
     #[test]
     fn a_pages_rotation_comes_from_the_marks_before_it() {
-        use ps_graphics::PageAttrs;
+        use efterscript_graphics::PageAttrs;
         let rotate = |r: i32| PageAttrs {
             crop_box: None,
             rotate: Some(r),
         };
         let collected = Collected {
             pages: vec![
-                ps_graphics::Page::new(ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
-                ps_graphics::Page::new(ps_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
+                efterscript_graphics::Page::new(efterscript_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
+                efterscript_graphics::Page::new(efterscript_vm::Bounds::new(0.0, 0.0, 1.0, 1.0)),
             ],
             marks: vec![
                 (0, DocMark::PagesDefault(rotate(90))),

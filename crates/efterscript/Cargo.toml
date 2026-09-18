@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript"
+description = "A memory-safe, embeddable interpreter compatible with the PostScript language, whose primary output is PDF: the distillation entry points and the session job API in one crate"
+keywords = ["postscript", "pdf", "interpreter", "distillation", "wasm"]
+categories = ["text-processing", "graphics", "wasm"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["efterscript-vm/resident-outlines", "efterscript-remelt/resident-outlines", "efterscript-platen/resident-outlines"]
+
+[dependencies]
+efterscript-vm.workspace = true
+efterscript-remelt.workspace = true
+efterscript-platen.workspace = true

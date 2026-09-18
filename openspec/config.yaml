@@ -3,9 +3,9 @@ schema: spec-driven
 context: |
   EfterScript: a memory-safe, embeddable interpreter for the PostScript
   language in Rust (edition 2024 workspace), whose primary output is PDF.
-  Crates: ps-vm (scanner, object model, VM), ps-graphics (graphics state,
-  vector IR), ps-fonts, pdf-out (PDF serialisation, no PostScript
-  knowledge), remelt (distillation engine), platen (interactive session
+  Crates: efterscript-vm (scanner, object model, VM), efterscript-graphics (graphics state,
+  vector IR), efterscript-fonts, efterscript-pdf (PDF serialisation, no PostScript
+  knowledge), efterscript-remelt (distillation engine), efterscript-platen (session
   front-end), efterscript-cli. Tools: psgen (property-based program
   generator), difftest (semantic differential harness). Corpus under
   corpus/ (unit inputs, generator seeds, text-based golden outputs).

@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-codec-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone: nightly-only, see the root manifest's `exclude`.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+efterscript-codec = { path = ".." }
+
+[[bin]]
+name = "inflate"
+path = "fuzz_targets/inflate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lzw"
+path = "fuzz_targets/lzw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "predictor"
+path = "fuzz_targets/predictor.rs"
+test = false
+doc = false
+bench = false

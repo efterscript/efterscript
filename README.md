@@ -101,27 +101,27 @@ Each is a reserved slot revisited only by an explicit proposal.
 ## Repository layout
 
 ```
-crates/ps-vm           scanner, object model, stacks, save/restore, resources, operators
-crates/ps-graphics     graphics state, capture, and the PDF-shaped vector IR
-crates/ps-fonts        Type 1 / CFF / TrueType parsing, metrics, subsetting, ToUnicode
-crates/codec           inflate, deflate, LZW, predictors
-crates/pdf-out         low-level PDF serialisation, zero PostScript knowledge
-crates/remelt          the distillation engine: policies, pdfmark, PDF writing
-crates/platen          session front-end: a job fed in pieces, replies and errors
-                       read back, a PDF at the end; C ABI and WebAssembly build
-                       (see crates/platen/docs/embedding.md)
-crates/efterscript-cli the command-line tool
-tools/psgen            property-based program generator
-tools/difftest         corpus runner and differential harness
-corpus/                unit inputs, generator seeds, golden outputs (text, diffable)
-openspec/              decision registry (see below)
-xtask/                 workspace automation (`cargo xtask`)
+crates/efterscript-vm        scanner, object model, stacks, save/restore, resources, operators
+crates/efterscript-graphics  graphics state, capture, and the PDF-shaped vector IR
+crates/efterscript-fonts     Type 1 / CFF / TrueType parsing, metrics, subsetting, ToUnicode
+crates/efterscript-codec     inflate, deflate, LZW, predictors
+crates/efterscript-pdf       low-level PDF serialisation, zero PostScript knowledge
+crates/efterscript-remelt    the distillation engine: policies, pdfmark, PDF writing
+crates/efterscript-platen    session front-end: a job fed in pieces, replies and errors
+                             read back, a PDF at the end; C ABI and WebAssembly build
+                             (see crates/efterscript-platen/docs/embedding.md)
+crates/efterscript           the facade: distillation and session entry points in one crate
+crates/efterscript-cli       the command-line tool
+tools/psgen                  property-based program generator
+tools/difftest               corpus runner and differential harness
+corpus/                      unit inputs, generator seeds, golden outputs (text, diffable)
+openspec/                    decision registry (see below)
+xtask/                       workspace automation (`cargo xtask`)
 ```
 
-Published crates carry the `efterscript-` prefix; the directory names
-above are the private-phase names. Internal codenames come from
-letterpress vocabulary: *remelt* (recasting old type into new) and
-*platen* (the plate that presses paper against type).
+Internal codenames come from letterpress vocabulary: *remelt* (recasting
+old type into new) and *platen* (the plate that presses paper against
+type).
 
 ## Development process: OpenSpec
 

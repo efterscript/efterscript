@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 EfterScript contributors
 // SPDX-License-Identifier: MIT
 
-//! `cargo xtask check-wasm`: `cargo check -p platen --target
+//! `cargo xtask check-wasm`: `cargo check -p efterscript-platen --target
 //! wasm32-unknown-emscripten`, the build-target gate the session
 //! front-end promises (its archive links into an Emscripten program, so
 //! it and every crate under it must compile for that target). The Rust
@@ -19,7 +19,7 @@ pub fn run(args: &[String]) -> ExitCode {
     }
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
-        .args(["check", "-p", "platen", "--target", TARGET])
+        .args(["check", "-p", "efterscript-platen", "--target", TARGET])
         .status();
     match status {
         Ok(status) if status.success() => {

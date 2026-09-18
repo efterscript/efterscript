@@ -11,9 +11,9 @@ use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use ps_graphics::{Graphics, Page, dump};
-use ps_vm::{Capture, Config, Interp, Io, Limits, Outcome, SliceSource};
-use remelt::Options;
+use efterscript_graphics::{Graphics, Page, dump};
+use efterscript_remelt::Options;
+use efterscript_vm::{Capture, Config, Interp, Io, Limits, Outcome, SliceSource};
 
 /// What one run produced.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub fn distill(program: &str, budget: u64) -> Result<Vec<u8>, String> {
     let (config, _, _) = config(budget);
     let options = Options::compress(false).lock("CompressPages");
     let result = catch_unwind(AssertUnwindSafe(move || {
-        remelt::distill(program.as_bytes(), config, &options, Vec::new())
+        efterscript_remelt::distill(program.as_bytes(), config, &options, Vec::new())
     }));
     match result {
         Ok(Ok((_, bytes))) => Ok(bytes),

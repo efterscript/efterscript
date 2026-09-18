@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use ps_vm::{Memory, Object, Scan, ScanError, Scanner, Source, Type, VmError, line_of};
+use efterscript_vm::{Memory, Object, Scan, ScanError, Scanner, Source, Type, VmError, line_of};
 
 /// A source over a byte slice whose position can jump past binary data.
 struct Cursor<'a> {

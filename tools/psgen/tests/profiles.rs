@@ -41,8 +41,8 @@ fn caught_anything(output: &str) -> bool {
 
 /// Every token of `text` scans; the scanner's own error otherwise.
 fn scans(text: &str) -> Result<usize, String> {
-    let mut memory = ps_vm::Memory::new();
-    ps_vm::scan_all(text.as_bytes(), &mut memory, &mut ())
+    let mut memory = efterscript_vm::Memory::new();
+    efterscript_vm::scan_all(text.as_bytes(), &mut memory, &mut ())
         .map(|tokens| tokens.len())
         .map_err(|e| e.to_string())
 }
@@ -117,7 +117,7 @@ fn well_typed_core_programs_end_without_error() {
 
 #[test]
 fn well_typed_graphics_programs_produce_one_page() {
-    if !ps_fonts::has_resident_outlines() {
+    if !efterscript_fonts::has_resident_outlines() {
         eprintln!("skipped: the resident outlines are absent from this build");
         return;
     }

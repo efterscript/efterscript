@@ -36,29 +36,91 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "codec"
-version = "0.0.1"
-dependencies = [
- "proptest",
-]
-
-[[package]]
 name = "difftest"
 version = "0.0.1"
 dependencies = [
- "ps-fonts",
- "ps-graphics",
- "ps-vm",
- "remelt",
+ "efterscript-fonts",
+ "efterscript-graphics",
+ "efterscript-remelt",
+ "efterscript-vm",
+]
+
+[[package]]
+name = "efterscript"
+version = "0.0.1"
+dependencies = [
+ "efterscript-platen",
+ "efterscript-remelt",
+ "efterscript-vm",
 ]
 
 [[package]]
 name = "efterscript-cli"
 version = "0.0.1"
 dependencies = [
- "ps-graphics",
- "ps-vm",
- "remelt",
+ "efterscript",
+ "efterscript-graphics",
+ "efterscript-vm",
+]
+
+[[package]]
+name = "efterscript-codec"
+version = "0.0.1"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
+name = "efterscript-fonts"
+version = "0.0.1"
+
+[[package]]
+name = "efterscript-graphics"
+version = "0.0.1"
+dependencies = [
+ "efterscript-fonts",
+ "efterscript-pdf",
+ "efterscript-vm",
+ "proptest",
+]
+
+[[package]]
+name = "efterscript-pdf"
+version = "0.0.1"
+dependencies = [
+ "efterscript-codec",
+ "proptest",
+]
+
+[[package]]
+name = "efterscript-platen"
+version = "0.0.1"
+dependencies = [
+ "efterscript-codec",
+ "efterscript-remelt",
+ "efterscript-vm",
+ "proptest",
+]
+
+[[package]]
+name = "efterscript-remelt"
+version = "0.0.1"
+dependencies = [
+ "efterscript-codec",
+ "efterscript-fonts",
+ "efterscript-graphics",
+ "efterscript-pdf",
+ "efterscript-vm",
+ "proptest",
+]
+
+[[package]]
+name = "efterscript-vm"
+version = "0.0.1"
+dependencies = [
+ "efterscript-codec",
+ "efterscript-fonts",
+ "proptest",
 ]
 
 [[package]]
@@ -134,24 +196,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "pdf-out"
-version = "0.0.1"
-dependencies = [
- "codec",
- "proptest",
-]
-
-[[package]]
-name = "platen"
-version = "0.0.1"
-dependencies = [
- "codec",
- "proptest",
- "ps-vm",
- "remelt",
-]
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -189,36 +233,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ps-fonts"
-version = "0.0.1"
-
-[[package]]
-name = "ps-graphics"
-version = "0.0.1"
-dependencies = [
- "pdf-out",
- "proptest",
- "ps-fonts",
- "ps-vm",
-]
-
-[[package]]
-name = "ps-vm"
-version = "0.0.1"
-dependencies = [
- "codec",
- "proptest",
- "ps-fonts",
-]
-
-[[package]]
 name = "psgen"
 version = "0.0.1"
 dependencies = [
- "ps-fonts",
- "ps-graphics",
- "ps-vm",
- "remelt",
+ "efterscript-fonts",
+ "efterscript-graphics",
+ "efterscript-remelt",
+ "efterscript-vm",
 ]
 
 [[package]]
@@ -291,18 +312,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "remelt"
-version = "0.0.1"
-dependencies = [
- "codec",
- "pdf-out",
- "proptest",
- "ps-fonts",
- "ps-graphics",
- "ps-vm",
-]
 
 [[package]]
 name = "rustix"
@@ -408,8 +417,9 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "xtask"
 version = "0.0.1"
 dependencies = [
- "ps-fonts",
- "ps-vm",
+ "efterscript-codec",
+ "efterscript-fonts",
+ "efterscript-vm",
 ]
 
 [[package]]

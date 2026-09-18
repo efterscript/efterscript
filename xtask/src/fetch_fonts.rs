@@ -8,7 +8,7 @@
 //! against the constants below, extracts exactly the listed members
 //! (system `tar` and `unzip`), derives the metric table of each Type 1
 //! program, and compares each file with the committed one and with its
-//! entry in `crates/ps-fonts/data/PROVENANCE.md`.
+//! entry in `crates/efterscript-fonts/data/PROVENANCE.md`.
 //! The committed files are the source of truth; this tool is the audit
 //! trail.
 //!
@@ -27,8 +27,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use ps_fonts::metrics::MetricTable;
-use ps_fonts::type1::parse_file;
+use efterscript_fonts::metrics::MetricTable;
+use efterscript_fonts::type1::parse_file;
 
 use crate::sha256::hex_digest;
 
@@ -36,7 +36,7 @@ use crate::sha256::hex_digest;
 struct Source {
     /// The archive member, or the whole download for a plain text.
     member: &'static str,
-    /// The destination: relative to `crates/ps-fonts/data`, except for
+    /// The destination: relative to `crates/efterscript-fonts/data`, except for
     /// paths under `LICENSES/`, which are relative to the workspace root.
     dest: &'static str,
 }
@@ -254,13 +254,13 @@ fn dest_path(root: &Path, dest: &str) -> PathBuf {
     if dest.starts_with("LICENSES/") {
         root.join(dest)
     } else {
-        root.join("crates/ps-fonts/data").join(dest)
+        root.join("crates/efterscript-fonts/data").join(dest)
     }
 }
 
 /// The `| \`path\` | \`sha256\` |` rows of the provenance note.
 fn provenance(root: &Path) -> BTreeMap<String, String> {
-    let note = std::fs::read_to_string(root.join("crates/ps-fonts/data/PROVENANCE.md"))
+    let note = std::fs::read_to_string(root.join("crates/efterscript-fonts/data/PROVENANCE.md"))
         .unwrap_or_default();
     note.lines()
         .filter_map(|line| {
@@ -526,7 +526,7 @@ fn fetch(check: bool, force: bool) -> Result<bool, String> {
     }
     if !rows.is_empty() {
         println!();
-        println!("provenance rows for crates/ps-fonts/data/PROVENANCE.md:");
+        println!("provenance rows for crates/efterscript-fonts/data/PROVENANCE.md:");
         for a in rows {
             println!("| `{}` | `{}` |", a.dest, a.upstream);
         }
@@ -575,13 +575,13 @@ mod tests {
         assert!(dest_path(&root, "LICENSES/OFL-1.1.txt").ends_with("LICENSES/OFL-1.1.txt"));
         assert!(
             dest_path(&root, "outlines/liberation/LICENSE")
-                .ends_with("crates/ps-fonts/data/outlines/liberation/LICENSE")
+                .ends_with("crates/efterscript-fonts/data/outlines/liberation/LICENSE")
         );
     }
 
     #[test]
     fn a_derived_table_is_the_programs_own_metrics() {
-        use ps_fonts::testing::{Type1Font, rectangle};
+        use efterscript_fonts::testing::{Type1Font, rectangle};
         let font = Type1Font::new("Syn").glyph("a", 600, &rectangle(0.0, 0.0, 500.0, 500.0));
         let table = derive_table("syn", &font.pfb()).unwrap();
         let text = String::from_utf8(table).unwrap();

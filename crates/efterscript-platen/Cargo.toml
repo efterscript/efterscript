@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-platen"
+description = "Session front-end of the EfterScript interpreter: a job fed in pieces with replies and error reports read back, a PDF at the end, and a C interface for hosts that act as a printer"
+keywords = ["postscript", "pdf", "printer", "wasm", "ffi"]
+categories = ["text-processing", "wasm"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lib]
+# The library keeps its own name so the static archive stays
+# `libplaten.a`, the header `platen.h`, the symbols `platen_*`, and the
+# Rust path `platen::`; embedders link exactly as before the crate rename.
+name = "platen"
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["efterscript-remelt/resident-outlines"]
+
+[dependencies]
+efterscript-remelt.workspace = true
+efterscript-vm.workspace = true
+
+[dev-dependencies]
+efterscript-codec.workspace = true
+proptest = "1.11.0"

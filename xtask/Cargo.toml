@@ -14,8 +14,9 @@ repository.workspace = true
 default = ["resident-outlines"]
 # The resident set's outline assets; forwarded so a build without them
 # can switch them off for every crate at once.
-resident-outlines = ["ps-vm/resident-outlines", "ps-fonts/resident-outlines"]
+resident-outlines = ["efterscript-vm/resident-outlines", "efterscript-fonts/resident-outlines"]
 
 [dependencies]
-ps-fonts.workspace = true
-ps-vm.workspace = true
+efterscript-codec.workspace = true
+efterscript-fonts.workspace = true
+efterscript-vm.workspace = true

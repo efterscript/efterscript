@@ -4,37 +4,46 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/ps-vm",
-    "crates/ps-graphics",
-    "crates/ps-fonts",
-    "crates/pdf-out",
-    "crates/codec",
-    "crates/remelt",
-    "crates/platen",
+    "crates/efterscript-vm",
+    "crates/efterscript-graphics",
+    "crates/efterscript-fonts",
+    "crates/efterscript-pdf",
+    "crates/efterscript-codec",
+    "crates/efterscript-remelt",
+    "crates/efterscript-platen",
+    "crates/efterscript",
     "crates/efterscript-cli",
     "tools/psgen",
     "tools/difftest",
     "xtask",
 ]
-# The fuzz crate depends on libfuzzer-sys and builds only with nightly
-# `cargo fuzz`; keeping it out of the workspace keeps stable builds clean.
-exclude = ["crates/ps-vm/fuzz"]
+# The fuzz crates depend on libfuzzer-sys and run only under nightly
+# `cargo fuzz`; keeping them out of the workspace keeps stable builds
+# clean. `cargo xtask fuzz-smoke` checks and runs them.
+exclude = [
+    "crates/efterscript-codec/fuzz",
+    "crates/efterscript-vm/fuzz",
+    "crates/efterscript-fonts/fuzz",
+    "crates/efterscript-remelt/fuzz",
+]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/efterscript/efterscript"
+readme = "README.md"
 rust-version = "1.98"
 
 [workspace.dependencies]
 # Default features are off here and re-enabled by each member's own
 # `default` feature (`resident-outlines`), so that
 # `cargo build --workspace --no-default-features` really turns them off.
-ps-vm = { path = "crates/ps-vm", default-features = false }
-ps-graphics = { path = "crates/ps-graphics", default-features = false }
-ps-fonts = { path = "crates/ps-fonts", default-features = false }
-pdf-out = { path = "crates/pdf-out" }
-codec = { path = "crates/codec" }
-remelt = { path = "crates/remelt", default-features = false }
-platen = { path = "crates/platen" }
+efterscript-vm = { path = "crates/efterscript-vm", default-features = false }
+efterscript-graphics = { path = "crates/efterscript-graphics", default-features = false }
+efterscript-fonts = { path = "crates/efterscript-fonts", default-features = false }
+efterscript-pdf = { path = "crates/efterscript-pdf" }
+efterscript-codec = { path = "crates/efterscript-codec" }
+efterscript-remelt = { path = "crates/efterscript-remelt", default-features = false }
+efterscript-platen = { path = "crates/efterscript-platen", default-features = false }
+efterscript = { path = "crates/efterscript", default-features = false }

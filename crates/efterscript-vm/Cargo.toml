@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-vm"
+description = "The language virtual machine of the EfterScript interpreter, compatible with the PostScript language: scanner, object model, stacks, save/restore, resources, error semantics; graphics operators dispatched behind a trait"
+keywords = ["postscript", "interpreter", "vm", "scripting", "pdf"]
+categories = ["parser-implementations", "text-processing"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["efterscript-fonts/resident-outlines"]
+# Entry points for the fuzz targets under `fuzz/`: a decoder driven over
+# bytes without a file table. Not part of the crate's API.
+fuzzing = []
+
+[dependencies]
+efterscript-codec.workspace = true
+efterscript-fonts.workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

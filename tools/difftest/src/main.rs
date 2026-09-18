@@ -56,9 +56,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::rc::Rc;
 
-use ps_graphics::{Collected, Graphics};
-use ps_vm::{Config, Interp, Io, Outcome, SliceSource};
-use remelt::{Options, PdfSink};
+use efterscript_graphics::{Collected, Graphics};
+use efterscript_remelt::{Options, PdfSink};
+use efterscript_vm::{Config, Interp, Io, Outcome, SliceSource};
 
 /// What a corpus file declares about its own run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,7 +104,7 @@ impl Expectation {
 /// Whether this build has `feature`; an unknown feature is absent.
 fn feature_present(feature: &str) -> bool {
     match feature {
-        "resident-outlines" => ps_fonts::has_resident_outlines(),
+        "resident-outlines" => efterscript_fonts::has_resident_outlines(),
         _ => false,
     }
 }
@@ -218,7 +218,7 @@ const PDF_GOLDEN_COMMENTS: [&str; 3] = [
 /// whatever the job asked (the key is locked), so the bytes read as
 /// text, with the provenance comments between the header and the first
 /// object. Nothing for a run that delivered nothing.
-pub fn distil(collected: &Collected) -> Result<Vec<u8>, remelt::Error> {
+pub fn distil(collected: &Collected) -> Result<Vec<u8>, efterscript_remelt::Error> {
     if collected.is_empty() {
         return Ok(Vec::new());
     }
@@ -251,7 +251,7 @@ pub fn execute_with_stdin(program: &[u8], graphics: bool, prelude: Option<&[u8]>
 fn execute_in(program: &[u8], graphics: bool, stdin: bool, prelude: Option<&[u8]>) -> Actual {
     let (mut io, out, err) = Io::capture();
     if stdin {
-        io = io.with_stdin(ps_vm::Capture::new());
+        io = io.with_stdin(efterscript_vm::Capture::new());
     }
     let config = Config {
         io,
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(e.requires, ["resident-outlines"]);
         assert_eq!(
             e.unmet_requirement().is_none(),
-            ps_fonts::has_resident_outlines()
+            efterscript_fonts::has_resident_outlines()
         );
         assert_eq!(
             expectation("% requires: no-such-feature\n").unmet_requirement(),

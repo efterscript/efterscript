@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+#
+# The public tier: every step runs on the corpus in this repository, on
+# the toolchain the workspace pins (`rust-version` in Cargo.toml), in
+# the order the project runs them locally.
+#
+# Two tiers are private by design and do not run here: the strings lint
+# (`cargo xtask lint-strings`) and the oracle comparison (`difftest
+# oracle`). Both need the reference vault a checkout names with
+# EFTERSCRIPT_HELLBOX, which is not redistributable; they run outside
+# continuous integration and skip with a message when the variable is
+# unset.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  public-tier:
+    name: Public tier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
+          cache: false
+
+      - name: Add the WebAssembly target
+        run: rustup target add wasm32-unknown-emscripten
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # The corpus run regenerates nothing; a golden that differs shows
+      # up as a working-tree change, which fails the step.
+      - name: Corpus run, goldens byte-identical
+        run: |
+          cargo run -q -p difftest -- run
+          git diff --exit-code -- corpus/golden
+
+      - name: Parse survival
+        run: cargo run -q -p xtask -- parse-survival
+
+      - name: Generator round
+        run: cargo run -q -p xtask -- fuzz-round
+
+      - name: Build without default features
+        run: cargo build --workspace --no-default-features
+
+      - name: WebAssembly check
+        run: cargo run -q -p xtask -- check-wasm
+
+      - name: Documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

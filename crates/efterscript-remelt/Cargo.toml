@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-remelt"
+description = "The EfterScript distillation engine: runs a program compatible with the PostScript language, captures its marking operations, applies the distillation policies, and writes vector-preserving PDF"
+keywords = ["postscript", "pdf", "distillation", "interpreter"]
+categories = ["text-processing", "graphics"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["efterscript-vm/resident-outlines", "efterscript-graphics/resident-outlines", "efterscript-fonts/resident-outlines"]
+
+[dependencies]
+efterscript-vm.workspace = true
+efterscript-graphics.workspace = true
+efterscript-fonts.workspace = true
+efterscript-pdf.workspace = true
+
+[dev-dependencies]
+efterscript-codec.workspace = true
+proptest = "1.11.0"

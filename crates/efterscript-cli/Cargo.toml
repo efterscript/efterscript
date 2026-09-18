@@ -3,24 +3,32 @@
 
 [package]
 name = "efterscript-cli"
-description = "PostScript-to-PDF command-line tool for EfterScript"
+description = "Command-line tool of EfterScript, an interpreter compatible with the PostScript language: runs a program, dumps the captured vector operations, or distils it to PDF"
+keywords = ["postscript", "pdf", "interpreter", "distillation", "cli"]
+categories = ["command-line-utilities"]
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
 
 [[bin]]
 name = "efterscript"
 path = "src/main.rs"
+# The binary shares its name with the facade crate; only the library is
+# documented, so the two do not collide in the output.
+doc = false
 
 [features]
 default = ["resident-outlines"]
 # The resident set's outline assets; forwarded so a build without them
 # can switch them off for every crate at once.
-resident-outlines = ["ps-vm/resident-outlines", "ps-graphics/resident-outlines", "remelt/resident-outlines"]
+resident-outlines = ["efterscript-vm/resident-outlines", "efterscript-graphics/resident-outlines", "efterscript/resident-outlines"]
 
 [dependencies]
-ps-vm.workspace = true
-ps-graphics.workspace = true
-remelt.workspace = true
+# The `run` and `ir` modes drive the VM and the graphics layer directly;
+# distillation goes through the facade.
+efterscript-vm.workspace = true
+efterscript-graphics.workspace = true
+efterscript.workspace = true

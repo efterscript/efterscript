@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-graphics"
+description = "Graphics state and capture for the EfterScript interpreter: a PDF-shaped, resolution-independent vector IR with sink traits for pluggable backends"
+keywords = ["postscript", "graphics", "vector", "pdf"]
+categories = ["graphics"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[features]
+default = ["resident-outlines"]
+# The resident set's outline assets; forwarded so a build without them
+# can switch them off for every crate at once.
+resident-outlines = ["efterscript-vm/resident-outlines", "efterscript-fonts/resident-outlines"]
+
+[dependencies]
+efterscript-vm.workspace = true
+efterscript-fonts.workspace = true
+
+[dev-dependencies]
+# Only to check that the dump's real syntax agrees with the PDF writer's;
+# the library itself knows nothing about PDF.
+efterscript-pdf.workspace = true
+proptest = "1.11.0"

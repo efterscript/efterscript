@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-fonts"
+description = "Font layer of the EfterScript interpreter: Type 1, CFF, and TrueType parsing, metrics, outline extraction, subsetting, and ToUnicode derivation"
+keywords = ["fonts", "type1", "cff", "truetype", "pdf"]
+categories = ["parser-implementations", "text-processing"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[features]
+default = ["resident-outlines"]
+# Embeds the Liberation and TeX Gyre outline programs of the resident
+# set (about seven megabytes); off, the faces keep their metrics only.
+resident-outlines = []
+
+[dependencies]

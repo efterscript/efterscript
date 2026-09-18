@@ -5,15 +5,17 @@
 //! binary is where host files and host stdio are read and handed to the
 //! interpreter as streams.
 
+#![forbid(unsafe_code)]
+
 use std::cell::RefCell;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 
-use ps_graphics::{Collected, Graphics};
-use ps_vm::{Config, Interp, Io, Outcome, SliceSource, Stream, VmError};
-use remelt::{MarkValue, NotHonoured, Options, PdfSink};
+use efterscript::distill::{MarkValue, NotHonoured, Options, PdfSink};
+use efterscript_graphics::{Collected, Graphics};
+use efterscript_vm::{Config, Interp, Io, Outcome, SliceSource, Stream, VmError};
 
 struct HostStdout;
 
@@ -226,7 +228,7 @@ fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
 /// Prints the report's lines and returns the job's exit code, or 2 when
 /// the document itself could not be written.
 fn conclude(
-    result: Result<(remelt::Report, ()), remelt::Error>,
+    result: Result<(efterscript::Report, ()), efterscript::distill::Error>,
     refused: Vec<NotHonoured>,
 ) -> ExitCode {
     let _ = std::io::stdout().flush();
@@ -304,7 +306,7 @@ fn distill_to<W: Write + 'static>(
         prelude,
         ..Default::default()
     };
-    let result = remelt::distill_into(bytes, config, sink).map(|(report, out)| {
+    let result = efterscript::distill_into(bytes, config, sink).map(|(report, out)| {
         drop(out);
         (report, ())
     });

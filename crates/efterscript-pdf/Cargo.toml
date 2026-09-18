@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-pdf"
+description = "Low-level PDF serialisation for EfterScript: objects, cross-reference tables, streams, compression. Knows nothing about the PostScript language."
+keywords = ["pdf", "serialization", "writer"]
+categories = ["encoding", "text-processing"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+efterscript-codec.workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

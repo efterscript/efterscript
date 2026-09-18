@@ -1,0 +1,38 @@
+// SPDX-FileCopyrightText: 2026 EfterScript contributors
+// SPDX-License-Identifier: MIT
+
+//! Graphics-state machine and vector IR.
+//!
+//! [`Graphics`] implements the graphics-operator trait exposed by `efterscript-vm`:
+//! it keeps the graphics-state stack (PLRM3 §4.2), builds paths through
+//! the CTM, and turns each paint into an operation of a PDF-shaped,
+//! resolution-independent page IR ([`Page`], [`IrOp`]) that is delivered
+//! to a [`PageSink`] at `showpage`. Colour is a colour-space resource plus
+//! a component vector of the space's arity; nothing is converted. The IR
+//! has one canonical text form ([`dump`]) for golden comparison. A
+//! `pdfmark` becomes a link annotation on its page or a document-level
+//! [`DocMark`] the sink receives as it is made.
+//!
+//! Independently useful as a vector-capture layer: the backend needs no
+//! interpreter, only calls.
+
+#![forbid(unsafe_code)]
+
+mod arc;
+mod backend;
+pub mod dump;
+mod ir;
+mod marks;
+pub mod outline;
+mod real;
+mod state;
+
+pub use backend::Graphics;
+pub use ir::{
+    Annot, Collected, DocMark, FillRule, FontIndex, FontSpec, FormIndex, FormSpec, GlyphName,
+    GlyphNames, GlyphProc, Image, ImageRef, IrOp, LinkTarget, Op, Page, PageAttrs, PageSink,
+    PatternIndex, PatternSpec, ProgramRef, Resources, ShadingIndex, SpaceRef, Target, View,
+    glyph_names,
+};
+pub use real::{fmt_real, fmt_reals};
+pub use state::{ClipEntry, GState, Path};

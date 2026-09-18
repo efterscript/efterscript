@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-codec"
+description = "Byte codecs shared by the EfterScript PDF writer and the interpreter's filters: DEFLATE, inflate, LZW, and the PNG and TIFF predictors. No dependencies, no I/O."
+keywords = ["deflate", "inflate", "lzw", "predictor", "pdf"]
+categories = ["compression", "encoding"]
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.11.0"

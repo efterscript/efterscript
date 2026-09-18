@@ -6,6 +6,7 @@
 mod check_wasm;
 mod fetch_fonts;
 mod fuzz_round;
+mod fuzz_smoke;
 mod lint_strings;
 mod parse_survival;
 mod sha256;
@@ -26,6 +27,10 @@ fn usage() -> ExitCode {
         "  fuzz-round        generate and check the seed files' programs [--profile <p>] [--oracle <name>]"
     );
     eprintln!(
+        "  fuzz-smoke        check the libFuzzer crates on stable and run each target briefly"
+    );
+    eprintln!("                    under nightly cargo-fuzz when installed [--seconds <n>]");
+    eprintln!(
         "  check-wasm        cargo check the session front-end for wasm32-unknown-emscripten"
     );
     eprintln!("  tiny-jpeg         print the project's own baseline JPEG stream [--corpus]");
@@ -39,6 +44,7 @@ fn main() -> ExitCode {
         Some("fetch-fonts") => fetch_fonts::run(&args[1..]),
         Some("lint-strings") => lint_strings::run(&args[1..]),
         Some("fuzz-round") => fuzz_round::run(&args[1..]),
+        Some("fuzz-smoke") => fuzz_smoke::run(&args[1..]),
         Some("check-wasm") => check_wasm::run(&args[1..]),
         Some("tiny-jpeg") => tiny_jpeg::run(&args[1..]),
         Some(t) => {

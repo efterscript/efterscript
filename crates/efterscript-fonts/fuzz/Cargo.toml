@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "efterscript-fonts-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone: nightly-only, see the root manifest's `exclude`.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+efterscript-fonts = { path = ".." }
+
+[[bin]]
+name = "type1"
+path = "fuzz_targets/type1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cff"
+path = "fuzz_targets/cff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "truetype"
+path = "fuzz_targets/truetype.rs"
+test = false
+doc = false
+bench = false
