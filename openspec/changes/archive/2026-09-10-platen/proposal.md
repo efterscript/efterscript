@@ -29,7 +29,7 @@ business, so `platen` reports facts and never phrases them.
   `%%[ Error: …; OffendingCommand: … ]%%` lines; the host routes both.
 - **Per-job instances**: no state survives `finish`; downloads through
   `exitserver` persist only within the job; the host maps one driver
-  connection to one job. Recorded as the model, with the charter's
+  connection to one job. Recorded as the model, with the founding plan's
   persistent-parent design deferred to a later profile if a host needs
   it.
 - **A C ABI** in the same crate (`platen.h`, hand-written, versioned):

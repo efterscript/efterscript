@@ -3,7 +3,7 @@
 
 //! Name-level substitution: any font name resolves to one of the
 //! thirty-five resident faces. Aliases cover the metrically compatible
-//! families and the classic LaserWriter families; anything else is
+//! families and the classic printer-resident families; anything else is
 //! classified by hints in the name, Helvetica being the default.
 
 use crate::resident::{Family, ResidentFace};
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn laserwriter_families_resolve_to_their_own_faces() {
+    fn classic_resident_families_resolve_to_their_own_faces() {
         assert_eq!(sub("Palatino-Roman"), ResidentFace::PalatinoRoman);
         assert_eq!(sub("Palatino"), ResidentFace::PalatinoRoman);
         assert_eq!(sub("Palatino-BoldItalic"), ResidentFace::PalatinoBoldItalic);

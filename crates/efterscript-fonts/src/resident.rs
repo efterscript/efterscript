@@ -4,7 +4,7 @@
 //! The resident set: the fourteen standard fonts ([`StdFont`], whose
 //! standard-14 status the PDF writer relies on) and the thirty-five
 //! resident faces ([`ResidentFace`]) — the fourteen plus the twenty-one
-//! LaserWriter faces — with their metrics ([`Metrics`]: the Core 14 AFM
+//! classic printer-resident faces — with their metrics ([`Metrics`]: the Core 14 AFM
 //! for the fourteen, a table derived from the outline program for the
 //! twenty-one), read from the embedded files on first use, and the
 //! outline asset each is drawn from.

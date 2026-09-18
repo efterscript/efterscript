@@ -93,7 +93,7 @@ extended graphics state resource per distinct setting (`/GSn << /Type
 /ExtGState /OP bool /op bool >>`) and emits `/GSn gs` inside the
 saved state where the IR sets it; both `OP` and `op` are written with
 the same value (no `setoverprintmode`). *Alternative:* write `SA` too
-— stroke adjustment is a raster hint the charter leaves to viewers;
+— stroke adjustment is a raster hint the project leaves to viewers;
 recorded, not written.
 
 **D4. The page device joins the graphics state.** The interpreter's

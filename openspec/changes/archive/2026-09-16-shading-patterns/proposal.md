@@ -8,7 +8,7 @@ pattern and `shfill` is undefined, so any job with a smooth colour
 transition — every drawing application's gradient, the shaded logos
 and buttons of driver output from the LanguageLevel 3 era — stops at
 its first use. Shadings are the one construct whose appearance a
-distiller must never flatten: PDF carries the same seven shading
+distillation engine must never flatten: PDF carries the same seven shading
 types with the same function model, so a job's gradient survives as a
 gradient, resolution-independent, rather than as bands of fills. Three
 pieces have to land together, and they shape each other: function
@@ -65,7 +65,7 @@ calibrated-colour changes just completed.
   not collapse (function outputs cannot be converted without
   evaluating them — when a job needs it, a sampled re-encoding of the
   function); `AsyncRead true` laziness (read eagerly, recorded);
-  rasterising a shading (never, by charter); `Function` evaluation in
+  rasterising a shading (never, by project decision); `Function` evaluation in
   the interpreter; a `Halftone`/`Trapping` category the reusable-stream
   intents mention.
 

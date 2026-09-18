@@ -13,7 +13,7 @@ Today `makepattern`, `execform`, and the user-path operators are
 undefined, so a job stops at its first use, and the `Pattern` and
 `Form` categories cannot be populated. All three are vector constructs
 with exact PDF counterparts (tiling pattern objects, form XObjects,
-plain paths), so a distiller preserves them rather than flattening
+plain paths), so a distillation engine preserves them rather than flattening
 them. The hard-to-retrofit part is the boundary shape: a pattern cell
 and a form body are procedures whose marks must be captured into a
 reusable resource instead of the page, the mechanism Type 3 glyph

@@ -3,7 +3,7 @@
 
 //! The outline assets behind the resident set: Liberation TrueType
 //! files for the Helvetica, Times, and Courier families and TeX Gyre
-//! Type 1 files for the twenty-one LaserWriter faces, embedded behind
+//! Type 1 files for the twenty-one classic printer-resident faces, embedded behind
 //! the `resident-outlines` feature and parsed once per thread on first
 //! use. A glyph is found by name — a Type 1 charstring, a TrueType
 //! `post` name, else the name's Unicode value through the `(3,1)` cmap —

@@ -75,8 +75,8 @@ Option<Encoded>` where `Encoded::Dct` carries nothing more; the IR
 `Image` keeps the encoded bytes; the dump notes `dct`; the writer emits
 `/Filter /DCTDecode` with the bytes verbatim instead of Flate. Raw
 images are unchanged. *Alternative:* decode JPEG to samples — a codec
-we do not want in-process and the charter defers with rasterisation;
-passthrough is what a distiller does anyway.
+we do not want in-process and the project defers with rasterisation;
+passthrough is what a distillation engine does anyway.
 
 **D6. The Filter category** lists the twelve names; `resourceforall`
 enumerates them; `findresource` returns the key (there is no object to

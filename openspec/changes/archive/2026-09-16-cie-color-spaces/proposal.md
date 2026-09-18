@@ -10,7 +10,7 @@ what the LaserWriter-8-era colour path emits when a Macintosh prints
 with colour matching on, and it appears in any job produced with a
 colour-managed workflow; such a job stops at its first
 `setcolorspace`. PDF has exact device-independent counterparts,
-`CalGray`, `CalRGB`, and `Lab`, so a distiller preserves calibrated
+`CalGray`, `CalRGB`, and `Lab`, so a distillation engine preserves calibrated
 colour instead of rendering it through a device profile. The decision
 that is hard to retrofit is where the mapping happens: a CIE space is
 defined by PostScript procedures that only the VM can run, so the

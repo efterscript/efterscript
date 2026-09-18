@@ -302,7 +302,7 @@ scratch programs that never entered the repository ("observed" below).
   the goldens under `corpus/golden/ir/upath` are page-for-page identical
   to the pages the same files build by hand. The §4.6.4 note about
   rounding the CTM's translation to whole device pixels is a
-  scan-conversion measure and is not applied; the distiller keeps the
+  scan-conversion measure and is not applied; the distillation engine keeps the
   geometry exact.
 - **The `upath` shape (the open question).** Settled by the entry and
   observation: an executable array; `ucache` first when the operand is

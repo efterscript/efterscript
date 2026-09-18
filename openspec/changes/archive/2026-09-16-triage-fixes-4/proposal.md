@@ -9,7 +9,7 @@ outline stops; `rand`, `srand`, `rrand`, `usertime`, and `realtime` are
 undefined, so a job that seeds a pattern, times itself, or scatters
 marks stops at the first call; `setstrokeadjust`, `setoverprint`, and
 their getters are undefined, so any job that touches them stops,
-and overprint — the one of those a distiller must preserve — is lost;
+and overprint — the one of those a distillation engine must preserve — is lost;
 `languagelevel` still answers 2 although the interpreter now carries
 shadings, CIE colour, user paths, and reusable streams; `serialnumber`
 and the `systemdict` copies of the identity values are missing; the

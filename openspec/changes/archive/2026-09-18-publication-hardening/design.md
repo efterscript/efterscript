@@ -18,7 +18,7 @@ workflow's shape, and the fuzz targets.
   the generator-based round, not libFuzzer.
 - No CI exists; the gates are the `xtask` commands and cargo. The
   strings lint needs the vault; the oracle needs the converter.
-- The charter reserves the `efterscript` GitHub organisation and wants
+- The project reserves the `efterscript` GitHub organisation and wants
   a genuine `efterscript` seed crate.
 
 ## Goals / Non-Goals

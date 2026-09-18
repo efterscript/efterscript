@@ -2,7 +2,7 @@
 
 ## Why
 
-The interpreter has reached the charter's v1 language and colour
+The interpreter has reached the planned v1 language and colour
 surface, and the joint milestone with the emulator is one integration
 step away, but the repository is still shaped for its private phase:
 every crate carries a placeholder name and `publish = false`, no
@@ -34,7 +34,7 @@ maintained outside this process and are not part of the change.
   efterscript` that re-exports the distillation entry points (options,
   parameters, the report, the distillation calls) and the session
   job API, so a user depends on one crate; the command-line tool
-  depends on it. It is the genuine seed the charter wants on the
+  depends on it. It is the genuine seed the project wants on the
   registry, carrying the whole engine.
 - **Enforced safety boundary**: `#![forbid(unsafe_code)]` on every
   library crate except the session library, whose C boundary is the
@@ -53,9 +53,9 @@ maintained outside this process and are not part of the change.
   `cargo xtask fuzz-smoke` for a bounded time on the pinned nightly
   when available and skipped with a message otherwise.
 - **Publish metadata**: descriptions, keywords, categories, and the
-  repository URL of the organisation the charter reserves, with
-  `publish = false` retained until the registry checks the charter
-  lists are done — flipping the flag is a separate, deliberate step.
+  repository URL of the organisation the project reserves, with
+  `publish = false` retained until the planned registry checks
+  are done — flipping the flag is a separate, deliberate step.
 - Out of scope: the README and other project documents (maintained
   directly); the history question (decided: unchanged); publishing
   itself; the clone-detection scan; quirks-mode policy.

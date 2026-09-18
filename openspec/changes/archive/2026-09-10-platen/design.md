@@ -92,7 +92,7 @@ capture already holds the bytes; `feed` drains whatever exists.
 
 **D6. `languagelevel`** returns the integer 2 from `systemdict`.
 
-**D7. Persistence.** Per the decision, none between jobs. The charter's
+**D7. Persistence.** Per the decision, none between jobs. The founding plan's
 persistent-parent model is recorded as deferred; a host needing it can
 re-send server-level downloads per connection, which the drivers of
 the era do when the query says the download is absent.
