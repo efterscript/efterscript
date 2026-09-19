@@ -59,11 +59,20 @@ cargo build --release -p efterscript-platen --target wasm32-unknown-emscripten
 # target/wasm32-unknown-emscripten/release/libplaten.a
 emcc host.c -I crates/efterscript-platen/include \
   target/wasm32-unknown-emscripten/release/libplaten.a \
+  -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 \
   -sEXPORTED_FUNCTIONS=_platen_job_new,_platen_job_feed,_platen_job_read_replies,_platen_job_read_errors,_platen_job_finish,_platen_job_pdf,_platen_job_error_name,_platen_job_offending,_platen_job_pages,_platen_job_free,_platen_last_error,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPU8 \
   -sALLOW_MEMORY_GROWTH=1 \
   -o host.js
 ```
+
+Rust compiles this target with WebAssembly exception handling on (the
+legacy form), so the final link must pass `-fwasm-exceptions`; the
+archive's objects reference the exception tag and the link fails with an
+undefined `__cpp_exception` without it. Only the link line needs the
+flag: C objects compiled without it link fine. Passing
+`-sWASM_LEGACY_EXCEPTIONS=1` keeps the form explicit should the SDK's
+default move.
 
 The exported symbols, in the order the header declares them:
 
@@ -124,7 +133,9 @@ versioned, and Rust's prebuilt standard library for the target is built
 against one SDK release. The archive's file name carries that version
 so a host's fetch step can refuse a mismatch before linking. The
 current pair is Rust 1.98.0 with Emscripten SDK 6.0.7; the release
-workflow declares both in one place and they change together.
+workflow declares both in one place and they change together. The link must also pass `-fwasm-exceptions` (see above); a
+release's archive is checked by linking and running a small host with
+exactly that flag.
 
 A fetch step, given a version and a pinned SDK:
 

@@ -132,7 +132,7 @@ jobs:
               return 0;
           }
           EOC
-          emcc -O1 -s ALLOW_MEMORY_GROWTH=1 -I crates/efterscript-platen/include \
+          emcc -O1 -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 -s ALLOW_MEMORY_GROWTH=1 -I crates/efterscript-platen/include \
             /tmp/host.c target/wasm32-unknown-emscripten/release/libplaten.a -o /tmp/host.js
           node /tmp/host.js | tee /tmp/host.out
           grep -q '^pages=1$' /tmp/host.out
