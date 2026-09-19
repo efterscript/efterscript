@@ -66,6 +66,96 @@ jobs:
       - name: Every crate packages from the tagged tree
         run: cargo package --workspace
 
+  artefacts:
+    name: Build the session library archives
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # The Rust toolchain and the Emscripten SDK are a pair: Rust's
+      # prebuilt standard library for wasm32-unknown-emscripten is built
+      # with the SDK that was current on the toolchain's build date, and
+      # Emscripten's ABI is not semantically versioned. Change them
+      # together; the link check below catches a mismatch before upload.
+      RUST_VERSION: "1.98.0"
+      EMSDK_VERSION: "6.0.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag names the workspace version
+        id: meta
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          [ "${GITHUB_REF_NAME}" = "v${version}" ] || { echo "::error::tag/version mismatch"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: wasm32-unknown-emscripten
+          cache: false
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Build the host archive
+        run: |
+          cargo build --release -p efterscript-platen
+          ls -la target/release/libplaten.a
+
+      - name: Build the Emscripten archive
+        run: |
+          emcc --version | head -1
+          cargo build --release -p efterscript-platen --target wasm32-unknown-emscripten
+          ls -la target/wasm32-unknown-emscripten/release/libplaten.a
+
+      - name: Link and run a minimal host against the Emscripten archive
+        run: |
+          cat > /tmp/host.c <<'EOC'
+          #include <stdio.h>
+          #include <string.h>
+          #include "platen.h"
+          int main(void) {
+              platen_config cfg;
+              memset(&cfg, 0, sizeof cfg);
+              cfg.abi_version = PLATEN_ABI_VERSION;
+              platen_job *job = platen_job_new(&cfg);
+              if (!job) { printf("new failed: %s\n", platen_last_error()); return 1; }
+              const char *program = "%!PS\n0 0 moveto 100 100 lineto stroke showpage\n";
+              platen_job_feed(job, (const uint8_t *)program, strlen(program));
+              platen_job_finish(job);
+              printf("pages=%u\n", (unsigned)platen_job_pages(job));
+              platen_job_free(job);
+              return 0;
+          }
+          EOC
+          emcc -O1 -s ALLOW_MEMORY_GROWTH=1 -I crates/efterscript-platen/include \
+            /tmp/host.c target/wasm32-unknown-emscripten/release/libplaten.a -o /tmp/host.js
+          node /tmp/host.js | tee /tmp/host.out
+          grep -q '^pages=1$' /tmp/host.out
+
+      - name: Assemble the artefacts
+        id: files
+        run: |
+          v="${{ steps.meta.outputs.version }}"
+          mkdir -p dist
+          cp target/release/libplaten.a "dist/libplaten-${v}-x86_64-unknown-linux-gnu.a"
+          cp target/wasm32-unknown-emscripten/release/libplaten.a \
+             "dist/libplaten-${v}-wasm32-unknown-emscripten-${EMSDK_VERSION}.a"
+          cp crates/efterscript-platen/include/platen.h "dist/platen-${v}.h"
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -la dist
+
+      - name: Attach to the release of the tag
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+
   publish:
     name: Publish to the registry
     needs: verify

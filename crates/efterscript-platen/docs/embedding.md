@@ -103,3 +103,37 @@ frame it runs in; the execution budget (`step_budget`) bounds it.
 - Every function is safe to call after a failure, except on a freed
   job. A panic is caught at the boundary; the job is then poisoned and
   every later call returns `PLATEN_ERR_PANIC`.
+
+## Prebuilt archives
+
+Every tagged release attaches the session library, built on the tagged
+commit, to the GitHub release of the tag, so a host needs no Rust
+toolchain:
+
+- `libplaten-<version>-x86_64-unknown-linux-gnu.a` — the host archive.
+- `libplaten-<version>-wasm32-unknown-emscripten-<emsdk>.a` — the
+  Emscripten archive; `<emsdk>` is the Emscripten SDK version it was
+  built with.
+- `platen-<version>.h` — the header, identical to
+  `include/platen.h` at that tag.
+- `SHA256SUMS` — checksums of the files above.
+
+An Emscripten archive is usable only by a program linked with the same
+Emscripten version: Emscripten's runtime ABI is not semantically
+versioned, and Rust's prebuilt standard library for the target is built
+against one SDK release. The archive's file name carries that version
+so a host's fetch step can refuse a mismatch before linking. The
+current pair is Rust 1.98.0 with Emscripten SDK 6.0.7; the release
+workflow declares both in one place and they change together.
+
+A fetch step, given a version and a pinned SDK:
+
+```sh
+v=0.0.2; sdk=6.0.7
+base=https://github.com/efterscript/efterscript/releases/download/v$v
+curl -fsSLO $base/SHA256SUMS
+curl -fsSLO $base/libplaten-$v-wasm32-unknown-emscripten-$sdk.a
+curl -fsSLO $base/platen-$v.h
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
