@@ -22,7 +22,7 @@ endobj
 << /Type /Catalog /Pages 1 0 R >>
 endobj
 5 0 obj
-<< /Title (Report) /Author (Someone) /Subject (pdfmark) /Keywords (bookmarks, links) /Creator (hand written) /Producer (EfterScript 0.0.1) >>
+<< /Title (Report) /Author (Someone) /Subject (pdfmark) /Keywords (bookmarks, links) /Creator (hand written) /Producer (EfterScript) >>
 endobj
 xref
 0 6
@@ -35,5 +35,5 @@ xref
 trailer
 << /Size 6 /Root 4 0 R /Info 5 0 R >>
 startxref
-582
+576
 %%EOF

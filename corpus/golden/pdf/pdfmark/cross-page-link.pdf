@@ -43,7 +43,7 @@ endobj
 << /Type /Catalog /Pages 1 0 R /Dests 7 0 R >>
 endobj
 9 0 obj
-<< /Producer (EfterScript 0.0.1) >>
+<< /Producer (EfterScript) >>
 endobj
 xref
 0 10
@@ -60,5 +60,5 @@ xref
 trailer
 << /Size 10 /Root 8 0 R /Info 9 0 R >>
 startxref
-848
+842
 %%EOF
