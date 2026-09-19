@@ -119,7 +119,9 @@ Every tagged release attaches the session library, built on the tagged
 commit, to the GitHub release of the tag, so a host needs no Rust
 toolchain:
 
-- `libplaten-<version>-x86_64-unknown-linux-gnu.a` — the host archive.
+- `libplaten-<version>-x86_64-unknown-linux-gnu.a` and
+  `libplaten-<version>-aarch64-unknown-linux-gnu.a` — the host archives,
+  one per Linux host; a host without one builds from a checkout.
 - `libplaten-<version>-wasm32-unknown-emscripten-<emsdk>.a` — the
   Emscripten archive; `<emsdk>` is the Emscripten SDK version it was
   built with.

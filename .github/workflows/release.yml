@@ -66,12 +66,86 @@ jobs:
       - name: Every crate packages from the tagged tree
         run: cargo package --workspace
 
-  artefacts:
-    name: Build the session library archives
+  # The session library archives. Three build jobs, one per platform,
+  # each checking its archive by linking and running a small host where
+  # it will be used; one attach job collects them, writes the single
+  # SHA256SUMS the consumers verify against, and attaches everything.
+  host-archive:
+    name: Build the host archive (${{ matrix.triple }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    env:
+      RUST_VERSION: "1.98.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag names the workspace version
+        id: meta
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          [ "${GITHUB_REF_NAME}" = "v${version}" ] || { echo "::error::tag/version mismatch"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          cache: false
+
+      - name: Build the host archive
+        run: |
+          [ "$(rustc -vV | sed -n 's/^host: //p')" = "${{ matrix.triple }}" ] || { echo "::error::runner is not ${{ matrix.triple }}"; exit 1; }
+          cargo build --release -p efterscript-platen
+          ls -la target/release/libplaten.a
+
+      - name: Link and run a minimal host against the archive
+        run: |
+          cat > /tmp/host.c <<'EOC'
+          #include <stdio.h>
+          #include <string.h>
+          #include "platen.h"
+          int main(void) {
+              platen_config cfg;
+              memset(&cfg, 0, sizeof cfg);
+              cfg.abi_version = PLATEN_ABI_VERSION;
+              platen_job *job = platen_job_new(&cfg);
+              if (!job) { printf("new failed: %s\n", platen_last_error()); return 1; }
+              const char *program = "%!PS\n0 0 moveto 100 100 lineto stroke showpage\n";
+              platen_job_feed(job, (const uint8_t *)program, strlen(program));
+              platen_job_finish(job);
+              printf("pages=%u\n", (unsigned)platen_job_pages(job));
+              platen_job_free(job);
+              return 0;
+          }
+          EOC
+          # The system libraries a Rust staticlib needs on Linux
+          # (cargo rustc -- --print native-static-libs).
+          cc -O1 -I crates/efterscript-platen/include /tmp/host.c target/release/libplaten.a \
+            -lgcc_s -lutil -lrt -lpthread -lm -ldl -lc -o /tmp/host
+          /tmp/host | tee /tmp/host.out
+          grep -q '^pages=1$' /tmp/host.out
+
+      - name: Name the archive
+        run: |
+          mkdir -p dist
+          cp target/release/libplaten.a "dist/libplaten-${{ steps.meta.outputs.version }}-${{ matrix.triple }}.a"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-${{ matrix.triple }}
+          path: dist/*
+          if-no-files-found: error
+
+  wasm-archive:
+    name: Build the Emscripten archive
     needs: verify
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     env:
       # The Rust toolchain and the Emscripten SDK are a pair: Rust's
       # prebuilt standard library for wasm32-unknown-emscripten is built
@@ -100,11 +174,6 @@ jobs:
         with:
           version: ${{ env.EMSDK_VERSION }}
           actions-cache-folder: emsdk-cache
-
-      - name: Build the host archive
-        run: |
-          cargo build --release -p efterscript-platen
-          ls -la target/release/libplaten.a
 
       - name: Build the Emscripten archive
         run: |
@@ -137,17 +206,37 @@ jobs:
           node /tmp/host.js | tee /tmp/host.out
           grep -q '^pages=1$' /tmp/host.out
 
-      - name: Assemble the artefacts
-        id: files
+      - name: Name the archive and the header
         run: |
           v="${{ steps.meta.outputs.version }}"
           mkdir -p dist
-          cp target/release/libplaten.a "dist/libplaten-${v}-x86_64-unknown-linux-gnu.a"
           cp target/wasm32-unknown-emscripten/release/libplaten.a \
              "dist/libplaten-${v}-wasm32-unknown-emscripten-${EMSDK_VERSION}.a"
           cp crates/efterscript-platen/include/platen.h "dist/platen-${v}.h"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/*
+          if-no-files-found: error
+
+  attach:
+    name: Attach the archives to the release
+    needs: [host-archive, wasm-archive]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: One checksum file over everything
+        run: |
           (cd dist && sha256sum * > SHA256SUMS)
           ls -la dist
+          cat dist/SHA256SUMS
 
       - name: Attach to the release of the tag
         uses: softprops/action-gh-release@v2
