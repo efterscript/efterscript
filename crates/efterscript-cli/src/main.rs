@@ -15,7 +15,15 @@ use std::rc::Rc;
 
 use efterscript::distill::{MarkValue, NotHonoured, Options, PdfSink};
 use efterscript_graphics::{Collected, Graphics};
-use efterscript_vm::{Config, Interp, Io, Outcome, SliceSource, Stream, VmError};
+use efterscript_vm::{Config, Interp, Io, Limits, Outcome, SliceSource, Stream, VmError};
+
+/// Objects a run may execute unless `--budget` says otherwise: two orders
+/// of magnitude above the largest job seen, and a runaway loop reaches
+/// it in seconds.
+const DEFAULT_BUDGET: u64 = 100_000_000;
+
+/// The exit status of a run the budget ended; 0, 1, and 2 are taken.
+const BUDGET_SPENT: u8 = 3;
 
 struct HostStdout;
 
@@ -64,10 +72,15 @@ impl Stream for HostStdin {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: efterscript run <file.ps>");
-    eprintln!("       efterscript ir <file.ps>");
+    eprintln!("usage: efterscript run [options] <file.ps>");
+    eprintln!("       efterscript ir [options] <file.ps>");
     eprintln!("       efterscript pdf [options] <file.ps> [<out.pdf> | -]");
     eprintln!("       efterscript --version");
+    eprintln!("options of every mode:");
+    eprintln!(
+        "       --budget <n>|unlimited  objects the run may execute (default {DEFAULT_BUDGET});"
+    );
+    eprintln!("                               a run that spends its budget exits with status 3");
     eprintln!("pdf options:");
     eprintln!("       --param <Key>=<Value>   a distillation parameter (repeatable)");
     eprintln!("       --no-compress           CompressPages false");
@@ -86,26 +99,83 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
-fn exit_code(outcome: Outcome) -> ExitCode {
+/// The value of `--budget`: an allowance of objects, or `None` for
+/// `unlimited`.
+type Budget = Option<u64>;
+
+/// Takes `--budget <value>` out of `args`, wherever it stands, so every
+/// mode shares the one parser and the `pdf` parser never sees it. The
+/// last occurrence wins. Without the flag the default applies.
+fn budget_args<'a>(args: &[&'a str]) -> Result<(Budget, Vec<&'a str>), String> {
+    let mut budget = Some(DEFAULT_BUDGET);
+    let mut rest = Vec::with_capacity(args.len());
+    let mut at = 0;
+    while at < args.len() {
+        let arg = args[at];
+        at += 1;
+        if arg != "--budget" {
+            rest.push(arg);
+            continue;
+        }
+        let value = args
+            .get(at)
+            .ok_or_else(|| "--budget needs a value".to_string())?;
+        at += 1;
+        budget = match *value {
+            "unlimited" => None,
+            text => match text.parse::<u64>() {
+                Ok(n) if n > 0 => Some(n),
+                _ => {
+                    return Err(format!(
+                        "--budget wants a positive integer or unlimited, got {text}"
+                    ));
+                }
+            },
+        };
+    }
+    Ok((budget, rest))
+}
+
+/// The stack limits with the budget in force.
+fn limits(budget: Budget) -> Limits {
+    Limits {
+        steps: budget,
+        ..Limits::default()
+    }
+}
+
+/// The exit status of a finished run. A `limitcheck` raised by the
+/// budget rather than by the program is reported on standard error in
+/// the form of the error report and exits with its own status.
+fn exit_code(outcome: Outcome, budget_exceeded: bool, budget: Budget) -> ExitCode {
     match outcome {
         Outcome::Ok | Outcome::Suspended => ExitCode::SUCCESS,
+        Outcome::Error(_) if budget_exceeded => {
+            let allowance = budget.unwrap_or(DEFAULT_BUDGET);
+            eprintln!(
+                "%%[ Budget: spent after {allowance} objects; --budget <n> raises it, --budget unlimited removes it ]%%"
+            );
+            ExitCode::from(BUDGET_SPENT)
+        }
         Outcome::Error(_) => ExitCode::FAILURE,
     }
 }
 
 /// Runs the program in `bytes` against the host streams with a graphics
 /// backend whose pages are discarded; the exit code is 0 for a job that
-/// ended normally and 1 for one ended by an error.
-fn run(bytes: &[u8]) -> ExitCode {
+/// ended normally, 1 for one ended by an error, and 3 for one ended by
+/// the budget.
+fn run(bytes: &[u8], budget: Budget) -> ExitCode {
     let config = Config {
         io: Io::new(HostStdout, HostStderr).with_stdin(HostStdin),
+        limits: limits(budget),
         ..Default::default()
     };
     let mut interp = Interp::with_config(config);
     interp.set_graphics_backend(Box::new(Graphics::new(())));
     let outcome = interp.run(&mut SliceSource::new(bytes));
     let _ = std::io::stdout().flush();
-    exit_code(outcome)
+    exit_code(outcome, interp.budget_exceeded(), budget)
 }
 
 /// Runs the program and prints the IR dump of every page it produced,
@@ -113,9 +183,10 @@ fn run(bytes: &[u8]) -> ExitCode {
 /// pages when there are any. Only the dump goes to standard output; the
 /// program's own output joins the error report on standard error, so
 /// the dump can be piped.
-fn ir(bytes: &[u8]) -> ExitCode {
+fn ir(bytes: &[u8], budget: Budget) -> ExitCode {
     let config = Config {
         io: Io::new(HostStderr, HostStderr).with_stdin(HostStdin),
+        limits: limits(budget),
         ..Default::default()
     };
     let mut interp = Interp::with_config(config);
@@ -125,7 +196,7 @@ fn ir(bytes: &[u8]) -> ExitCode {
     let text = collected.borrow().dump();
     print!("{text}");
     let _ = std::io::stdout().flush();
-    exit_code(outcome)
+    exit_code(outcome, interp.budget_exceeded(), budget)
 }
 
 /// What the `pdf` command was asked for.
@@ -230,6 +301,7 @@ fn pdf_args(args: &[&str]) -> Result<PdfArgs, String> {
 fn conclude(
     result: Result<(efterscript::Report, ()), efterscript::distill::Error>,
     refused: Vec<NotHonoured>,
+    budget: Budget,
 ) -> ExitCode {
     let _ = std::io::stdout().flush();
     match result {
@@ -280,7 +352,7 @@ fn conclude(
                     refused.join(", ")
                 );
             }
-            exit_code(report.outcome)
+            exit_code(report.outcome, report.budget_exceeded, budget)
         }
         Err(e) => {
             eprintln!("efterscript: {e}");
@@ -299,9 +371,11 @@ fn distill_to<W: Write + 'static>(
     refused: Vec<NotHonoured>,
     identity: Vec<(String, MarkValue)>,
     prelude: Option<Vec<u8>>,
+    budget: Budget,
 ) -> ExitCode {
     let config = Config {
         io,
+        limits: limits(budget),
         identity,
         prelude,
         ..Default::default()
@@ -310,14 +384,14 @@ fn distill_to<W: Write + 'static>(
         drop(out);
         (report, ())
     });
-    conclude(result, refused)
+    conclude(result, refused, budget)
 }
 
 /// Writes the PDF to the target, or to standard output for `-`, in which
 /// case the program's own output moves to standard error so the PDF can
 /// be piped. A file can seek, so its header names the compatibility
 /// level; standard output cannot, so a level below 1.7 is reported.
-fn pdf(bytes: &[u8], args: PdfArgs) -> ExitCode {
+fn pdf(bytes: &[u8], args: PdfArgs, budget: Budget) -> ExitCode {
     let PdfArgs {
         target,
         options,
@@ -334,16 +408,16 @@ fn pdf(bytes: &[u8], args: PdfArgs) -> ExitCode {
     if target == Path::new("-") {
         let io = Io::new(HostStderr, HostStderr).with_stdin(HostStdin);
         return match PdfSink::new(BufWriter::new(std::io::stdout()), options) {
-            Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude),
-            Err(e) => conclude(Err(e), refused),
+            Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude, budget),
+            Err(e) => conclude(Err(e), refused, budget),
         };
     }
     match std::fs::File::create(&target) {
         Ok(file) => {
             let io = Io::new(HostStdout, HostStderr).with_stdin(HostStdin);
             match PdfSink::new_seekable(BufWriter::new(file), options) {
-                Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude),
-                Err(e) => conclude(Err(e), refused),
+                Ok(sink) => distill_to(bytes, io, sink, refused, identity, prelude, budget),
+                Err(e) => conclude(Err(e), refused, budget),
             }
         }
         Err(e) => {
@@ -362,24 +436,27 @@ fn read_program(path: &str) -> Result<Vec<u8>, ExitCode> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (budget, args) = match budget_args(&args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("efterscript: {message}");
+            return usage();
+        }
+    };
+    match args.as_slice() {
         ["--version" | "-V"] => {
             println!("efterscript {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         [command @ ("run" | "ir"), path] => match read_program(path) {
-            Ok(bytes) if *command == "run" => run(&bytes),
-            Ok(bytes) => ir(&bytes),
+            Ok(bytes) if *command == "run" => run(&bytes, budget),
+            Ok(bytes) => ir(&bytes, budget),
             Err(code) => code,
         },
         ["pdf", rest @ ..] => match pdf_args(rest) {
             Ok(parsed) => match read_program(&parsed.input) {
-                Ok(bytes) => pdf(&bytes, parsed),
+                Ok(bytes) => pdf(&bytes, parsed, budget),
                 Err(code) => code,
             },
             Err(message) => {
@@ -484,5 +561,43 @@ mod tests {
         assert!(pdf_args(&["--param", "NoEquals", "a.ps"]).is_err());
         assert!(pdf_args(&["--lock"]).is_err());
         assert!(pdf_args(&["--bogus", "a.ps"]).is_err());
+    }
+
+    #[test]
+    fn the_budget_is_taken_out_of_any_mode_line() {
+        assert_eq!(
+            budget_args(&["run", "a.ps"]).unwrap(),
+            (Some(DEFAULT_BUDGET), vec!["run", "a.ps"])
+        );
+        assert_eq!(
+            budget_args(&["--budget", "1000", "ir", "a.ps"]).unwrap(),
+            (Some(1000), vec!["ir", "a.ps"])
+        );
+        assert_eq!(
+            budget_args(&[
+                "pdf",
+                "--no-compress",
+                "a.ps",
+                "--budget",
+                "unlimited",
+                "b.pdf"
+            ])
+            .unwrap(),
+            (None, vec!["pdf", "--no-compress", "a.ps", "b.pdf"])
+        );
+        assert_eq!(
+            budget_args(&["run", "--budget", "5", "--budget", "7", "a.ps"]).unwrap(),
+            (Some(7), vec!["run", "a.ps"])
+        );
+        for bad in [
+            &["run", "a.ps", "--budget"][..],
+            &["--budget", "0", "run", "a.ps"],
+            &["--budget", "-1", "run", "a.ps"],
+            &["--budget", "x", "run", "a.ps"],
+            &["--budget", "1.5", "run", "a.ps"],
+        ] {
+            let message = budget_args(bad).unwrap_err();
+            assert!(message.starts_with("--budget"), "{message}");
+        }
     }
 }

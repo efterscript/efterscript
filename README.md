@@ -35,7 +35,11 @@ cargo run -q -p difftest -- run
 The command-line tool has three modes: `run` executes a program and prints
 its output, `ir` dumps the captured vector operations as text, and `pdf`
 distils. `--prelude` runs a program once at the server level before the
-job, and `--identity` seeds the printer identity.
+job, and `--identity` seeds the printer identity. Every run is bounded by
+an execution budget of 100 million objects; `--budget <n>` raises it,
+`--budget unlimited` removes it, and a run that spends its budget exits
+with status 3 after saying so on standard error (0 is success, 1 an
+error, 2 a usage or host failure).
 
 ## What it is for
 
