@@ -36,13 +36,16 @@ use crate::params::{NotHonoured, Params};
 use crate::{Error, Options, content, resources::Objects};
 
 /// Names the project and its version; the only Info entry a job does
-/// not supply, since dates would cost determinism.
+/// not supply, since dates would cost determinism. [`Options::unversioned_producer`]
+/// drops the version for output that must not change with a release.
 const PRODUCER: &str = concat!("EfterScript ", env!("CARGO_PKG_VERSION"));
+const BARE_PRODUCER: &str = "EfterScript";
 
 pub struct PdfSink<W: Write> {
     doc: Document<W>,
     tree: PageTree,
     params: Params,
+    versioned_producer: bool,
     pages: usize,
     error: Option<efterscript_pdf::Error>,
     fonts: FontTable,
@@ -76,6 +79,7 @@ impl<W: Write> PdfSink<W> {
             doc,
             tree,
             params: options.params,
+            versioned_producer: options.versioned_producer,
             pages: 0,
             error: None,
             fonts: FontTable::default(),
@@ -178,9 +182,14 @@ impl<W: Write> PdfSink<W> {
         )?;
         let catalog = marks.write(&mut doc, tree.pages())?;
         let root = tree.finish_with(&mut doc, |d| catalog.entries(d))?;
+        let producer = if self.versioned_producer {
+            PRODUCER
+        } else {
+            BARE_PRODUCER
+        };
         let info = write_info(&mut doc, |d| {
             marks.info(d);
-            d.key("Producer").string(PRODUCER.as_bytes());
+            d.key("Producer").string(producer.as_bytes());
         })?;
         Ok(doc.finish(root, Some(info))?)
     }

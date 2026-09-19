@@ -222,7 +222,9 @@ pub fn distil(collected: &Collected) -> Result<Vec<u8>, efterscript_remelt::Erro
     if collected.is_empty() {
         return Ok(Vec::new());
     }
-    let options = Options::compress(false).lock("CompressPages");
+    let options = Options::compress(false)
+        .lock("CompressPages")
+        .unversioned_producer();
     let mut sink = PdfSink::new_seekable(std::io::Cursor::new(Vec::new()), options)?;
     for comment in PDF_GOLDEN_COMMENTS {
         sink.comment(comment)?;

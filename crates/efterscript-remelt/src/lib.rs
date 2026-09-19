@@ -56,6 +56,10 @@ pub use sink::PdfSink;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Options {
     pub params: Params,
+    /// Whether the Info `Producer` names the version after the project.
+    /// On by default; off for output that must not change with a release,
+    /// such as a golden document.
+    pub versioned_producer: bool,
 }
 
 impl Options {
@@ -66,7 +70,15 @@ impl Options {
                 compress_pages: enabled,
                 ..Params::default()
             },
+            versioned_producer: true,
         }
+    }
+
+    /// `self` with a `Producer` naming the project alone, so the bytes
+    /// do not change from one release to the next.
+    pub fn unversioned_producer(mut self) -> Self {
+        self.versioned_producer = false;
+        self
     }
 
     /// `self` with `key` locked against the job's requests.

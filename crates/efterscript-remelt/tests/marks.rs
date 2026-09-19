@@ -442,7 +442,7 @@ fn a_document_without_marks_is_byte_identical_to_its_golden() {
     assert_eq!(interp.run(&mut SliceSource::new(&program)), Outcome::Ok);
     let collected = collected.take();
     assert!(collected.marks.is_empty());
-    let mut sink = PdfSink::new(Vec::new(), uncompressed()).unwrap();
+    let mut sink = PdfSink::new(Vec::new(), uncompressed().unversioned_producer()).unwrap();
     for comment in [
         "SPDX-FileCopyrightText: 2026 EfterScript contributors",
         "SPDX-License-Identifier: MIT",

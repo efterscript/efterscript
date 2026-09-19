@@ -26,7 +26,9 @@ fn a_corpus_file_distilled_through_the_facade_equals_its_golden() {
     let program = std::fs::read(format!("{ROOT}/corpus/unit/graphics/gray-image.ps")).unwrap();
     let golden =
         std::fs::read(format!("{ROOT}/corpus/golden/pdf/graphics/gray-image.pdf")).unwrap();
-    let options = Options::compress(false).lock("CompressPages");
+    let options = Options::compress(false)
+        .lock("CompressPages")
+        .unversioned_producer();
     let mut sink = PdfSink::new_seekable(Cursor::new(Vec::new()), options).unwrap();
     for line in PROVENANCE {
         sink.comment(line).unwrap();
