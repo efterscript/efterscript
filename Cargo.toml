@@ -39,11 +39,11 @@ rust-version = "1.98"
 # Default features are off here and re-enabled by each member's own
 # `default` feature (`resident-outlines`), so that
 # `cargo build --workspace --no-default-features` really turns them off.
-efterscript-vm = { path = "crates/efterscript-vm", default-features = false }
-efterscript-graphics = { path = "crates/efterscript-graphics", default-features = false }
-efterscript-fonts = { path = "crates/efterscript-fonts", default-features = false }
-efterscript-pdf = { path = "crates/efterscript-pdf" }
-efterscript-codec = { path = "crates/efterscript-codec" }
-efterscript-remelt = { path = "crates/efterscript-remelt", default-features = false }
-efterscript-platen = { path = "crates/efterscript-platen", default-features = false }
-efterscript = { path = "crates/efterscript", default-features = false }
+efterscript-vm = { version = "0.0.1", path = "crates/efterscript-vm", default-features = false }
+efterscript-graphics = { version = "0.0.1", path = "crates/efterscript-graphics", default-features = false }
+efterscript-fonts = { version = "0.0.1", path = "crates/efterscript-fonts", default-features = false }
+efterscript-pdf = { version = "0.0.1", path = "crates/efterscript-pdf" }
+efterscript-codec = { version = "0.0.1", path = "crates/efterscript-codec" }
+efterscript-remelt = { version = "0.0.1", path = "crates/efterscript-remelt", default-features = false }
+efterscript-platen = { version = "0.0.1", path = "crates/efterscript-platen", default-features = false }
+efterscript = { version = "0.0.1", path = "crates/efterscript", default-features = false }
