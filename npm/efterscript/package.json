@@ -1,0 +1,23 @@
+{
+  "name": "efterscript",
+  "version": "0.0.1",
+  "description": "A memory-safe, embeddable interpreter compatible with the PostScript language, written in Rust, whose primary output is PDF. This package is a placeholder for the forthcoming WebAssembly build; the engine is published as Rust crates today.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/efterscript/efterscript.git",
+    "directory": "npm/efterscript"
+  },
+  "homepage": "https://github.com/efterscript/efterscript#readme",
+  "bugs": "https://github.com/efterscript/efterscript/issues",
+  "keywords": ["postscript", "pdf", "interpreter", "distillation", "wasm"],
+  "main": "index.js",
+  "exports": "./index.js",
+  "files": ["index.js", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

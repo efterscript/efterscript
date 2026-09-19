@@ -69,3 +69,12 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 EfterScript contributors"
 SPDX-License-Identifier = "MIT"
+
+# The placeholder npm package: its manifest cannot carry a header and
+# its LICENSE is a copy of the repository's.
+[[annotations]]
+path = ["npm/efterscript/package.json", "npm/efterscript/LICENSE"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 EfterScript contributors"
+SPDX-License-Identifier = "MIT"
+
