@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+#
+# A release: pushing a tag `v<X.Y.Z>` that names the workspace version.
+# `verify` reruns the public tier on the tagged commit with no
+# privileges; `publish` runs in the `release` environment (a reviewer
+# must approve it), proves this workflow's identity to the registry
+# through GitHub's OpenID Connect token, receives a registry token that
+# lives only for the job, and publishes the nine crates in dependency
+# order, skipping any version the registry already holds. No registry
+# credential is stored anywhere.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  verify:
+    name: Verify the tagged commit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag must name the workspace version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          tag="${GITHUB_REF_NAME}"
+          echo "workspace version: ${version}; tag: ${tag}"
+          if [ "${tag}" != "v${version}" ]; then
+            echo "::error::tag ${tag} does not name the workspace version ${version}"
+            exit 1
+          fi
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^rust-version = "\([^"]*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
+          cache: false
+
+      - run: rustup target add wasm32-unknown-emscripten
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Corpus goldens are byte-identical
+        run: |
+          cargo run -q -p difftest -- run
+          git diff --exit-code -- corpus/golden
+      - run: cargo run -q -p xtask -- parse-survival
+      - run: cargo run -q -p xtask -- fuzz-round
+      - run: cargo build --workspace --no-default-features
+      - run: cargo run -q -p xtask -- check-wasm
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Every crate packages from the tagged tree
+        run: cargo package --workspace
+
+  publish:
+    name: Publish to the registry
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^rust-version = "\([^"]*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          cache: false
+
+      - name: Authenticate through trusted publishing
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish in dependency order, resuming past crates already up
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -eu
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          published() {
+            curl -sf -A "efterscript-release" \
+              "https://crates.io/api/v1/crates/$1/${version}" > /dev/null
+          }
+          for crate in efterscript-codec efterscript-pdf efterscript-fonts \
+                       efterscript-vm efterscript-graphics efterscript-remelt \
+                       efterscript-platen efterscript efterscript-cli; do
+            if published "${crate}"; then
+              echo "${crate} ${version} is already on the registry; skipping"
+              continue
+            fi
+            cargo publish -p "${crate}"
+            for attempt in $(seq 1 30); do
+              published "${crate}" && break
+              sleep 10
+            done
+            published "${crate}" || {
+              echo "::error::${crate} ${version} did not appear on the registry"
+              exit 1
+            }
+          done
