@@ -177,7 +177,17 @@ copied code, no reproduced manual text.
 
 ## License and trademarks
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE), for the project's own code and data. The
+fonts crate bundles third-party data under its own terms, listed in
+[REUSE.toml](REUSE.toml) with the licence texts under `LICENSES/`: the
+resident outlines (OFL-1.1 and LPPL-1.3c; disabled by turning off the
+`resident-outlines` feature), the Core 14 metrics (Adobe's AFM notice),
+and the glyph list and predefined CMaps (BSD-3-Clause). PDFs produced with
+these fonts carry no obligation. One duty does reach embedders: the
+BSD-3-Clause terms of the glyph list and CMaps require a binary that links
+the fonts crate to reproduce their copyright notice and conditions in its
+documentation or accompanying materials; the notice text is in
+`crates/efterscript-fonts/data/PROVENANCE.md`.
 
 PostScript is a registered trademark of Adobe. EfterScript is an
 independent interpreter compatible with the PostScript language and is

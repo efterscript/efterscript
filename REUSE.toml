@@ -33,3 +33,15 @@ path = "crates/efterscript-fonts/data/cmap/**"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "1990-2023 Adobe"
 SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "crates/efterscript-fonts/data/core14/*.afm"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "1985-1997 Adobe Systems Incorporated"
+SPDX-License-Identifier = "LicenseRef-Adobe-AFM"
+
+[[annotations]]
+path = "crates/efterscript-fonts/data/glyphlist.txt"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2002-2019 Adobe"
+SPDX-License-Identifier = "BSD-3-Clause"

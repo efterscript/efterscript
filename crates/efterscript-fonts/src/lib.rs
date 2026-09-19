@@ -13,6 +13,18 @@
 //! The VM owns font-dictionary *semantics*; this crate owns the glyph engine,
 //! kept behind a trait. No rasterization.
 //!
+//! # Bundled data and its terms
+//!
+//! This crate embeds third-party data under its own licences, listed in
+//! the repository's `REUSE.toml`: the resident outlines (OFL-1.1 and
+//! LPPL-1.3c, absent when the `resident-outlines` feature is off), the
+//! Core 14 metrics (the AFM notice), and the glyph list and predefined
+//! CMaps (BSD-3-Clause). Documents produced with these fonts carry no
+//! obligation. A binary that links this crate does: the BSD-3-Clause
+//! terms require it to reproduce the glyph list's and CMaps' copyright
+//! notice and conditions in its documentation or accompanying materials;
+//! `data/PROVENANCE.md` holds the text.
+//!
 //! What exists so far: the resident set — the fourteen standard fonts
 //! ([`StdFont`]) and the thirty-five resident faces ([`ResidentFace`])
 //! with metrics from the embedded Core 14 AFM files and from tables
