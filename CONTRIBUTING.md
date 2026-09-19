@@ -37,9 +37,11 @@ the decision is kept. This page says how to take part.
   printing to the console, no threads, no time source; every library
   crate forbids unsafe code, and the session library's C interface is the
   one permitted site. The WebAssembly check must keep passing.
-- **Every file carries its SPDX header** (`SPDX-FileCopyrightText: 2026
-  EfterScript contributors` and `SPDX-License-Identifier: MIT`). Third
-  party assets need REUSE annotations and a provenance entry.
+- **Every source file carries its SPDX header** (`SPDX-FileCopyrightText:
+  2026 EfterScript contributors` and `SPDX-License-Identifier: MIT`); a
+  file whose format has no comment syntax is covered by an annotation in
+  `REUSE.toml` instead. Third-party assets need REUSE annotations and a
+  provenance entry.
 - **Goldens are byte-identical unless the change intends otherwise**, and
   then the intended goldens are updated and the reason recorded in the
   design's implementation notes. Where a behaviour deliberately differs

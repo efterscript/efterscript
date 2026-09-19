@@ -45,3 +45,27 @@ path = "crates/efterscript-fonts/data/glyphlist.txt"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2002-2019 Adobe"
 SPDX-License-Identifier = "BSD-3-Clause"
+
+# The project's own documents, specifications, configuration, and tooling,
+# whose formats carry no comment header: MIT like the code. Licence texts
+# under LICENSES/ and lock/ignore files are not works of this project and
+# are listed only so the map is complete.
+[[annotations]]
+path = [
+    "openspec/**",
+    ".claude/**",
+    ".devcontainer/**",
+    ".githooks/**",
+    "README.md",
+    "corpus/README.md",
+    "corpus/**/.gitkeep",
+    ".gitignore",
+    "**/.gitignore",
+    "Cargo.lock",
+    "crates/*/tests/*.proptest-regressions",
+    "crates/efterscript-fonts/data/PROVENANCE.md",
+    "corpus/golden/pdf/one-page.pdf",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 EfterScript contributors"
+SPDX-License-Identifier = "MIT"

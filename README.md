@@ -86,7 +86,8 @@ compatibility decisions, so compatibility with decades of driver-generated
 programs is a measured, incremental property.
 
 **Permissive licensing and strict IP hygiene.** MIT from the first commit.
-Every file carries an SPDX header; the language is implemented from the
+Every source file carries an SPDX header and every other file is covered
+by a REUSE annotation; the language is implemented from the
 published reference and from black-box observation only, never from
 another implementation's code; reference material and encumbered test
 inputs live outside this repository, which has been treated as public
