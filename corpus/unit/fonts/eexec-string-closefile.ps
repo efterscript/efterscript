@@ -1,0 +1,21 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: before
+% expect-output: after
+% expect-output: 1
+% Scenario: currentfile closefile inside an eexec section given a string.
+% PLRM3 §8.2: eexec makes a file object over the file OR the string and
+% that file is the current one, so the section's own `currentfile
+% closefile` ends the section and the outer source continues — the
+% "encrypted text followed by unencrypted text" shape the manual
+% describes. A driver's prologue ends its downloads that way. Treating a
+% string section as a bare string source instead hid it from
+% `currentfile`, which found the job's file and closed that, ending the
+% whole job silently.
+% The section below decrypts to: userdict /inside 1 put currentfile closefile
+% Expect: before, after, 1.
+(before) =
+<81B87280B0B710FE7B75F2BFFD138BF3116C2C9060B55C6E8DD24E0B4C0486901487403641009A323E40A70398D5C2E7> eexec
+(after) =
+inside =

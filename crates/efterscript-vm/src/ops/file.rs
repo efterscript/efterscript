@@ -419,10 +419,11 @@ fn stack(i: &mut Interp) -> Result<(), VmError> {
 
 /// `eexec` (PLRM3 §8.2): a file operand becomes a decrypting layer over
 /// it, read from right after the operator's delimiter; a string operand
-/// is decrypted whole. Either runs as a source with `systemdict` on the
-/// dictionary stack under an `Eexec` marker that undoes the push and
-/// closes the layer when the source ends by `closefile`, end of data, or
-/// an error unwinding past it.
+/// is decrypted whole into a file of its own. Either way the section is
+/// a file, which `currentfile` returns, run as a source with
+/// `systemdict` on the dictionary stack under an `Eexec` marker that
+/// undoes the push and closes the file when the source ends by
+/// `closefile`, end of data, or an error unwinding past it.
 fn eexec(i: &mut Interp) -> Result<(), VmError> {
     let source = i.peek(0)?;
     match source.ty() {
@@ -446,15 +447,30 @@ fn eexec(i: &mut Interp) -> Result<(), VmError> {
             begin_section(i, Some(layer), dicts, slot)
         }
         Type::String => {
+            // The plaintext becomes a file, not a string source: PLRM3
+            // §8.2 says eexec "creates a new file object that serves as a
+            // decryption filter on file or string" and makes it the
+            // current file, so `currentfile` inside the section must
+            // return it and `closefile` on it must end the section alone.
+            // As a string source it was invisible to `currentfile`, which
+            // then found the job's own file and closed that instead —
+            // ending the job at the `currentfile closefile` the manual
+            // describes for encrypted text followed by plain text.
             let cipher = bytes(i, source)?;
             let plain = efterscript_fonts::type1::decrypt_section(&cipher);
             let systemdict = i.dicts.systemdict;
             let dicts = i.dstack.len();
             i.push_dict(systemdict)?;
-            let string = i.mem.alloc_string(plain);
+            let handle = i.mem.files_mut().open_bytes(plain);
+            let object = Object::file(i.mem.current_space(), handle)
+                .with_access(Access::ReadOnly)
+                .expect("file objects carry access");
             i.pop()?;
-            let slot = SourceSlot::String(StringSource::new(string).expect("string"));
-            begin_section(i, None, dicts, slot)
+            let slot = SourceSlot::File {
+                object,
+                source: FileSource::from_handle(handle),
+            };
+            begin_section(i, Some(handle), dicts, slot)
         }
         _ => Err(VmError::TypeCheck),
     }
