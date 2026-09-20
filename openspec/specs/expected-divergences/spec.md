@@ -257,19 +257,6 @@ the recognised keys is the operator's contract.
 - **GIVEN** the corpus file offering ill-typed recognised keys
 - **THEN** it carries `% divergence: distiller-params-typecheck`
 
-### Requirement: cexec-defined
-
-`cexec` is defined in `systemdict` and executes its operand as `exec`
-does; the reference converter has no such operator and raises
-`undefined`. Chosen because printer setup code probes for it before
-downloading, and the download it guards is native code for a printer's
-own processor, which `exec` of a literal string leaves untouched.
-
-#### Scenario: Declared
-
-- **GIVEN** the corpus file executing a procedure through `cexec`
-- **THEN** it carries `% divergence: cexec-defined`
-
 ### Requirement: server-password-default
 
 `exitserver` accepts the password 0 unless the interpreter is

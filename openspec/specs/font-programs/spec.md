@@ -13,10 +13,12 @@ the subsetting and embedding of those programs in the output.
 standard `eexec` key in hexadecimal or binary form (detected from the
 first four bytes), discard the four leading bytes, and execute the
 plaintext as a source with `systemdict` pushed on the dictionary stack
-for its duration. Inside the layer `currentfile` SHALL return the layer,
+for its duration. The section SHALL be a file object whichever operand
+form began it: inside it `currentfile` SHALL return that file,
 `readstring` and `token` SHALL read decrypted bytes, and `closefile` on
-the layer SHALL end it, pop `systemdict`, and leave the underlying file
-positioned after the last byte the layer consumed.
+it SHALL end the section, pop `systemdict`, and resume the enclosing
+source — for a file operand, positioned after the last byte the layer
+consumed.
 
 #### Scenario: A hexadecimal eexec section
 
@@ -35,6 +37,14 @@ positioned after the last byte the layer consumed.
 - **GIVEN** a string holding an encrypted `(hi) print`
 - **WHEN** `eexec` is applied to it
 - **THEN** the output is `hi`
+
+#### Scenario: A string section closes only itself
+
+- **GIVEN** a string whose plaintext is
+  `userdict /inside 1 put currentfile closefile`, executed by `eexec`
+  between two statements of the job
+- **THEN** the statement after the section runs and `inside` is `1` —
+  the section's `closefile` ended the section, not the job
 
 ### Requirement: Type 1 programs measure and draw
 

@@ -71,8 +71,12 @@ SHALL accept `--identity Key=Value` and `--prelude <file>`.
 accept their operands, record them in the graphics state, and apply
 nothing; their `current…` counterparts SHALL return what was recorded
 (the defaults before any set); `framedevice` SHALL accept its four
-operands and do nothing; `cexec` SHALL behave as `exec`. None of these
-SHALL affect the IR.
+operands and do nothing. None of these SHALL affect the IR.
+
+`cexec` SHALL NOT be defined: it is a printer extension that executes
+native code for a particular printer's processor, PLRM3 has no such
+operator, and a driver probing for it inside a guard depends on the
+`undefined` error to discard the code string it pushed.
 
 #### Scenario: Screen round-trips
 
@@ -82,8 +86,15 @@ SHALL affect the IR.
 
 #### Scenario: cexec
 
-- **GIVEN** `{ 1 2 add = } cexec`
-- **THEN** the output is `3`
+- **GIVEN** `systemdict /cexec known =`
+- **THEN** the output is `false`
+
+#### Scenario: A driver's guarded probe
+
+- **GIVEN** `{ (native code) cexec } stopped` with the guard's cleanup
+  `{ dup type /stringtype eq { pop } if } if`
+- **THEN** `stopped` returns `true`, the cleanup discards the code
+  string, and the operand stack is left as the driver expects
 
 ### Requirement: Identity in systemdict and the font types
 
