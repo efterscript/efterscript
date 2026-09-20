@@ -78,13 +78,12 @@ resumes.
 
 ### Requirement: Releases carry the session library
 
-Every release SHALL attach to its GitHub release the session library's
-static archive for the Linux host and for the Emscripten target, the C
-header, and a checksum file, built on the tagged commit with the
-pinned toolchains; the Emscripten archive's file name SHALL carry the
-Emscripten version it was built with, and the release SHALL be refused
-if a minimal C program fails to link against that archive with the
-same Emscripten.
+Every tagged release SHALL attach the session library as prebuilt
+archives for the Linux hosts `x86_64-unknown-linux-gnu` and
+`aarch64-unknown-linux-gnu` and for the Emscripten target, together with
+the C header and one checksum file covering every attached file, each
+archive built on the tagged commit and checked by linking and running a
+small host program on its own platform.
 
 #### Scenario: A host fetches a release
 
@@ -95,3 +94,15 @@ same Emscripten.
 
 - **WHEN** the release job runs with the pinned Emscripten SDK
 - **THEN** the uploaded archive is named with that version and the link check passed before upload
+
+#### Scenario: An arm64 Linux consumer
+
+- **WHEN** a build on an arm64 Linux host fetches the release by its
+  host triple
+- **THEN** the archive `libplaten-<version>-aarch64-unknown-linux-gnu.a`
+  exists and its checksum is in `SHA256SUMS`
+
+#### Scenario: One checksum file
+
+- **WHEN** the release's files are produced by more than one job
+- **THEN** `SHA256SUMS` still lists every attached archive and the header
