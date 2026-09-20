@@ -64,7 +64,12 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Every crate packages from the tagged tree
-        run: cargo package --workspace
+        run: |
+          cargo package --workspace
+          # The per-crate verify builds under target/package are gone by
+          # now; remove the directory so the cache's post-run prune does
+          # not walk paths that no longer exist (ENOENT annotations).
+          rm -rf target/package
 
   # The session library archives. Three build jobs, one per platform,
   # each checking its archive by linking and running a small host where
