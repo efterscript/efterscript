@@ -280,9 +280,22 @@ jobs:
         run: |
           set -eu
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          # Readiness is asked of the sparse index, not the web API: the
+          # index is what the next crate's `cargo publish` resolves
+          # against, and the API can report a version while a cached
+          # index response does not yet carry it. Publishing the next
+          # crate in that window fails to resolve the one just published.
           published() {
-            curl -sf -A "efterscript-release" \
-              "https://crates.io/api/v1/crates/$1/${version}" > /dev/null
+            name=$1
+            case ${#name} in
+              1) path="1/${name}" ;;
+              2) path="2/${name}" ;;
+              3) path="3/$(printf %.1s "${name}")/${name}" ;;
+              *) path="$(printf %.2s "${name}")/$(printf %s "${name}" | cut -c3-4)/${name}" ;;
+            esac
+            curl -sf -H 'Cache-Control: no-cache' -A "efterscript-release" \
+              "https://index.crates.io/${path}" \
+              | grep -q "\"vers\":\"${version}\""
           }
           for crate in efterscript-codec efterscript-pdf efterscript-fonts \
                        efterscript-vm efterscript-graphics efterscript-remelt \
