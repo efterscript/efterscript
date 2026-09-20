@@ -28,7 +28,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/efterscript/efterscript"
@@ -39,11 +39,11 @@ rust-version = "1.98"
 # Default features are off here and re-enabled by each member's own
 # `default` feature (`resident-outlines`), so that
 # `cargo build --workspace --no-default-features` really turns them off.
-efterscript-vm = { version = "0.0.3", path = "crates/efterscript-vm", default-features = false }
-efterscript-graphics = { version = "0.0.3", path = "crates/efterscript-graphics", default-features = false }
-efterscript-fonts = { version = "0.0.3", path = "crates/efterscript-fonts", default-features = false }
-efterscript-pdf = { version = "0.0.3", path = "crates/efterscript-pdf" }
-efterscript-codec = { version = "0.0.3", path = "crates/efterscript-codec" }
-efterscript-remelt = { version = "0.0.3", path = "crates/efterscript-remelt", default-features = false }
-efterscript-platen = { version = "0.0.3", path = "crates/efterscript-platen", default-features = false }
-efterscript = { version = "0.0.3", path = "crates/efterscript", default-features = false }
+efterscript-vm = { version = "0.0.4", path = "crates/efterscript-vm", default-features = false }
+efterscript-graphics = { version = "0.0.4", path = "crates/efterscript-graphics", default-features = false }
+efterscript-fonts = { version = "0.0.4", path = "crates/efterscript-fonts", default-features = false }
+efterscript-pdf = { version = "0.0.4", path = "crates/efterscript-pdf" }
+efterscript-codec = { version = "0.0.4", path = "crates/efterscript-codec" }
+efterscript-remelt = { version = "0.0.4", path = "crates/efterscript-remelt", default-features = false }
+efterscript-platen = { version = "0.0.4", path = "crates/efterscript-platen", default-features = false }
+efterscript = { version = "0.0.4", path = "crates/efterscript", default-features = false }

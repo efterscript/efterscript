@@ -37,7 +37,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "difftest"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-fonts",
  "efterscript-graphics",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-platen",
  "efterscript-remelt",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript",
  "efterscript-graphics",
@@ -65,18 +65,18 @@ dependencies = [
 
 [[package]]
 name = "efterscript-codec"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "efterscript-fonts"
-version = "0.0.3"
+version = "0.0.4"
 
 [[package]]
 name = "efterscript-graphics"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-fonts",
  "efterscript-pdf",
@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript-pdf"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-codec",
  "proptest",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript-platen"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-codec",
  "efterscript-remelt",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript-remelt"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-codec",
  "efterscript-fonts",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "efterscript-vm"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-codec",
  "efterscript-fonts",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "psgen"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-fonts",
  "efterscript-graphics",
@@ -415,7 +415,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "efterscript-codec",
  "efterscript-fonts",
