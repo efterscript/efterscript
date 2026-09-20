@@ -280,7 +280,9 @@ mod tests {
         assert!(find("exitserver", Visibility::Public).is_none());
         assert!(find("framedevice", Visibility::Public).is_some());
         assert!(find("setscreen", Visibility::Public).is_some());
-        assert!(find("cexec", Visibility::Public).is_some());
+        // `cexec` is a LaserWriter extension, not a PLRM operator: a driver
+        // probes for it and needs the `undefined` error (ops/control.rs).
+        assert!(find("cexec", Visibility::Public).is_none());
         assert!(find("pathforall", Visibility::Graphics).is_some());
         assert!(find("colorimage", Visibility::Graphics).is_some());
         assert!(find("filter", Visibility::Public).is_some());

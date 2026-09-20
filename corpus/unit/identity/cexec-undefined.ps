@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: false
+% expect-output: true
+% expect-output: 1
+% expect-output: undefined
+% expect-output: cexec
+% Scenario: cexec is not an operator. It is a printer extension that runs
+% native code for a particular printer's own processor; PLRM3 has no such
+% operator, so the name is undefined and executing it raises `undefined`.
+% A driver probes for it exactly this way — inside a guard, with the code
+% string pushed first — and relies on the error to leave the guard's own
+% result on the stack and the string for it to discard. Defining cexec as
+% exec instead would leave the string behind and break the operator that
+% follows the probe.
+% Expect: false, true, 1, undefined, cexec.
+systemdict /cexec known =
+{ (native code) cexec } stopped =
+count =
+$error /errorname get 16 string cvs =
+$error /command get 16 string cvs =

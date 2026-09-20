@@ -2373,7 +2373,6 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
             [
                 ("bitshift-zero-fill", 1),
                 ("capture-refuses-page-operators", 2),
-                ("cexec-defined", 1),
                 ("cie-rendering-path", 2),
                 ("cvrs-negative-unsigned", 1),
                 ("distiller-params-typecheck", 1),

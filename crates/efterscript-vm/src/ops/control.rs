@@ -11,7 +11,6 @@ use crate::ops::Num;
 
 op_table! { OPS {
     "exec" => exec, [Any];
-    "cexec" => exec, [Any];
     "if" => if_, [Bool, Array];
     "ifelse" => ifelse, [Bool, Array, Array];
     "for" => for_, [Num, Num, Num, Array];
@@ -25,8 +24,13 @@ op_table! { OPS {
     "quit" => quit;
 }}
 
-// `cexec` is the same operation under its own name: the reference's
-// job-server escape, accepted as plain execution.
+// `cexec` is deliberately NOT defined: it is an Apple LaserWriter
+// extension that runs native code for the printer's own processor, and
+// PLRM3 has no such operator. A driver probes for it inside an `eexec`
+// section guarded by `stopped`, and relies on the `undefined` error to
+// pop the code string it pushed; defining it as `exec` left that string
+// on the operand stack and the next operator failed (see the identity
+// corpus and openspec/specs/printer-identity).
 fn exec(i: &mut Interp) -> Result<(), VmError> {
     let object = i.pop()?;
     i.exec_indirect(object)
