@@ -25,6 +25,12 @@ publication to the crate registry.
 
 ## Try it
 
+In a browser, with nothing to install: <https://efterscript.github.io/efterscript/>.
+The page runs the [`efterscript`](https://www.npmjs.com/package/efterscript)
+npm package, the engine compiled to WebAssembly, on your own computer.
+
+From source:
+
 ```
 cargo build --release
 cargo run --release -p efterscript-cli -- pdf input.ps output.pdf
