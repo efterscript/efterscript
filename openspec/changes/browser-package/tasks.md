@@ -15,7 +15,8 @@
 ## 3. Workflows
 
 - [x] 3.1 CI builds the package, runs its tests, and assembles the page
-- [x] 3.2 `release.yml`: `verify` builds and tests the package; `npm` publishes it by trusted publishing; `pages-build` and `pages` deploy the page (D8); verified by YAML parsing and a review of every step
+- [x] 3.2 `release.yml`: `verify` builds and tests the package; `npm` publishes it by trusted publishing; `pages-build` and `pages` deploy the page after `npm`, in one concurrency group (D8); verified by YAML parsing and a review of every step
+- [x] 3.4 Links to the page per D10: README top, `homepage` in every crate manifest, the facade crate's documentation, the npm README; verified by `cargo metadata`, `cargo doc`, and `cargo package --workspace`
 - [ ] 3.3 Owner setup: npm trusted publisher for `efterscript` (repository `efterscript/efterscript`, workflow `release.yml`, environment `release`); GitHub Pages source set to GitHub Actions; the `github-pages` environment admits `v*` tags
 
 ## 4. Gates
