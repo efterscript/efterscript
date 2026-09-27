@@ -1,5 +1,9 @@
 # EfterScript
 
+**[Try it in your browser →](https://efterscript.github.io/efterscript/)**
+Open a `.ps` or `.eps` file and get a PDF back; the conversion runs on
+your own computer and nothing is uploaded.
+
 A memory-safe, embeddable interpreter compatible with the PostScript
 language, written in Rust, whose primary output is PDF. It executes a
 program, captures the marking operations it performs, and serialises them
@@ -198,8 +202,9 @@ and the glyph list and predefined CMaps (BSD-3-Clause). PDFs produced with
 these fonts carry no obligation. One duty does reach embedders: the
 BSD-3-Clause terms of the glyph list and CMaps require a binary that links
 the fonts crate to reproduce their copyright notice and conditions in its
-documentation or accompanying materials; the notice text is in
-`crates/efterscript-fonts/data/PROVENANCE.md`.
+documentation or accompanying materials; ship
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) with it, as the release
+archives and the npm package do.
 
 PostScript is a registered trademark of Adobe. EfterScript is an
 independent interpreter compatible with the PostScript language and is
