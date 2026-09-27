@@ -4,10 +4,19 @@
 #
 # The project names no products, and its commit messages are no
 # exception. Every commit, whoever makes it, is refused if its message
-# names the coding tool or its vendor; a commit from an agent shell (see
+# or its author or committer identity names the coding tool or its vendor; a commit from an agent shell (see
 # pre-commit) is also refused if it carries a generated-with tagline or
 # a co-author trailer. Comment lines and anything below the scissors
 # line are not part of the message and are ignored.
+
+# The author and committer, too: a machine's default identity must not
+# stand in for the person the commit belongs to.
+for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
+    if printf '%s\n' "$ident" | grep -qiE 'claude|anthropic'; then
+        echo "commit-msg: refusing — the author or committer identity names a product; set user.name and user.email for this clone." >&2
+        exit 1
+    fi
+done
 
 message=$(sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$1")
 
