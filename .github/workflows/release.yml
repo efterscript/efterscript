@@ -227,6 +227,9 @@ jobs:
           cp target/wasm32-unknown-emscripten/release/libplaten.a \
              "dist/libplaten-${v}-wasm32-unknown-emscripten-${EMSDK_VERSION}.a"
           cp crates/efterscript-platen/include/platen.h "dist/platen-${v}.h"
+          # The archives compile in the fonts crate's data, whose terms
+          # travel with them.
+          cp THIRD-PARTY-NOTICES.md LICENSE dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -397,10 +400,15 @@ jobs:
         with:
           path: target/site
 
+  # Deployed once the package it runs is on the registry, so the page
+  # never advertises a version npm does not have yet.
   pages:
     name: Deploy the try-it page
-    needs: pages-build
+    needs: [pages-build, npm]
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
