@@ -41,9 +41,10 @@ SHALL fail that job only; a later job SHALL run in a new instance.
 ### Requirement: The package carries its notices
 
 The package SHALL ship the project's licence, the licence texts of the
-font data compiled into the module, and a third-party notice that
-reproduces the BSD-3-Clause copyright notices and conditions of the
-glyph list and the predefined CMaps.
+font data compiled into the module, and the repository's third-party
+notice, which reproduces the BSD-3-Clause copyright notices and
+conditions of the glyph list and the predefined CMaps; each release
+SHALL attach the same notice beside the session-library archives.
 
 #### Scenario: The notice travels with the binary
 

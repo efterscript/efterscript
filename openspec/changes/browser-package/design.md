@@ -103,10 +103,12 @@ built in `pages-build` and deployed by `pages` with the Pages
 actions. CI builds both on every push.
 
 **D9. Notices.** The module contains the fonts crate's data, so the
-package ships the licence texts from `LICENSES/` and a
-`THIRD-PARTY-NOTICES.md` reproducing the BSD-3-Clause notices of the
-glyph list and CMaps (the duty the README describes for binaries), and
-the page links to it.
+package ships the licence texts from `LICENSES/` and the repository's
+`THIRD-PARTY-NOTICES.md`, which reproduces the BSD-3-Clause notices of
+the glyph list and CMaps (the duty the README describes for binaries).
+The file lives at the repository root because every binary built with
+the fonts crate owes it: the package copies it on assembly, the release
+attaches it beside the session-library archives, and the page shows it.
 
 ## Risks / Trade-offs
 
