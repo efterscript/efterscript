@@ -96,12 +96,18 @@ programs.
 
 **D8. Releases.** `verify` builds the package and runs its tests. A
 new `npm` job in the `release` environment (reviewer approval, OIDC
-token) builds and tests the package and runs `npm publish`, which
-authenticates through the registry's trusted publishing and attaches
-provenance; a version already on the registry is skipped. The page is
-built in `pages-build` and deployed by `pages` with the Pages
-actions, after `npm` has succeeded, so the page never advertises a
-package version the registry does not hold, and in one concurrency
+token) builds and tests the package and runs `npm stage publish`, which
+authenticates through the registry's trusted publishing, attaches
+provenance, and leaves the version staged; a version already live is
+skipped. The trusted publisher is configured stage-only, so the
+version goes live only when a maintainer approves it on the registry
+with two-factor authentication, which no workflow credential can do:
+a second human gate, outside GitHub, on top of the environment
+approval. Staging needs npm 11.15.0 or later, installed in the job. The
+page is built in `pages-build` and deployed by `pages` with the Pages
+actions; `pages` runs after `npm` and first waits (up to three hours)
+until the registry serves the version, so the page never advertises a
+package version npm does not serve, and it runs in one concurrency
 group so two deployments cannot overlap. CI builds both on every push.
 
 **D10. Every landing page links to the try-it page.** The README opens

@@ -328,12 +328,13 @@ jobs:
           done
 
   # The npm package: the session library built for wasm32-unknown-unknown
-  # with the hand-written wrapper around its C interface. Published by
+  # with the hand-written wrapper around its C interface. Staged by
   # trusted publishing (the registry trusts this workflow in the
-  # `release` environment) with a provenance statement; a version the
-  # registry already holds is skipped so a rerun resumes.
+  # `release` environment, for staging only) with a provenance statement;
+  # it goes live when a maintainer approves it on the registry with 2FA,
+  # which no workflow can do. A version already live is skipped.
   npm:
-    name: Publish the npm package
+    name: Stage the npm package
     needs: verify
     runs-on: ubuntu-latest
     environment: release
@@ -353,18 +354,23 @@ jobs:
           target: wasm32-unknown-unknown
           cache: false
 
-      # Trusted publishing needs npm 11.5.1 or later, which Node 24 ships.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Staged publishing needs npm 11.15.0 or later.
+      - name: A recent npm
+        run: |
+          npm install -g npm@^11.15.0
+          npm --version
 
       - name: Build and test the package
         run: |
           cargo run -q -p xtask -- npm-package
           node --test npm/efterscript/test/package.test.mjs
 
-      - name: Publish, unless this version is already on the registry
+      - name: Stage, unless this version is already live
         working-directory: target/npm/efterscript
         run: |
           version=$(node -p "require('./package.json').version")
@@ -372,7 +378,8 @@ jobs:
             echo "efterscript ${version} is already on the registry; skipping"
             exit 0
           fi
-          npm publish
+          npm stage publish
+          echo "::notice::efterscript ${version} is staged. Approve it on npmjs.com (Staged Packages) or with \`npm stage approve\`; the page deploys once it is live."
 
   # The try-it page, deployed to GitHub Pages from the tagged commit.
   pages-build:
@@ -400,12 +407,14 @@ jobs:
         with:
           path: target/site
 
-  # Deployed once the package it runs is on the registry, so the page
-  # never advertises a version npm does not have yet.
+  # Deployed once the package it runs is live on the registry, so the
+  # page never advertises a version npm does not serve. The npm job only
+  # stages the package; this waits for the maintainer's approval.
   pages:
     name: Deploy the try-it page
     needs: [pages-build, npm]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     concurrency:
       group: pages
       cancel-in-progress: false
@@ -416,5 +425,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Wait until npm serves this version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          until npm view "efterscript@${version}" version >/dev/null 2>&1; do
+            echo "efterscript ${version} is not live yet; waiting for its approval on npmjs.com"
+            sleep 60
+          done
+          echo "efterscript ${version} is live"
+
       - id: deployment
         uses: actions/deploy-pages@v4
