@@ -17,8 +17,9 @@
 - [x] 3.1 CI builds the package, runs its tests, and assembles the page
 - [x] 3.2 `release.yml`: `verify` builds and tests the package; `npm` stages it by trusted publishing for a maintainer's 2FA approval; `pages-build` and `pages` deploy the page once npm serves the version, in one concurrency group (D8); verified by YAML parsing and a review of every step
 - [x] 3.4 Links to the page per D10: README top, `homepage` in every crate manifest, the facade crate's documentation, the npm README; verified by `cargo metadata`, `cargo doc`, and `cargo package --workspace`
-- [ ] 3.3 Owner setup: npm trusted publisher for `efterscript`, stage-only (repository `efterscript/efterscript`, workflow `release.yml`, environment `release`, "Allow npm publish" unticked); GitHub Pages source set to GitHub Actions; the `github-pages` environment admits `v*` tags
+- [x] 3.3 Owner setup: npm trusted publisher for `efterscript`, stage-only (repository `efterscript/efterscript`, workflow `release.yml`, environment `release`, "Allow npm publish" unticked); GitHub Pages source set to GitHub Actions; the `github-pages` environment admits `v*` tags
 
 ## 4. Gates
 
 - [x] 4.1 fmt, clippy, tests, corpus run, strings lint, `openspec validate browser-package`
+- [x] 4.2 Released as 0.0.5; the attach job limited to the archive artifacts after the release carried the page's artifact
