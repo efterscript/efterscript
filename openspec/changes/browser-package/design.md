@@ -100,7 +100,15 @@ token) builds and tests the package and runs `npm publish`, which
 authenticates through the registry's trusted publishing and attaches
 provenance; a version already on the registry is skipped. The page is
 built in `pages-build` and deployed by `pages` with the Pages
-actions. CI builds both on every push.
+actions, after `npm` has succeeded, so the page never advertises a
+package version the registry does not hold, and in one concurrency
+group so two deployments cannot overlap. CI builds both on every push.
+
+**D10. Every landing page links to the try-it page.** The README opens
+with the link (every crate's registry page shows the README), each
+crate manifest's `homepage` is the page, the facade crate's
+documentation names it, and so does the top of the npm README, whose
+manifest `homepage` is the page as well.
 
 **D9. Notices.** The module contains the fonts crate's data, so the
 package ships the licence texts from `LICENSES/` and the repository's

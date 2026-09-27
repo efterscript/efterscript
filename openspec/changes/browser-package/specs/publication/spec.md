@@ -24,9 +24,16 @@ SHALL build the package and run its tests on every push.
 
 Every tagged release SHALL assemble the try-it page with the package
 built from the tagged commit and deploy it to the repository's GitHub
-Pages site.
+Pages site once the release has published that package to npm; every
+crate manifest's `homepage` and the npm manifest's `homepage` SHALL
+name the page.
 
 #### Scenario: The page follows the release
 
 - **WHEN** a release's jobs have finished
 - **THEN** the page's footer names the released version and its engine is that version's module
+
+#### Scenario: The package publish fails
+
+- **WHEN** the npm job fails for a tagged release
+- **THEN** the page is not deployed, and the previous deployment stays live
