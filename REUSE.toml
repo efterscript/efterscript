@@ -70,7 +70,7 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 EfterScript contributors"
 SPDX-License-Identifier = "MIT"
 
-# The placeholder npm package: its manifest cannot carry a header and
+# The npm package: its manifest cannot carry a header and
 # its LICENSE is a copy of the repository's.
 [[annotations]]
 path = ["npm/efterscript/package.json", "npm/efterscript/LICENSE"]
@@ -78,3 +78,24 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 EfterScript contributors"
 SPDX-License-Identifier = "MIT"
 
+
+# The try-it page's typefaces, served beside it byte-identical to their
+# download; provenance and checksums in site/fonts/PROVENANCE.md.
+[[annotations]]
+path = ["site/fonts/bodoni-moda-latin.woff2", "site/fonts/bodoni-moda-italic-latin.woff2"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2020 The Bodoni Moda Project Authors (https://github.com/indestructible-type/Bodoni)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = "site/fonts/ibm-plex-*.woff2"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2017 IBM Corp. with Reserved Font Name \"Plex\""
+SPDX-License-Identifier = "OFL-1.1"
+
+# The OFL text beside the page's fonts is a copy of LICENSES/OFL-1.1.txt.
+[[annotations]]
+path = "site/fonts/OFL-1.1.txt"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2006 SIL International"
+SPDX-License-Identifier = "OFL-1.1"

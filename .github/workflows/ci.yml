@@ -48,8 +48,12 @@ jobs:
           components: rustfmt, clippy
           cache: false
 
-      - name: Add the WebAssembly target
-        run: rustup target add wasm32-unknown-emscripten
+      - name: Add the WebAssembly targets
+        run: rustup target add wasm32-unknown-emscripten wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - uses: Swatinem/rust-cache@v2
 
@@ -80,6 +84,16 @@ jobs:
 
       - name: WebAssembly check
         run: cargo run -q -p xtask -- check-wasm
+
+      # The npm package and the try-it page, built exactly as a release
+      # builds them; the package's tests drive the module under Node.
+      - name: Browser package
+        run: |
+          cargo run -q -p xtask -- npm-package
+          node --test npm/efterscript/test/package.test.mjs
+
+      - name: Try-it page
+        run: cargo run -q -p xtask -- site
 
       - name: Documentation
         run: cargo doc --workspace --no-deps

@@ -1,0 +1,198 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 EfterScript contributors -->
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EfterScript — .ps in, PDF out</title>
+<meta name="description" content="Convert programs in the PostScript language to PDF in your browser. EfterScript runs on your own computer in WebAssembly; nothing is uploaded.">
+<!-- The page may talk to its own origin only: the file you convert has
+     nowhere else to go. Inline styles are allowed because the PDF shown
+     from a blob: URL inherits this policy, and the browser's own viewer
+     styles itself inline. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; frame-src blob:; object-src blob:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="EfterScript — .ps in, PDF out">
+<meta property="og:description" content="A memory-safe interpreter compatible with the PostScript language. Try it in your browser; nothing is uploaded.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/bodoni-moda-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/ibm-plex-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="./" aria-label="EfterScript home">Efter<em>Script</em></a>
+  <nav aria-label="Project">
+    <a href="https://github.com/efterscript/efterscript#readme">Documentation</a>
+    <a href="https://www.npmjs.com/package/efterscript">npm</a>
+    <a href="https://crates.io/crates/efterscript">crates.io</a>
+    <a href="https://github.com/efterscript/efterscript">GitHub</a>
+  </nav>
+</header>
+
+<section class="intro">
+  <p class="eyebrow">Try it in your browser</p>
+  <h1><code class="ext">.ps</code> in. <em>PDF&nbsp;out.</em></h1>
+  <p class="lede">Open a <code>.ps</code> or <code>.eps</code> file, or edit one of the samples. EfterScript, an interpreter compatible with the PostScript language, runs the program on your own computer, in WebAssembly, and hands back a PDF with its vectors, text, and colour intact. Your file is never uploaded.</p>
+  <ul class="traits" aria-label="At a glance">
+    <li>Written in Rust</li>
+    <li>Memory-safe</li>
+    <li>No dependencies</li>
+    <li>MIT licence</li>
+  </ul>
+</section>
+
+<main class="bench" id="bench">
+
+  <section class="panel galley" aria-labelledby="program-heading">
+    <div class="panel-head">
+      <h2 id="program-heading">Program</h2>
+      <div class="samples" role="group" aria-label="Samples">
+        <button type="button" class="chip" data-sample="specimen" aria-pressed="true">Specimen</button>
+        <button type="button" class="chip" data-sample="rosette" aria-pressed="false">Rosette</button>
+        <button type="button" class="chip" data-sample="process" aria-pressed="false">Process colour</button>
+        <button type="button" class="chip" data-sample="console" aria-pressed="false">Console</button>
+      </div>
+    </div>
+
+    <div class="editor" id="editor">
+      <pre class="highlight" aria-hidden="true"><code id="highlight"></code></pre>
+      <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" aria-label="Program in the PostScript language"></textarea>
+    </div>
+
+    <div class="file-card" id="file-card" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l5 5v15H6z M14 2v5h5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <div>
+        <p class="file-name" id="file-name"></p>
+        <p class="file-meta" id="file-meta"></p>
+      </div>
+      <button type="button" class="link" id="file-clear">Back to the editor</button>
+    </div>
+
+    <div class="panel-foot">
+      <label class="button quiet" for="file">
+        <input type="file" id="file" accept=".ps,.eps,.epsf,.epsi,.prn,.ai,application/postscript">
+        Open a file…
+      </label>
+      <span class="hint">or drop one anywhere</span>
+      <button type="button" class="button primary" id="convert">
+        Convert <kbd id="shortcut">Ctrl ↵</kbd>
+      </button>
+    </div>
+
+    <details class="settings" id="settings">
+      <summary>Job settings</summary>
+      <div class="settings-grid">
+        <label for="budget">Execution budget</label>
+        <select id="budget">
+          <option value="10000000">10 million objects</option>
+          <option value="100000000" selected>100 million objects</option>
+          <option value="1000000000">1 billion objects</option>
+          <option value="unlimited">No limit</option>
+        </select>
+        <p class="note">A runaway loop stops when the budget is spent. You can also stop a job yourself.</p>
+        <label class="check" for="compress"><input type="checkbox" id="compress" checked> Compress page content</label>
+        <label class="check" for="embed"><input type="checkbox" id="embed"> Embed the standard fonts too</label>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel proof" aria-labelledby="proof-heading">
+    <div class="panel-head">
+      <h2 id="proof-heading">Proof</h2>
+      <p class="status" id="status" role="status">Loading the engine…</p>
+    </div>
+
+    <div class="press">
+      <div class="sheet" id="sheet">
+        <span class="crop tl"></span><span class="crop tr"></span><span class="crop bl"></span><span class="crop br"></span>
+        <iframe id="viewer" title="The converted PDF" hidden></iframe>
+        <div class="sheet-note" id="sheet-note">
+          <p class="sheet-note-title" id="sheet-note-title">Your proof will appear here</p>
+          <p id="sheet-note-body">The engine is about 7&nbsp;MB and loads once; after that, conversions take a moment.</p>
+          <div class="meter" id="meter"><span id="meter-fill"></span></div>
+        </div>
+      </div>
+      <div class="strip" aria-hidden="true">
+        <span class="c"></span><span class="c t70"></span><span class="c t40"></span>
+        <span class="m"></span><span class="m t70"></span><span class="m t40"></span>
+        <span class="y"></span><span class="y t70"></span><span class="y t40"></span>
+        <span class="k"></span><span class="k t70"></span><span class="k t40"></span>
+        <svg class="registration" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="10" cy="10" r="2.5" fill="currentColor"/><path d="M10 0v20M0 10h20" stroke="currentColor" stroke-width="1"/></svg>
+      </div>
+    </div>
+
+    <dl class="facts" id="facts">
+      <div><dt>Outcome</dt><dd><span class="pill" id="outcome" data-state="idle">Waiting</span></dd></div>
+      <div><dt>Pages</dt><dd id="pages">—</dd></div>
+      <div><dt>PDF size</dt><dd id="size">—</dd></div>
+      <div><dt>Time</dt><dd id="time">—</dd></div>
+      <div class="wide"><dt>Fonts</dt><dd id="fonts">—</dd></div>
+    </dl>
+
+    <div class="panel-foot">
+      <a class="button primary" id="download" aria-disabled="true">Download PDF</a>
+      <a class="button quiet" id="open" target="_blank" rel="noopener" aria-disabled="true">Open in a new tab</a>
+      <button type="button" class="button danger" id="stop" hidden>Stop this job</button>
+    </div>
+  </section>
+
+  <section class="panel console" aria-labelledby="console-heading">
+    <div class="panel-head">
+      <h2 id="console-heading">Device output</h2>
+      <p class="aside">What the program printed, and the device's error reports.</p>
+    </div>
+    <pre class="log" id="log" tabindex="0" aria-live="polite"></pre>
+  </section>
+
+</main>
+
+<section class="notes" aria-label="Why EfterScript">
+  <div>
+    <h3>Memory-safe</h3>
+    <p>EfterScript is written in Rust. Its decoders, font parsers, and PDF writer are its own, with no third-party parsers behind them, and unsafe code is confined to a thin C interface for embedders.</p>
+  </div>
+  <div>
+    <h3>No ambient authority</h3>
+    <p>The interpreter reaches only what its host hands it. Here that is nothing: the engine imports no functions from the page, and the page's security policy allows no other hosts. Every run has an execution budget, so a runaway program stops cleanly.</p>
+  </div>
+  <div>
+    <h3>Repeatable output</h3>
+    <p>The same program gives the same bytes on every run, with no timestamps or random IDs, and a public corpus of reference outputs pins every behaviour. Paths, text with its Unicode map, and colour spaces carry through as the program set them.</p>
+  </div>
+  <div>
+    <h3>MIT, embeddable anywhere</h3>
+    <p>Rust crates, a C library, and the <a href="https://www.npmjs.com/package/efterscript">efterscript</a> npm package this page runs, all from one codebase. Use it in a closed product or a hosted service with no licence fee and no copyleft terms.</p>
+  </div>
+  <div class="install">
+    <p class="install-label">Use the same engine in your own code</p>
+    <pre class="snippet"><code><span class="prompt">$</span> npm install efterscript
+
+import { load } from "efterscript";
+const engine = await load();
+const { pdf } = await engine.convert(program);</code></pre>
+  </div>
+</section>
+
+<footer class="colophon">
+  <p><span class="wordmark small">Efter<em>Script</em></span> <span id="version"></span> · MIT licence · <a href="efterscript/THIRD-PARTY-NOTICES.md" id="notices-link" target="_blank" rel="noopener">third-party notices</a></p>
+  <p>PostScript is a registered trademark of Adobe. EfterScript is an independent interpreter compatible with the PostScript language and is not affiliated with or endorsed by Adobe.</p>
+</footer>
+
+<dialog class="notices" id="notices" aria-labelledby="notices-heading">
+  <div class="notices-head">
+    <h2 id="notices-heading">Third-party notices</h2>
+    <button type="button" class="button quiet" id="notices-close">Close</button>
+  </div>
+  <pre class="notices-text" id="notices-text" tabindex="0"></pre>
+</dialog>
+
+<div class="dropzone" id="dropzone" hidden>
+  <p>Drop the file to convert it</p>
+</div>
+
+</body>
+</html>

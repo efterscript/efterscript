@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+
+% A program talks to its device as well as drawing on paper. What it
+% prints appears in the device output below the page, and an error
+% ends the job with a report, the way a printer would answer it.
+
+(Asking the device about itself:) =
+(  product         ) print product =
+(  version         ) print version =
+(  language level  ) print languagelevel =
+
+(\nThe operand stack after 3 4 add 5 mul 2 sqrt:) =
+3 4 add 5 mul 2 sqrt
+pstack clear
+
+/Helvetica findfont 28 scalefont setfont
+72 700 moveto (This page is drawn first.) show
+showpage
+
+(\nNow a mistake: the next line asks for a name nobody defined.) =
+72 650 moveto (It never gets this far.) shw
+showpage
