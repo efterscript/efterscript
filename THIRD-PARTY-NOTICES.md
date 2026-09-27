@@ -3,11 +3,15 @@
 
 # Third-party notices
 
-`efterscript.wasm` is the EfterScript engine (MIT, see `LICENSE`) with
-the fonts crate's data compiled in. That data is not the project's own
-and ships under the terms below; the full licence texts are in
-`LICENSES/`. The documents the engine produces carry no obligation from
-any of it.
+EfterScript's own code and data are MIT-licensed (see `LICENSE`). The
+fonts crate, `efterscript-fonts`, compiles in data that is not the
+project's own, so every binary built with it carries that data under the
+terms below: the command-line tool, the session-library archives
+attached to each release, and the WebAssembly module in the npm package
+and on the try-it page. Ship this file with any such binary; the full
+licence texts are in `LICENSES/`. The documents the engine produces
+carry no obligation from any of it. Where each file came from, with its
+checksum, is recorded in `crates/efterscript-fonts/data/PROVENANCE.md`.
 
 | Component | Copyright | Licence |
 |---|---|---|

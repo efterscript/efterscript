@@ -9,7 +9,8 @@
 //! module's export list; it imports nothing) and assembles the npm
 //! package in `target/npm/efterscript/`: the wrapper, its declarations,
 //! the README, the manifest with the workspace version stamped in, the
-//! module, and the licence texts the bundled font data requires.
+//! module, and the repository's licence, third-party notices, and the
+//! licence texts the bundled font data requires.
 //!
 //! `cargo xtask site` assembles the try-it page in `target/site/`: the
 //! page's own files from `site/` and the package beside them under
@@ -22,12 +23,7 @@ use std::process::{Command, ExitCode};
 pub const TARGET: &str = "wasm32-unknown-unknown";
 
 /// The package's tracked files, copied as they are.
-const PACKAGE_FILES: &[&str] = &[
-    "efterscript.js",
-    "efterscript.d.ts",
-    "README.md",
-    "THIRD-PARTY-NOTICES.md",
-];
+const PACKAGE_FILES: &[&str] = &["efterscript.js", "efterscript.d.ts", "README.md"];
 
 /// The licence texts that ship with the module: the project's and those
 /// of the font data compiled into it.
@@ -92,6 +88,10 @@ fn assemble_package() -> Result<PathBuf, String> {
         copy(&source.join(name), &out.join(name))?;
     }
     copy(&root.join("LICENSE"), &out.join("LICENSE"))?;
+    copy(
+        &root.join("THIRD-PARTY-NOTICES.md"),
+        &out.join("THIRD-PARTY-NOTICES.md"),
+    )?;
     fs::create_dir_all(out.join("LICENSES")).map_err(|e| format!("LICENSES: {e}"))?;
     for name in LICENCE_TEXTS {
         copy(
