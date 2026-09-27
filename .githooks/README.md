@@ -10,8 +10,8 @@ git config core.hooksPath .githooks
 
 - `pre-commit`: an agent commits on a topic branch, never on `main` or
   `master` or a detached HEAD.
-- `commit-msg`: no commit message, from anyone, names the coding tool or
-  its vendor; an agent's commit also carries no generated-with tagline and
+- `commit-msg`: no commit message or author/committer identity, from anyone,
+  names the coding tool or its vendor; an agent's commit also carries no generated-with tagline and
   no co-author trailer.
 - `pre-push`: an agent pushes a topic branch forward only — never to `main`
   or `master`, never tags, deletions, or rewrites.
