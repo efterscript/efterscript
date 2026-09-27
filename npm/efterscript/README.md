@@ -3,12 +3,13 @@
 
 # efterscript
 
+**[Try it in your browser →](https://efterscript.github.io/efterscript/)**
+The try-it page runs this package; nothing you convert is uploaded.
+
 A memory-safe interpreter compatible with the PostScript language,
 compiled to WebAssembly: a program in, a PDF out, in the browser or in
 Node.js. Vectors stay vectors, text stays text, colour spaces are
 preserved; nothing is rasterised.
-
-Try it in your browser: <https://efterscript.github.io/efterscript/>
 
 The engine is the same Rust code that is published as the
 [`efterscript`](https://crates.io/crates/efterscript) crates, built for

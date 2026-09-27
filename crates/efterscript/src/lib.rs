@@ -4,6 +4,9 @@
 //! EfterScript: a memory-safe, embeddable interpreter compatible with the
 //! PostScript language, whose primary output is PDF.
 //!
+//! Try it in your browser, with nothing to install:
+//! <https://efterscript.github.io/efterscript/>.
+//!
 //! This crate is the one a user depends on. It defines nothing of its
 //! own: [`mod@distill`] is the distillation engine's surface and [`session`]
 //! the session library's, and the entry points of both are re-exported
