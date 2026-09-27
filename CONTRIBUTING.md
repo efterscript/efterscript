@@ -83,7 +83,11 @@ Assistants are welcome and widely used here; the same rules apply to
 what they produce. In particular, an assistant may remember other
 implementations from its training; instruct it to work from the cited
 specification pages and to write the code its own way, and review its
-output as you would a stranger's. Every commit is made by a person.
+output as you would a stranger's. An assistant may commit and push on
+a topic branch, never on `main`, and its commit messages name no tool
+and carry no tagline or co-author trailer for it; a person reviews and
+merges its work, and makes every tag and release. `git config core.hooksPath .githooks`
+turns on the hooks that check this.
 
 ## Licence
 

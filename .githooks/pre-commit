@@ -2,14 +2,20 @@
 # SPDX-FileCopyrightText: 2026 EfterScript contributors
 # SPDX-License-Identifier: MIT
 #
-# Refuse commits made from inside an AI-agent shell. Claude Code exports
-# CLAUDECODE / CLAUDE_CODE_ENTRYPOINT into every command it runs; a human
-# terminal has neither. Enable per clone with:
+# An agent commits on a topic branch only. Agent shells are recognised by
+# the CLAUDECODE / CLAUDE_CODE_ENTRYPOINT variables the coding tool
+# exports into every command it runs; a human terminal has neither.
+# Enable per clone with:
 #   git config core.hooksPath .githooks
 
 if [ -n "$CLAUDECODE" ] || [ -n "$CLAUDE_CODE_ENTRYPOINT" ]; then
-    echo "pre-commit: refusing — commits to this repo are made by humans, not agents." >&2
-    echo "pre-commit: leave the changes staged and ask the user to commit." >&2
-    exit 1
+    branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
+    case "$branch" in
+        "" | main | master)
+            echo "pre-commit: refusing — agents commit on a topic branch, never on main or master (or a detached HEAD)." >&2
+            echo "pre-commit: create or switch to a branch, then commit there." >&2
+            exit 1
+            ;;
+    esac
 fi
 exit 0

@@ -30,8 +30,11 @@ context: |
   feature after an Adobe or Apple product. Distillation is the generic
   term; the corresponding Adobe product name is not used as a noun.
 
-  Process: agents stage, humans commit — never run git commit, push,
-  merge, rebase, or tag. Do not cite internal planning documents or their
+  Process: agents commit and push on topic branches only — never on
+  main or master, never merge, rebase, amend, force-push, or tag; a
+  person reviews and merges their work. Commit messages name no
+  tool or vendor and carry no generated-with tagline or co-author
+  trailer. Do not cite internal planning documents or their
   section numbers in repository files. Comments state constraints the code
   cannot show; no narration. Test-driven: cargo test and clippy clean
   before staging.
