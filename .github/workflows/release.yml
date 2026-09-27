@@ -152,7 +152,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: host-${{ matrix.triple }}
+          name: archive-host-${{ matrix.triple }}
           path: dist/*
           if-no-files-found: error
 
@@ -233,7 +233,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wasm
+          name: archive-wasm
           path: dist/*
           if-no-files-found: error
 
@@ -244,8 +244,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the archive jobs' artifacts: the run also holds the try-it
+      # page's, which is not a release file.
       - uses: actions/download-artifact@v4
         with:
+          pattern: archive-*
           path: dist
           merge-multiple: true
 

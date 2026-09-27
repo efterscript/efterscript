@@ -168,3 +168,11 @@ attaches it beside the session-library archives, and the page shows it.
   latin subsets, which the OFL's FAQ counts as modified versions;
   recorded here because Plex reserves its name, and replaceable by
   IBM's unmodified web fonts if that reading ever matters.
+- **Released as 0.0.5** (2026-09-27): nine crates on crates.io, the
+  package staged by the workflow and approved on the registry by the
+  maintainer, the page deployed once npm served the version, and the
+  archives with the notices attached to the GitHub release. One defect
+  surfaced: the `attach` job downloaded every artifact of the run, and
+  the page's Pages artifact, now built alongside the archives, was
+  attached as `artifact.tar` and listed in `SHA256SUMS`. The archive
+  artifacts are now named `archive-*` and `attach` downloads only those.
