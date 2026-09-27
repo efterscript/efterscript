@@ -7,8 +7,10 @@
 # must approve it), proves this workflow's identity to the registry
 # through GitHub's OpenID Connect token, receives a registry token that
 # lives only for the job, and publishes the nine crates in dependency
-# order, skipping any version the registry already holds. No registry
-# credential is stored anywhere.
+# order, skipping any version the registry already holds. `npm` publishes
+# the WebAssembly package the same way, through the npm registry's own
+# trusted publishing, and `pages` deploys the try-it page built from the
+# same commit. No registry credential is stored anywhere.
 
 name: Release
 
@@ -46,8 +48,11 @@ jobs:
           components: rustfmt, clippy
           cache: false
 
-      - run: rustup target add wasm32-unknown-emscripten
+      - run: rustup target add wasm32-unknown-emscripten wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -63,6 +68,10 @@ jobs:
       - run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: The browser package builds and passes its tests
+        run: |
+          cargo run -q -p xtask -- npm-package
+          node --test npm/efterscript/test/package.test.mjs
       - name: Every crate packages from the tagged tree
         run: |
           cargo package --workspace
@@ -314,3 +323,90 @@ jobs:
               exit 1
             }
           done
+
+  # The npm package: the session library built for wasm32-unknown-unknown
+  # with the hand-written wrapper around its C interface. Published by
+  # trusted publishing (the registry trusts this workflow in the
+  # `release` environment) with a provenance statement; a version the
+  # registry already holds is skipped so a rerun resumes.
+  npm:
+    name: Publish the npm package
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^rust-version = "\([^"]*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          target: wasm32-unknown-unknown
+          cache: false
+
+      # Trusted publishing needs npm 11.5.1 or later, which Node 24 ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Build and test the package
+        run: |
+          cargo run -q -p xtask -- npm-package
+          node --test npm/efterscript/test/package.test.mjs
+
+      - name: Publish, unless this version is already on the registry
+        working-directory: target/npm/efterscript
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "efterscript@${version}" version >/dev/null 2>&1; then
+            echo "efterscript ${version} is already on the registry; skipping"
+            exit 0
+          fi
+          npm publish
+
+  # The try-it page, deployed to GitHub Pages from the tagged commit.
+  pages-build:
+    name: Build the try-it page
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^rust-version = "\([^"]*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          target: wasm32-unknown-unknown
+          cache: false
+
+      - run: cargo run -q -p xtask -- site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+
+  pages:
+    name: Deploy the try-it page
+    needs: pages-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

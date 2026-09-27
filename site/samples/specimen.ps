@@ -1,0 +1,92 @@
+%!PS-Adobe-3.0
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+%%Title: Type specimen
+%%Pages: 1
+%%EndComments
+
+% A specimen sheet set with the resident fonts. Everything on it stays
+% vector: zoom in as far as you like, and select the text in the PDF.
+
+/inch { 72 mul } def
+/font { exch findfont exch scalefont setfont } def
+/magenta { 0 1 0 0 setcmykcolor } def
+/ink { 0 0 0 1 setcmykcolor } def
+
+% the rule under the masthead
+/rule { gsave 0.5 setlinewidth 1 inch exch moveto 6.5 inch 0 rlineto stroke grestore } def
+
+ink
+/Times-Bold 54 font
+1 inch 9.2 inch moveto (Specimen) show
+magenta
+/Times-Italic 54 font
+( no. 1) show
+
+ink
+/Helvetica 9 font
+1 inch 8.85 inch moveto (SET BY A POSTSCRIPT-LANGUAGE PROGRAM, DISTILLED TO PDF IN THE BROWSER) show
+8.7 inch rule
+
+% a waterfall: one line, many sizes
+/Times-Roman findfont pop
+/y 8.3 inch def
+[ 8 10 12 16 22 30 ] {
+  /size exch def
+  /Helvetica 7 font
+  1 inch y moveto size 3 string cvs show (pt) show
+  /Times-Roman size font
+  1.5 inch y moveto (Quick zephyrs blow, vexing daft Jim.) show
+  /y y size 1.35 mul 10 add sub def
+} forall
+
+y 6 add rule
+
+% three families side by side
+/col { /x exch def } def
+/specimen {           % name label -> -
+  /label exch def /name exch def
+  /Helvetica-Bold 7 font x y moveto label show
+  name 26 font x y 34 sub moveto (Aa Gg) show
+  name 10 font
+  x y 52 sub moveto (ABCDEFGHIJKLM) show
+  x y 66 sub moveto (NOPQRSTUVWXYZ) show
+  x y 80 sub moveto (abcdefghijklm) show
+  x y 94 sub moveto (nopqrstuvwxyz) show
+  x y 108 sub moveto (0123456789 &!?) show
+} def
+/y y 22 sub def
+1 inch col /Times-Roman (SERIF) specimen
+3.25 inch col /Helvetica (SANS) specimen
+5.5 inch col /Courier (MONO) specimen
+
+% a drop cap and a paragraph, set word by word
+/y y 150 sub def
+magenta
+/Times-Bold 58 font
+1 inch y 30 sub moveto (T) show
+ink
+/Times-Roman 11 font
+/words [ (he) (program) (you) (are) (reading) (placed) (every) (glyph) (on) (this)
+  (page) (by) (itself:) (it) (measured) (each) (word) (with) (stringwidth,) (moved)
+  (to) (a) (new) (line) (when) (the) (measure) (ran) (out,) (and) (asked) (for) (fonts)
+  (by) (name.) (The) (converter) (recorded) (those) (marks) (as) (they) (happened) (and)
+  (wrote) (them) (out) (as) (PDF) (text) (with) (a) (Unicode) (map,) (so) (you) (can)
+  (search,) (copy,) (and) (read) (it) (aloud.) ] def
+/left 1.62 inch def /right 7.5 inch def /lead 15 def
+/x left def /line 0 def
+/newline { /line line 1 add def /x line 3 lt { left } { 1 inch } ifelse def } def
+words {
+  /w exch def
+  w stringwidth pop x add right gt { newline } if
+  x y line lead mul sub moveto w show
+  /x x w stringwidth pop add ( ) stringwidth pop add def
+} forall
+
+% the colophon
+/Helvetica 7 font
+0.5 setgray
+1 inch 0.75 inch moveto (Resident fonts: Times, Helvetica, Courier. No bitmaps were harmed.) show
+
+showpage
+%%EOF

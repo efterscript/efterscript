@@ -11,6 +11,7 @@ mod lint_strings;
 mod parse_survival;
 mod sha256;
 mod tiny_jpeg;
+mod web;
 
 use std::process::ExitCode;
 
@@ -34,6 +35,9 @@ fn usage() -> ExitCode {
         "  check-wasm        cargo check the session front-end for wasm32-unknown-emscripten"
     );
     eprintln!("  tiny-jpeg         print the project's own baseline JPEG stream [--corpus]");
+    eprintln!("  npm-package       build the WebAssembly module and assemble the npm package");
+    eprintln!("                    in target/npm/efterscript/");
+    eprintln!("  site              assemble the try-it page, with the package, in target/site/");
     ExitCode::from(2)
 }
 
@@ -47,6 +51,8 @@ fn main() -> ExitCode {
         Some("fuzz-smoke") => fuzz_smoke::run(&args[1..]),
         Some("check-wasm") => check_wasm::run(&args[1..]),
         Some("tiny-jpeg") => tiny_jpeg::run(&args[1..]),
+        Some("npm-package") => web::npm_package(&args[1..]),
+        Some("site") => web::site(&args[1..]),
         Some(t) => {
             eprintln!("xtask: unknown task `{t}`");
             usage()

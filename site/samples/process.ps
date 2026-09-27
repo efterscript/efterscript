@@ -1,0 +1,66 @@
+%!PS-Adobe-3.0
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+%%Title: Process colour
+%%Pages: 1
+%%EndComments
+
+% Colour is recorded in the space the program used. CMYK stays CMYK,
+% a spot ink stays a Separation, and a shading stays a smooth shading.
+
+/inch { 72 mul } def
+/label { /Helvetica findfont 8 scalefont setfont 0 0 0 1 setcmykcolor show } def
+
+/Times-Bold findfont 34 scalefont setfont
+0 0 0 1 setcmykcolor
+1 inch 9.6 inch moveto (Process colour) show
+
+% a control strip: tints of each process ink
+/patch { 0.5 inch 0.5 inch rectfill } def
+/inks [ [1 0 0 0] [0 1 0 0] [0 0 1 0] [0 0 0 1] ] def
+/names [ (C) (M) (Y) (K) ] def
+0 1 3 {
+  /n exch def
+  /y 8.6 inch n 0.6 inch mul sub def
+  1 inch y 0.15 inch add moveto names n get label
+  0 1 9 {
+    /k exch def
+    /tint k 1 add 10 div def
+    inks n get aload pop
+    4 { 4 -1 roll tint mul } repeat
+    setcmykcolor
+    1.3 inch k 0.55 inch mul add y patch
+  } for
+} for
+
+% overprinted discs
+/disc { 0 360 arc fill } def
+1 inch 5.4 inch moveto (Overlapping discs, knocked out) label
+1 0 0 0 setcmykcolor 2.2 inch 4.3 inch 0.7 inch disc
+0 1 0 0 setcmykcolor 2.9 inch 4.3 inch 0.7 inch disc
+0 0 1 0 setcmykcolor 2.55 inch 3.7 inch 0.7 inch disc
+
+% a spot ink, as a Separation space
+4.5 inch 5.4 inch moveto (A spot ink and its tints) label
+[ /Separation /Signal-Magenta /DeviceCMYK { dup 0.1 mul exch 0.9 mul 0 0 } ] setcolorspace
+0 1 4 {
+  /k exch def
+  k 1 add 5 div setcolor
+  4.5 inch k 0.55 inch mul add 4.6 inch 0.45 inch 0.6 inch rectfill
+} for
+
+% an axial shading from cyan to magenta
+1 inch 2.9 inch moveto (A smooth shading, not a staircase of bands) label
+gsave
+  1 inch 1.2 inch 6.5 inch 1.5 inch rectclip
+  <<
+    /ShadingType 2
+    /ColorSpace /DeviceCMYK
+    /Coords [ 1 inch 0 7.5 inch 0 ]
+    /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0 0] /C1 [0 1 0.2 0] /N 1 >>
+    /Extend [ true true ]
+  >> shfill
+grestore
+
+showpage
+%%EOF

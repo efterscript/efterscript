@@ -1,0 +1,67 @@
+%!PS-Adobe-3.0
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+%%Title: Rosette
+%%Pages: 1
+%%EndComments
+
+% An engraver's rosette: a few hundred rotated curves, each stroked as a
+% vector path. The PDF holds the curves themselves, not a picture of them.
+
+306 440 translate
+
+/petal {                  % radius twist -> -
+  /t exch def /r exch def
+  0 0 moveto
+  r 0.35 mul t   r 0.75 mul t neg   r 0 curveto
+  r 0.75 mul t   r 0.35 mul t neg   0 0 curveto
+  stroke
+} def
+
+0.4 setlinewidth
+0 1 143 {
+  /i exch def
+  gsave
+    i 2.5 mul rotate
+    i 3 mod 0 eq { 0.95 0.1 0.05 0 setcmykcolor } { 0.1 0.85 0 0 setcmykcolor } ifelse
+    230 60 petal
+  grestore
+} for
+
+0.3 setlinewidth
+0 1 95 {
+  /i exch def
+  gsave
+    i 3.75 mul 1.875 add rotate
+    0 0 0 1 setcmykcolor
+    150 34 petal
+  grestore
+} for
+
+% a ring of type around the rim
+/Helvetica-Bold findfont 9 scalefont setfont
+0 0 0 0.8 setcmykcolor
+/caption (VECTORS STAY VECTORS  \267  ) def
+/reps 5 def
+/step 360 caption length reps mul div def
+gsave
+  reps {
+    caption {
+      /c exch def
+      gsave
+        0 250 moveto
+        ( ) dup 0 c put
+        dup stringwidth pop 2 div neg 0 rmoveto show
+      grestore
+      step neg rotate
+    } forall
+  } repeat
+grestore
+
+0 0 0 1 setcmykcolor
+/Times-Italic findfont 13 scalefont setfont
+0 -330 moveto
+(Zoom in. The lines stay sharp.) dup stringwidth pop 2 div neg 0 rmoveto show
+
+showpage
+%%EOF
