@@ -2,10 +2,33 @@
 # SPDX-FileCopyrightText: 2026 EfterScript contributors
 # SPDX-License-Identifier: MIT
 #
-# Refuse pushes made from inside an AI-agent shell (see pre-commit).
+# An agent pushes a topic branch forward only (see pre-commit for how
+# agent shells are recognised): never to main or master, never a
+# deletion, never a rewrite of what the remote already has.
 
-if [ -n "$CLAUDECODE" ] || [ -n "$CLAUDE_CODE_ENTRYPOINT" ]; then
-    echo "pre-push: refusing — pushes from this repo are made by humans, not agents." >&2
-    exit 1
+if [ -z "$CLAUDECODE" ] && [ -z "$CLAUDE_CODE_ENTRYPOINT" ]; then
+    exit 0
 fi
+
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main | refs/heads/master)
+            echo "pre-push: refusing — agents never push to ${remote_ref#refs/heads/}; push a topic branch and open a pull request." >&2
+            exit 1
+            ;;
+        refs/tags/*)
+            echo "pre-push: refusing — tags are pushed by people." >&2
+            exit 1
+            ;;
+    esac
+    if [ "$local_sha" = "$zero" ]; then
+        echo "pre-push: refusing — agents do not delete remote branches." >&2
+        exit 1
+    fi
+    if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+        echo "pre-push: refusing — the push would rewrite ${remote_ref#refs/heads/}; agents only add commits." >&2
+        exit 1
+    fi
+done
 exit 0

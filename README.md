@@ -172,11 +172,12 @@ vault.
 
 This project contains AI-generated code. Large parts of the codebase,
 documentation, and test corpus are produced with AI coding assistants
-under human direction and review. Every commit is made by a human
-maintainer; agents may prepare and stage changes but cannot commit or
-push, enforced by the repository's hooks and tool settings. Contributors
-should assume any file may have been machine-authored and review
-accordingly. The same IP-hygiene rules apply to AI-produced content as to
+under human direction and review. Agents may commit and push on topic
+branches, never on `main`; a human maintainer reviews and merges their
+work and makes every tag and release. Agent commits name no tool and
+carry no tagline, enforced by the repository's hooks and tool settings.
+Contributors should assume any file may have been machine-authored and
+review accordingly. The same IP-hygiene rules apply to AI-produced content as to
 human-written content: implemented from the published reference, no
 copied code, no reproduced manual text.
 

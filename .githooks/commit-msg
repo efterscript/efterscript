@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+#
+# The project names no products, and its commit messages are no
+# exception. Every commit, whoever makes it, is refused if its message
+# names the coding tool or its vendor; a commit from an agent shell (see
+# pre-commit) is also refused if it carries a generated-with tagline or
+# a co-author trailer. Comment lines and anything below the scissors
+# line are not part of the message and are ignored.
+
+message=$(sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$1")
+
+if printf '%s\n' "$message" | grep -qiE 'claude|anthropic'; then
+    echo "commit-msg: refusing — the message names a product; this project names none." >&2
+    exit 1
+fi
+
+if [ -n "$CLAUDECODE" ] || [ -n "$CLAUDE_CODE_ENTRYPOINT" ]; then
+    if printf '%s\n' "$message" | grep -qiE 'co-authored-by|generated (with|by)|🤖'; then
+        echo "commit-msg: refusing — no taglines or co-author trailers in an agent's commit." >&2
+        exit 1
+    fi
+fi
+exit 0
