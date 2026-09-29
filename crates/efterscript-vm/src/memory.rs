@@ -323,11 +323,14 @@ pub const MAX_SAVE_DEPTH: usize = 15;
 
 /// What a `save` captured: the local arena (an O(1) snapshot whose
 /// `next_handle` is the watermark), the graphics-state stack depth for the
-/// caller to pop back to, and the file table watermark.
+/// caller to pop back to, and the file table watermark. A save at the
+/// outermost level of a job server captures the global arena as well
+/// (PLRM3 §3.7.7), likewise in O(1).
 #[derive(Clone, Debug)]
 pub struct SaveRecord {
     serial: u32,
     local: Arena,
+    global: Option<Arena>,
     gstate_depth: usize,
     file_watermark: u32,
 }
@@ -347,13 +350,22 @@ impl SaveRecord {
         self.file_watermark
     }
 
-    /// Whether `object` is a local composite created after this save.
+    /// Whether the save captured global VM too.
+    pub fn covers_global(&self) -> bool {
+        self.global.is_some()
+    }
+
+    /// Whether `object` is a composite created after this save in a VM
+    /// the save captured: local always, global when it covers global.
     pub fn outlived_by(&self, object: Object) -> bool {
         let Some(r) = object.composite_ref() else {
             return false;
         };
-        if r.space != Space::Local {
-            return false;
+        if r.space == Space::Global {
+            return self
+                .global
+                .as_ref()
+                .is_some_and(|global| r.handle >= global.next_handle());
         }
         if object.ty() == Type::File {
             r.handle.0 >= self.file_watermark
@@ -472,6 +484,12 @@ impl Memory {
     /// `save`. `gstate_depth` is the graphics-state stack depth to return to
     /// on `restore`.
     pub fn save(&mut self, gstate_depth: usize) -> Result<Object, VmError> {
+        self.save_with(gstate_depth, false)
+    }
+
+    /// `save`, capturing global VM as well when `global` is set: the
+    /// outermost save of a job server.
+    pub fn save_with(&mut self, gstate_depth: usize, global: bool) -> Result<Object, VmError> {
         if self.saves.len() >= MAX_SAVE_DEPTH {
             return Err(VmError::LimitCheck);
         }
@@ -480,10 +498,16 @@ impl Memory {
         self.saves.push(SaveRecord {
             serial,
             local: self.local.clone(),
+            global: global.then(|| self.global.clone()),
             gstate_depth,
             file_watermark: self.files.watermark(),
         });
         Ok(Object::save(serial))
+    }
+
+    /// The save object of the outermost live save, if any.
+    pub fn outermost_save(&self) -> Option<Object> {
+        self.saves.first().map(|r| Object::save(r.serial))
     }
 
     pub fn save_depth(&self) -> usize {
@@ -528,6 +552,11 @@ impl Memory {
         let next = self.local.next;
         self.local = record.local;
         self.local.next = next;
+        if let Some(global) = record.global {
+            let next = self.global.next;
+            self.global = global;
+            self.global.next = next;
+        }
         self.files.close_from(record.file_watermark)?;
         Ok(record.gstate_depth)
     }
@@ -1317,6 +1346,30 @@ mod tests {
             Err(VmError::InvalidAccess)
         );
         assert_eq!(m.arena(Space::Local).slot_count(), 1);
+    }
+
+    #[test]
+    fn a_save_covering_global_reverts_both_arenas() {
+        let mut m = Memory::new();
+        m.set_global(true);
+        let g = m.alloc_array(ints(1)).unwrap();
+        m.set_global(false);
+        let s = m.save_with(0, true).unwrap();
+        m.array_put(g, 0, Object::integer(7)).unwrap();
+        m.set_global(true);
+        let g2 = m.alloc_string(b"gone".to_vec());
+        m.set_global(false);
+        assert!(m.save_record(s).unwrap().outlived_by(g2));
+        assert!(!m.save_record(s).unwrap().outlived_by(g));
+        assert_eq!(m.restore(s, &[&[g2]]), Err(VmError::InvalidRestore));
+        m.restore(s, &[]).unwrap();
+        assert_eq!(values(&m, g), [0]);
+        assert!(m.string(g2).is_none());
+        // The global counter keeps going, so the stale handle stays dead.
+        m.set_global(true);
+        let g3 = m.alloc_string(b"new".to_vec());
+        assert_ne!(g3.handle(), g2.handle());
+        assert!(m.string(g2).is_none());
     }
 
     #[test]

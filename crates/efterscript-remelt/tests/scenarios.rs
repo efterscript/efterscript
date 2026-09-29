@@ -937,3 +937,47 @@ fn composite_fonts_are_shared_across_pages_over_the_union_of_their_cids() {
         1
     );
 }
+
+// --- a document over a lent interpreter ------------------------------------------
+
+mod lent {
+    use efterscript_remelt::{Distillation, Options, PdfSink};
+    use efterscript_vm::Interp;
+
+    use crate::support::{check, kids};
+
+    fn document(interp: Interp, program: &str) -> (Vec<u8>, usize, Interp) {
+        let sink = PdfSink::new(Vec::new(), Options::compress(false)).unwrap();
+        let mut distillation = Distillation::over(interp, sink);
+        distillation.run(program.as_bytes());
+        let (report, pdf, interp) = distillation.finish_keep().unwrap();
+        (pdf, report.pages, interp)
+    }
+
+    #[test]
+    fn two_documents_from_one_interpreter() {
+        let interp = Interp::new();
+        let (first, pages, interp) = document(interp, "0 0 10 10 rectfill showpage");
+        assert_eq!(pages, 1);
+        let (second, pages, interp) = document(
+            interp,
+            "0 0 10 10 rectfill showpage 5 5 moveto 9 9 lineto stroke showpage",
+        );
+        assert_eq!(pages, 2);
+        assert_eq!(kids(&check(&first)).len(), 1);
+        assert_eq!(kids(&check(&second)).len(), 2);
+        // Without a backend the graphics operators are undefined again.
+        assert!(!interp.has_graphics_backend());
+    }
+
+    #[test]
+    fn an_abandoned_document_returns_the_interpreter() {
+        let sink = PdfSink::new(Vec::new(), Options::compress(false)).unwrap();
+        let mut distillation = Distillation::over(Interp::new(), sink);
+        distillation.feed(b"0 0 10 10 rectfill showpage 1 1 moveto ");
+        let interp = distillation.abandon();
+        assert!(!interp.has_graphics_backend());
+        let (_, pages, _) = document(interp, "showpage");
+        assert_eq!(pages, 1);
+    }
+}

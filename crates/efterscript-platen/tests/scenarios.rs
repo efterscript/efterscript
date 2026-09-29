@@ -116,7 +116,10 @@ fn nothing_persists_between_jobs() {
     let config = identity("Fictional Press");
     let mut first = job(config.clone());
     let progress = feed(&mut first, "serverdict begin 0 exitserver /x 1 def x =\n");
-    assert_eq!(progress.replies, b"1\n");
+    assert_eq!(
+        progress.replies,
+        b"%%[exitserver: permanent state may be changed]%%\n1\n"
+    );
     assert_eq!(first.finish().unwrap().outcome, Outcome::Ok);
     let mut second = job(config);
     let progress = feed(&mut second, "x\n");
@@ -183,7 +186,8 @@ fn the_prelude_and_the_identity_shape_the_device() {
     );
     assert_eq!(
         String::from_utf8_lossy(&progress.replies),
-        "Fictional Press\n47.0\nfalse\n792\n300\nin\n",
+        "Fictional Press\n47.0\nfalse\n792\n300\n\
+         %%[exitserver: permanent state may be changed]%%\nin\n",
         "the prelude's own output is not the job's"
     );
     let finished = job.finish().unwrap();

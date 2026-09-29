@@ -80,6 +80,8 @@ at the VM, keeps every host on one job model.
 - `remelt`: ADDED a document over a lent interpreter.
 - `vm-object-model`: MODIFIED `Save and restore` — the outermost save of
   a job reverts global VM too.
+- `expected-divergences`: MODIFIED `job-server-save-level` — a printer's
+  jobs now report the encapsulating level; direct runs still do not.
 
 ## Impact
 

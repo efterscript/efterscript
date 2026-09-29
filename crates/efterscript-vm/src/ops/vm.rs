@@ -21,21 +21,11 @@ op_table! { OPS {
 /// What `vmstatus` reports as the maximum, until memory is metered.
 pub(crate) const VM_MAXIMUM: i32 = 1 << 30;
 
+/// At the outermost level of an unencapsulated job the save covers
+/// global VM too (PLRM3 §3.7.7).
 fn save(i: &mut Interp) -> Result<(), VmError> {
-    let depth = i.graphics_backend().map(|backend| backend.gstate_depth());
-    if depth.is_some() {
-        i.gsave()?;
-    }
-    let save = match i.mem.save(depth.unwrap_or(0)) {
-        Ok(save) => save,
-        Err(e) => {
-            if depth.is_some() {
-                let _ = i.grestore();
-            }
-            return Err(e);
-        }
-    };
-    i.push_gstate_floor(depth.map_or(0, |d| d + 1));
+    let global = i.save_covers_global();
+    let save = i.vm_save(global)?;
     i.push(save)
 }
 
@@ -44,14 +34,12 @@ fn restore(i: &mut Interp) -> Result<(), VmError> {
     if save.ty() != Type::Save {
         return Err(VmError::TypeCheck);
     }
-    let references = i.exec_references();
-    let (ostack, dstack) = (i.ostack.clone(), i.dstack.clone());
-    let depth = i.mem.restore(save, &[&ostack, &dstack, &references])?;
-    i.truncate_gstate_floors();
-    if i.has_graphics_backend() {
-        i.grestore_to(depth)?;
-    }
+    // The operand itself is not an object `restore` can outlive.
     i.pop()?;
+    if let Err(e) = i.vm_restore(save) {
+        i.push(save)?;
+        return Err(e);
+    }
     Ok(())
 }
 

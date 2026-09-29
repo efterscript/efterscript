@@ -13,8 +13,15 @@
 //! previous call, so a query is answered while the program is still
 //! arriving. [`finish`](Job::finish) signals end of data, runs to
 //! completion, and returns the outcome, the PDF, and the writer's
-//! report. Nothing survives a job: a host maps one connection to one
-//! job and re-sends what a printer would have kept.
+//! report.
+//!
+//! A [`Printer`] is the interpreter a device keeps between jobs: it is
+//! built once, with the identity seeded and the prelude run, and serves
+//! one [`Job`] at a time as a job server (PLRM3 §3.7.7). Each job starts
+//! from the same initial state and is reverted at its end, unless it
+//! uses `startjob` or `exitserver`, whose changes every later job
+//! inherits. A job created alone with [`Job::new`] is a printer serving
+//! that one job, so nothing it does outlives it.
 //!
 //! Status text is the host's business: this crate reports facts (an
 //! error name, an offending command, a page count) and phrases nothing.
@@ -32,12 +39,14 @@
 pub mod ffi;
 mod identity;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{error, fmt};
 
 pub use efterscript_remelt::{Options, Params, Report};
 
 use efterscript_remelt::{Distillation, PdfSink};
-use efterscript_vm::{Capture, Config, Io, Limits};
+use efterscript_vm::{Capture, Config, Interp, Io, Limits};
 
 /// How a job is set up: what the device claims to be, what it runs
 /// before the program, how the document is written, and how much
@@ -96,6 +105,9 @@ pub struct Finished {
     pub replies: Vec<u8>,
     /// Error output produced by the end of data.
     pub errors: Vec<u8>,
+    /// Whether the job changed the initial state of later jobs on its
+    /// printer (`startjob` or `exitserver`).
+    pub permanent: bool,
 }
 
 #[derive(Debug)]
@@ -108,6 +120,8 @@ pub enum JobError {
     Document(efterscript_remelt::Error),
     /// `feed` after the job ended.
     Finished,
+    /// The printer is serving another job.
+    Busy,
 }
 
 impl fmt::Display for JobError {
@@ -121,6 +135,7 @@ impl fmt::Display for JobError {
             }
             JobError::Document(e) => write!(f, "{e}"),
             JobError::Finished => f.write_str("the job has ended"),
+            JobError::Busy => f.write_str("a job is open on this printer"),
         }
     }
 }
@@ -134,17 +149,26 @@ impl error::Error for JobError {
     }
 }
 
-/// One job: an interpreter, its capture streams, and a document in
-/// memory.
-pub struct Job {
-    distillation: Distillation<Vec<u8>>,
+/// Where a printer keeps its interpreter between jobs; empty while a
+/// job has it. Shared by the printer and its open job, so either may be
+/// dropped first.
+struct Slot {
+    interp: Option<Interp>,
+    options: Options,
     replies: Capture,
     errors: Capture,
 }
 
-impl Job {
+/// The interpreter a device keeps between jobs, serving one job at a
+/// time.
+pub struct Printer {
+    slot: Rc<RefCell<Slot>>,
+}
+
+impl Printer {
     /// Builds the interpreter — the identity parsed and seeded, the
-    /// prelude run — and starts the document.
+    /// prelude run once, its output discarded. The execution budget
+    /// applies to each job.
     pub fn new(config: JobConfig) -> Result<Self, JobError> {
         let JobConfig {
             identity,
@@ -173,57 +197,104 @@ impl Job {
             server_password,
             ..Config::default()
         };
-        let sink = PdfSink::new(Vec::new(), options).map_err(JobError::Document)?;
-        let distillation = Distillation::new(config, sink).map_err(|e| match e {
-            efterscript_remelt::Error::Prelude(p) => JobError::Prelude {
-                name: p.name,
-                offending: p.offending,
-            },
-            other => JobError::Document(other),
+        let interp = Interp::try_with_config(config).map_err(|p| JobError::Prelude {
+            name: p.name,
+            offending: p.offending,
         })?;
-        // The prelude's own output is the device's, not the job's.
+        // The prelude's own output is the device's, not a job's.
         replies.clear();
         errors.clear();
-        Ok(Job {
-            distillation,
-            replies,
-            errors,
+        Ok(Printer {
+            slot: Rc::new(RefCell::new(Slot {
+                interp: Some(interp),
+                options,
+                replies,
+                errors,
+            })),
         })
+    }
+
+    /// Opens a job over the printer's interpreter; [`JobError::Busy`]
+    /// while another is open.
+    pub fn job(&self) -> Result<Job, JobError> {
+        Job::open(self.slot.clone())
+    }
+}
+
+/// One job: a document in memory over a printer's interpreter, and the
+/// printer's capture streams.
+pub struct Job {
+    /// `None` once finished or abandoned.
+    distillation: Option<Distillation<Vec<u8>>>,
+    home: Rc<RefCell<Slot>>,
+}
+
+impl Job {
+    /// A printer serving this one job: builds the interpreter — the
+    /// identity parsed and seeded, the prelude run — and starts the
+    /// document.
+    pub fn new(config: JobConfig) -> Result<Self, JobError> {
+        Printer::new(config)?.job()
+    }
+
+    fn open(home: Rc<RefCell<Slot>>) -> Result<Self, JobError> {
+        let mut slot = home.borrow_mut();
+        if slot.interp.is_none() {
+            return Err(JobError::Busy);
+        }
+        let sink = PdfSink::new(Vec::new(), slot.options.clone()).map_err(JobError::Document)?;
+        let mut interp = slot.interp.take().expect("checked above");
+        interp
+            .begin_job()
+            .expect("an idle interpreter has no job open");
+        slot.replies.clear();
+        slot.errors.clear();
+        drop(slot);
+        Ok(Job {
+            distillation: Some(Distillation::over(interp, sink)),
+            home,
+        })
+    }
+
+    fn distillation(&self) -> &Distillation<Vec<u8>> {
+        self.distillation.as_ref().expect("a live job")
     }
 
     /// Appends `bytes` to the program and executes as far as they allow.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Progress, JobError> {
-        if self.distillation.is_done() {
+        let distillation = self.distillation.as_mut().expect("a live job");
+        if distillation.is_done() {
             return Err(JobError::Finished);
         }
-        self.distillation.feed(bytes);
+        distillation.feed(bytes);
         let (replies, errors) = self.drain();
         Ok(Progress {
             replies,
             errors,
-            done: self.distillation.is_done(),
+            done: self.distillation().is_done(),
         })
     }
 
     /// Whether the job has ended before its data did.
     pub fn is_done(&self) -> bool {
-        self.distillation.is_done()
+        self.distillation().is_done()
     }
 
     /// Pages shown so far.
     pub fn pages(&self) -> usize {
-        self.distillation.pages()
+        self.distillation().pages()
     }
 
     /// Signals end of data, runs the program to completion, and closes
-    /// the document.
-    pub fn finish(self) -> Result<Finished, JobError> {
-        let Job {
-            distillation,
-            replies,
-            errors,
-        } = self;
-        let (report, pdf) = distillation.finish().map_err(JobError::Document)?;
+    /// the document; the interpreter goes back to its printer.
+    pub fn finish(mut self) -> Result<Finished, JobError> {
+        let distillation = self.distillation.take().expect("a live job");
+        // A document that cannot be closed takes the interpreter with it:
+        // the printer is left busy for good. Writing to memory does not
+        // fail.
+        let (report, pdf, mut interp) = distillation.finish_keep().map_err(JobError::Document)?;
+        let end = interp.end_job();
+        self.home.borrow_mut().interp = Some(interp);
         let outcome = match &report.outcome {
             efterscript_vm::Outcome::Ok => Outcome::Ok,
             efterscript_vm::Outcome::Error(_) if report.budget_exceeded => Outcome::Budget,
@@ -238,18 +309,36 @@ impl Job {
                 offending: String::new(),
             },
         };
-        let (replies, errors) = (take(&replies), take(&errors));
+        let (replies, errors) = self.drain();
         Ok(Finished {
             outcome,
             pdf,
             report,
             replies,
             errors,
+            permanent: end.permanent,
         })
     }
 
     fn drain(&self) -> (Vec<u8>, Vec<u8>) {
-        (take(&self.replies), take(&self.errors))
+        let slot = self.home.borrow();
+        (take(&slot.replies), take(&slot.errors))
+    }
+}
+
+/// A job dropped before `finish` is abandoned: the document is
+/// discarded, the job server ends the job — reverting it unless it made
+/// itself permanent — and the interpreter goes back to its printer.
+impl Drop for Job {
+    fn drop(&mut self) {
+        if let Some(distillation) = self.distillation.take() {
+            let mut interp = distillation.abandon();
+            interp.end_job();
+            let mut slot = self.home.borrow_mut();
+            slot.replies.clear();
+            slot.errors.clear();
+            slot.interp = Some(interp);
+        }
     }
 }
 

@@ -3,15 +3,15 @@
 
 //! A job fed in pieces agrees with the unsplit distillation: for a
 //! sample of the corpus programs, random cut points produce the same
-//! outcome, replies, error output, and document bytes as
-//! `efterscript_remelt::distill_into` on the whole program. The corpus's own
-//! expectations are not checked here — `difftest run` does that — only
-//! the split's transparency.
+//! outcome, replies, error output, and document bytes as a whole-program
+//! distillation over an interpreter serving one job, as a printer's is.
+//! The corpus's own expectations are not checked here — `difftest run`
+//! does that — only the split's transparency.
 
 use std::path::PathBuf;
 
-use efterscript_remelt::{Options, PdfSink};
-use efterscript_vm::{Capture, Config, Io};
+use efterscript_remelt::{Distillation, Options, PdfSink};
+use efterscript_vm::{Capture, Config, Interp, Io};
 use platen::{Job, JobConfig, Outcome};
 use proptest::prelude::*;
 
@@ -49,7 +49,11 @@ fn whole(program: &[u8]) -> Run {
         ..Config::default()
     };
     let sink = PdfSink::new(Vec::new(), Options::default()).unwrap();
-    let (report, pdf) = efterscript_remelt::distill_into(program, config, sink).unwrap();
+    let mut interp = Interp::with_config(config);
+    interp.begin_job().unwrap();
+    let mut distillation = Distillation::over(interp, sink);
+    distillation.run(program);
+    let (report, pdf, _) = distillation.finish_keep().unwrap();
     let outcome = match report.outcome {
         efterscript_vm::Outcome::Ok => Outcome::Ok,
         efterscript_vm::Outcome::Error(s) => Outcome::Error {

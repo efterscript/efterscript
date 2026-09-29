@@ -6,6 +6,7 @@
 
 mod exec;
 mod frame;
+mod job;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -30,6 +31,7 @@ use crate::source::SliceSource;
 
 pub(crate) use exec::scan_error;
 pub use frame::{Frame, LoopFrame, Marker, ResourceKey, SourceFrame, SourceSlot};
+pub use job::JobEnd;
 
 // The file-table stream behind the job's source. The loop moves the bytes
 // of the source handed to `run` into this buffer before scanning, so the
@@ -384,6 +386,15 @@ pub struct Interp {
     system_params: ops::params::SystemParams,
     /// Pages shown by `showpage` and `copypage` in the interpreter's life.
     page_count: u64,
+    /// The job being served, when the interpreter is a job server.
+    job: Option<job::JobState>,
+    /// The derived tables captured by each live save that covers global
+    /// VM, by the save's serial, innermost last.
+    derived_saves: Vec<(u32, job::Derived)>,
+    /// The derived tables' sizes when the current encapsulated job
+    /// began, checked when it ends.
+    #[cfg(debug_assertions)]
+    job_sizes: Option<[usize; 12]>,
     // Program snapshots by `FID`, built on the first glyph a font needs
     // and never invalidated: a job that alters its font dictionary
     // afterwards is not followed.
@@ -642,6 +653,10 @@ impl Interp {
             user_params,
             system_params: ops::params::SystemParams::new(server_password),
             page_count: 0,
+            job: None,
+            derived_saves: Vec::new(),
+            #[cfg(debug_assertions)]
+            job_sizes: None,
             font_programs: HashMap::new(),
             cid_programs: HashMap::new(),
             cmaps: HashMap::new(),
@@ -791,14 +806,18 @@ impl Interp {
         if let Some(media_box) = ops::pagedevice::media_box(self) {
             let _ = backend.set_media_box(media_box);
         }
-        let first = self.graphics.is_none();
         self.graphics = Some(backend);
         self.described_fonts.clear();
         // The state stack is the backend's; a fresh one starts empty.
         self.vm_gstates.clear();
-        if !first {
-            return;
-        }
+        self.define_graphics_operators();
+    }
+
+    /// Enters the graphics operators in `systemdict`. Done on every
+    /// backend installation, not only the first, and after a restore of
+    /// global VM with a backend installed: a job server's restore takes
+    /// back entries made during the job.
+    pub(crate) fn define_graphics_operators(&mut self) {
         let systemdict = self.dicts.systemdict;
         for (index, entry) in self.ops.iter().enumerate() {
             if entry.visibility != Visibility::Graphics {
@@ -813,6 +832,15 @@ impl Interp {
                 .expect("systemdict exists")
                 .insert(key, op);
         }
+    }
+
+    /// Removes the graphics backend and hands it back, so a host can
+    /// finish one document and lend the interpreter to the next. The
+    /// graphics operators stay defined and raise `undefined` until a
+    /// backend is installed again.
+    pub fn take_graphics_backend(&mut self) -> Option<Box<dyn GraphicsBackend>> {
+        self.vm_gstates.clear();
+        self.graphics.take()
     }
 
     pub fn has_graphics_backend(&self) -> bool {
@@ -1329,11 +1357,6 @@ impl Interp {
     pub(crate) fn enter_server_level(&mut self) {
         self.server_level = true;
         self.dstack.truncate(self.dstack_floor);
-    }
-
-    /// Whether the prelude is running.
-    pub(crate) fn prelude_running(&self) -> bool {
-        self.prelude_running
     }
 
     pub(crate) fn system_params(&self) -> &ops::params::SystemParams {

@@ -23,7 +23,7 @@ use std::ffi::{CStr, c_char, c_int};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
-use crate::{Finished, Job, JobConfig, JobError, Options, Outcome};
+use crate::{Finished, Job, JobConfig, JobError, Options, Outcome, Printer};
 
 /// The version of `platen.h` this library implements; a configuration
 /// naming another is refused.
@@ -79,6 +79,12 @@ enum Stage {
     Finished(Box<Finished>),
     /// A panic left the job unusable.
     Poisoned,
+}
+
+/// The opaque printer the host holds: an interpreter serving one job at
+/// a time.
+pub struct platen_printer {
+    printer: Printer,
 }
 
 /// The opaque job the host holds.
@@ -237,6 +243,11 @@ pub unsafe extern "C" fn platen_job_new(cfg: *const platen_config) -> *mut plate
             }
         }
     }));
+    boxed_job(created)
+}
+
+/// The host's handle on a job, or NULL with the last error set.
+fn boxed_job(created: Result<Option<Job>, Box<dyn std::any::Any + Send>>) -> *mut platen_job {
     match created {
         Ok(Some(job)) => Box::into_raw(Box::new(platen_job {
             stage: Stage::Running(Box::new(job)),
@@ -251,6 +262,78 @@ pub unsafe extern "C" fn platen_job_new(cfg: *const platen_config) -> *mut plate
             ptr::null_mut()
         }
     }
+}
+
+/// Creates a printer from the same configuration a job takes, its
+/// `step_budget` applying to each job; NULL on failure, with
+/// `platen_last_error` set.
+///
+/// # Safety
+///
+/// `cfg` and every pointer in it must be valid as the header describes;
+/// none of them is retained.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn platen_printer_new(cfg: *const platen_config) -> *mut platen_printer {
+    let created = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller's contract.
+        let config = unsafe { read_config(cfg) }?;
+        match Printer::new(config) {
+            Ok(printer) => Some(printer),
+            Err(e) => {
+                set_last_error(&e.to_string());
+                None
+            }
+        }
+    }));
+    match created {
+        Ok(Some(printer)) => Box::into_raw(Box::new(platen_printer { printer })),
+        Ok(None) => ptr::null_mut(),
+        Err(payload) => {
+            set_last_error(&format!("panic: {}", panic_message(&payload)));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Opens a job on the printer, driven by the `platen_job_*` functions
+/// and released with `platen_job_free`; NULL with `platen_last_error`
+/// set while another job is open.
+///
+/// # Safety
+///
+/// `printer` is null or a printer not yet freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn platen_printer_job(printer: *mut platen_printer) -> *mut platen_job {
+    if printer.is_null() {
+        set_last_error("null printer");
+        return ptr::null_mut();
+    }
+    // SAFETY: the caller's contract.
+    let printer = unsafe { &*printer };
+    let created = catch_unwind(AssertUnwindSafe(|| match printer.printer.job() {
+        Ok(job) => Some(job),
+        Err(e) => {
+            set_last_error(&e.to_string());
+            None
+        }
+    }));
+    boxed_job(created)
+}
+
+/// Frees the printer. A job still open on it stays valid until it is
+/// freed itself. A null pointer is ignored.
+///
+/// # Safety
+///
+/// `printer` is null or a printer not yet freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn platen_printer_free(printer: *mut platen_printer) {
+    if printer.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract; the box came from `platen_printer_new`.
+    let boxed = unsafe { Box::from_raw(printer) };
+    let _ = catch_unwind(AssertUnwindSafe(move || drop(boxed)));
 }
 
 /// Feeds `len` bytes; see the header for the codes.
@@ -464,7 +547,9 @@ pub unsafe extern "C" fn platen_job_pages(job: *const platen_job) -> u32 {
     })
 }
 
-/// Frees the job and everything it returned. A null pointer is ignored.
+/// Frees the job and everything it returned. A printer's job not yet
+/// finished is abandoned: the printer reverts it and serves the next.
+/// A null pointer is ignored.
 ///
 /// # Safety
 ///
