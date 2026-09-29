@@ -423,3 +423,24 @@ and the PDF's glyph procedure agree with the marks the glyph paints.
 
 - **WHEN** a glyph procedure scales by 0.5 before declaring width 1200 and box `0 0 1200 1200` and paints a 1200-unit triangle in the scaled space
 - **THEN** the dump's glyph line reads width 600 and box `0 0 600 600`, and the captured fill's coordinates lie within that box
+
+### Requirement: reversepath
+
+`reversepath` SHALL replace the current path with one whose subpaths
+appear in the same order but each traverse their segments in reverse,
+per its entry in PLRM3 §8.2: each subpath SHALL begin at the point its
+original ended, a curve's control points SHALL be exchanged, a closed
+subpath SHALL remain closed, and the current point SHALL become the end
+of the last reversed subpath. A path with no segments SHALL be left
+unchanged. Painting the reversed path SHALL produce the same IR as
+painting the original, apart from segment order.
+
+#### Scenario: A reversed open subpath
+
+- **WHEN** `newpath 10 20 moveto 30 40 lineto 50 20 lineto reversepath currentpoint exch = =` is executed
+- **THEN** the output is `10.0` then `20.0`
+
+#### Scenario: Reversal twice is the identity
+
+- **WHEN** a path with a curve and a closed subpath is reversed twice and filled
+- **THEN** the page's IR equals that of filling the original path

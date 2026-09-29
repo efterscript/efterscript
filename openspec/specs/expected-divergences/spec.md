@@ -259,14 +259,15 @@ the recognised keys is the operator's contract.
 
 ### Requirement: server-password-default
 
-`exitserver` accepts the password 0 unless the interpreter is
-configured with another, the customary default of printers; the
-reference converter's server password is not 0, so it raises
+`exitserver` and `setsystemparams` SHALL accept the password 0 unless
+the interpreter is configured with another, the customary default of
+printers; the reference converter's passwords are not 0, so it raises
 `invalidaccess`. Restored by configuring the server password.
 
 #### Scenario: Declared
 
-- **GIVEN** the corpus file leaving the server loop with password 0
+- **GIVEN** a corpus file presenting the password 0 to `exitserver` or
+  `setsystemparams`
 - **THEN** it carries `% divergence: server-password-default`
 
 ### Requirement: uncoloured-cell-colour-operators
