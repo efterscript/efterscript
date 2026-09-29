@@ -14,11 +14,13 @@ compatibility.
 `version`, and `revision` describing this interpreter and nothing else
 by default, and a writable `serverdict` containing `exitserver`.
 `exitserver` SHALL take a password, a string or an integer converted as
-`cvs` converts it, compare it with the `StartJobPassword` and
+`cvs` converts it, and compare it with the `StartJobPassword` and
 `SystemParamsPassword` system parameters (both the configured server
-password by default, 0 unless configured), raise `invalidaccess` when it
-matches neither, and on a match continue execution at the server level
-so that subsequent definitions persist for the interpreter's life.
+password by default, 0 unless configured). Under a job server it SHALL
+behave as the `job-server` capability specifies. Outside a job server it
+SHALL raise `invalidaccess` when the password matches neither, and on a
+match SHALL return the dictionary stack to its permanent dictionaries
+and continue, writing nothing.
 
 #### Scenario: Default identity
 

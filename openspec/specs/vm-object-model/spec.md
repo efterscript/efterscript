@@ -56,7 +56,11 @@ strings, and files, and a property of the shared storage for dictionaries.
 every local composite object to its value at the corresponding `save`,
 invalidate every local composite object and save object created after it,
 and raise `invalidrestore` if any stack still references such an object.
-Global VM SHALL be unaffected by `restore`.
+Global VM SHALL be unaffected by `restore`, except at the outermost save
+level of a job server (see `job-server`): the job server's own save, and
+a save executed by an unencapsulated job with no save pending, SHALL
+snapshot global VM as well, also in constant time, and their `restore`
+SHALL revert it.
 
 #### Scenario: Local values revert
 
@@ -75,6 +79,12 @@ Global VM SHALL be unaffected by `restore`.
 - **GIVEN** `true setglobal /g [1] def false setglobal save`
 - **WHEN** `g 0 2 put restore` is executed
 - **THEN** `g 0 get` is 2
+
+#### Scenario: The outermost save of an unencapsulated job
+
+- **GIVEN** a job server running `true 0 startjob pop true setglobal globaldict /g [1] put false setglobal save`
+- **WHEN** `globaldict /g get 0 2 put restore globaldict /g get 0 get =` is executed
+- **THEN** the output is `1`
 
 ### Requirement: Global VM may not reference local VM
 

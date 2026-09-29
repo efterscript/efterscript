@@ -86,9 +86,10 @@ implementation-dependent.
 
 ### Requirement: job-server-save-level
 
-`vmstatus` reports save level 0 for a job run directly, where an
-interpreter running jobs under a job server's encapsulating save
-reports 1; the session work will introduce the encapsulating level.
+`vmstatus` SHALL report save level 0 for a program run directly, outside
+a job server, where an interpreter serving jobs reports 1 for the job's
+encapsulating save; a job served by a printer reports 1 as well. The
+corpus runs programs directly.
 
 #### Scenario: Declared
 
