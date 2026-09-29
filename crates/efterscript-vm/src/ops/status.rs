@@ -10,6 +10,7 @@
 use crate::error::VmError;
 use crate::graphics::MarkValue;
 use crate::interp::Interp;
+use crate::object::Object;
 use crate::ops::distiller::object;
 use crate::ops::output::{brief, full};
 
@@ -20,6 +21,13 @@ op_table! { OPS {
 op_table! { server SERVER_OPS {
     "exitserver" => exitserver, [Any];
 }}
+
+op_table! { JOB_OPS {
+    "startjob" => startjob, [Bool, Any];
+}}
+
+/// What a successful `exitserver` writes on standard output.
+const EXITSERVER_MESSAGE: &[u8] = b"%%[exitserver: permanent state may be changed]%%\n";
 
 /// The interpreter's own identity: what `statusdict` holds by default.
 pub fn default_identity() -> Vec<(String, MarkValue)> {
@@ -104,14 +112,51 @@ pub(crate) fn entries(i: &Interp) -> Vec<(String, String)> {
 /// parameter (PLRM3 §C.3.1), else `invalidaccess`; then execution
 /// continues at the server level, so what follows persists for the
 /// interpreter's life.
+/// Under a job server it is `true password startjob`, `invalidaccess`
+/// when that fails, and announces itself on standard output unless
+/// `$error /binary` is true (PLRM3 §3.7.7).
 fn exitserver(i: &mut Interp) -> Result<(), VmError> {
-    let password = crate::ops::params::password_bytes(i, i.peek(0)?)?;
+    let operand = i.peek(0)?;
+    let password = crate::ops::params::password_bytes(i, operand)?;
+    if i.in_job() {
+        // Read before the job ends: ending it restores `$error` too.
+        let quiet = binary_errors(i);
+        i.pop()?;
+        if !i.start_job(true, &password) {
+            i.push(operand)?;
+            return Err(VmError::InvalidAccess);
+        }
+        if !quiet {
+            i.write_stdout(EXITSERVER_MESSAGE)?;
+        }
+        return Ok(());
+    }
     if !i.system_params().start_job_allowed(&password) {
         return Err(VmError::InvalidAccess);
     }
     i.pop()?;
     i.enter_server_level();
     Ok(())
+}
+
+/// `bool password startjob bool` (PLRM3 §3.7.7, §8.2): see
+/// [`Interp::start_job`]. The password is a string or an integer.
+fn startjob(i: &mut Interp) -> Result<(), VmError> {
+    let password = crate::ops::params::password_bytes(i, i.peek(0)?)?;
+    let persistent = i.peek(1)?.as_bool().expect("signature");
+    i.pop()?;
+    i.pop()?;
+    let started = i.start_job(persistent, &password);
+    i.push(Object::boolean(started))
+}
+
+/// Whether `$error /binary` is true, which silences the exitserver line.
+fn binary_errors(i: &mut Interp) -> bool {
+    let Ok(key) = i.mem.intern(b"binary") else {
+        return false;
+    };
+    let error = i.dicts().error;
+    matches!(i.mem.dict_get(error, key), Ok(Some(v)) if v.as_bool() == Some(true))
 }
 
 /// `matrix width height proc framedevice`: a Level 1 raster-device setup

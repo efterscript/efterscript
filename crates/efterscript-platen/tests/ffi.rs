@@ -13,7 +13,8 @@ use platen::ffi::{
     PLATEN_OUTCOME_ERROR, PLATEN_OUTCOME_OK, platen_config, platen_entry, platen_job,
     platen_job_error_name, platen_job_feed, platen_job_finish, platen_job_free, platen_job_new,
     platen_job_offending, platen_job_pages, platen_job_pdf, platen_job_read_errors,
-    platen_job_read_replies, platen_last_error,
+    platen_job_read_replies, platen_last_error, platen_printer_free, platen_printer_job,
+    platen_printer_new,
 };
 
 fn config(entries: &[platen_entry], prelude: &[u8], budget: u64) -> platen_config {
@@ -172,4 +173,51 @@ fn a_rejected_identity_and_a_failing_prelude_return_null() {
     let cfg = config(&[], b"1 0 div", 0);
     assert!(unsafe { platen_job_new(&cfg) }.is_null());
     assert_eq!(last_error(), "prelude failed: undefinedresult in div");
+}
+
+#[test]
+fn a_printer_keeps_a_download_across_jobs() {
+    let cfg = config(&[], b"", 0);
+    let printer = unsafe { platen_printer_new(&cfg) };
+    assert!(!printer.is_null(), "{}", last_error());
+
+    let first = unsafe { platen_printer_job(printer) };
+    assert!(!first.is_null());
+    // One job at a time.
+    assert!(unsafe { platen_printer_job(printer) }.is_null());
+    assert_eq!(
+        feed(first, "serverdict begin 0 exitserver /x 1 def\n"),
+        PLATEN_OK
+    );
+    assert_eq!(
+        drain(first, false),
+        b"%%[exitserver: permanent state may be changed]%%\n"
+    );
+    assert_eq!(unsafe { platen_job_finish(first) }, PLATEN_OUTCOME_OK);
+    unsafe { platen_job_free(first) };
+
+    let second = unsafe { platen_printer_job(printer) };
+    assert!(!second.is_null());
+    // The printer may go first; its open job stays valid.
+    unsafe { platen_printer_free(printer) };
+    assert_eq!(feed(second, "x =\n"), PLATEN_OK);
+    assert_eq!(drain(second, false), b"1\n");
+    assert_eq!(unsafe { platen_job_finish(second) }, PLATEN_OUTCOME_OK);
+    unsafe { platen_job_free(second) };
+}
+
+#[test]
+fn freeing_an_unfinished_printer_job_abandons_it() {
+    let cfg = config(&[], b"", 0);
+    let printer = unsafe { platen_printer_new(&cfg) };
+    let first = unsafe { platen_printer_job(printer) };
+    assert_eq!(feed(first, "/x 1 def "), PLATEN_OK);
+    unsafe { platen_job_free(first) };
+    let second = unsafe { platen_printer_job(printer) };
+    assert!(!second.is_null(), "the abandoned job released the printer");
+    assert_eq!(feed(second, "/x where =\n"), PLATEN_OK);
+    assert_eq!(drain(second, false), b"false\n");
+    unsafe { platen_job_free(second) };
+    unsafe { platen_printer_free(printer) };
+    unsafe { platen_printer_free(ptr::null_mut()) };
 }

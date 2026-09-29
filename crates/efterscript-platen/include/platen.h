@@ -12,9 +12,15 @@
  * standard error, the conventional "%%[ Error: ...; OffendingCommand:
  * ... ]%%" lines) for the host to read, so a query is answered while the
  * program is still arriving. finish signals end of data, runs to
- * completion, and closes the document. Nothing survives a job: the host
- * maps one connection to one job and re-sends what a printer would have
- * kept. Status text is the host's business; the library reports facts.
+ * completion, and closes the document. Status text is the host's
+ * business; the library reports facts.
+ *
+ * A job made with platen_job_new is a printer serving that one job:
+ * nothing it does outlives it. A printer made with platen_printer_new
+ * keeps its interpreter between jobs, serving one at a time as a job
+ * server: each job starts from the same state and is reverted at its
+ * end, unless it runs exitserver or startjob, whose changes every later
+ * job inherits.
  *
  * Memory: everything a function returns belongs to the job and is valid
  * until platen_job_free; the host copies what it keeps. Nothing the host
@@ -66,9 +72,13 @@ extern "C" {
 #define PLATEN_OUTCOME_PRELUDE 3 /* reserved: a prelude failure fails
                                     platen_job_new instead */
 
-/* A job. Opaque; create with platen_job_new, release with
- * platen_job_free. */
+/* A job. Opaque; create with platen_job_new or platen_printer_job,
+ * release with platen_job_free. */
 typedef struct platen_job platen_job;
+
+/* A printer. Opaque; create with platen_printer_new, release with
+ * platen_printer_free. */
+typedef struct platen_printer platen_printer;
 
 /* One statusdict entry: the key, and the value as PostScript literal
  * text — "(Fictional Press)", "47.0", "true", "/name", "[612 792]",
@@ -144,8 +154,25 @@ const char *platen_job_offending(const platen_job *job);
 /* Pages shown so far, or in the finished document. */
 uint32_t platen_job_pages(const platen_job *job);
 
-/* Frees the job and everything it returned. NULL is ignored. */
+/* Frees the job and everything it returned. A printer's job freed
+ * before platen_job_finish is abandoned: the printer reverts what the
+ * job did (keeping what exitserver or startjob made permanent) and
+ * serves the next job. NULL is ignored. */
 void platen_job_free(platen_job *job);
+
+/* Creates a printer: the identity is parsed and seeded and the prelude
+ * run once. step_budget applies to each job. NULL on failure, with
+ * platen_last_error explaining, as for platen_job_new. */
+platen_printer *platen_printer_new(const platen_config *cfg);
+
+/* Opens a job on the printer, driven by the platen_job_* functions and
+ * released with platen_job_free. NULL while another job on this printer
+ * is open, with platen_last_error explaining. */
+platen_job *platen_printer_job(platen_printer *printer);
+
+/* Frees the printer. A job still open on it stays valid until it is
+ * freed itself; the two may be freed in either order. NULL is ignored. */
+void platen_printer_free(platen_printer *printer);
 
 /* The message of the last failure (a rejected configuration, a prelude
  * error, a panic), or "". One static buffer for the whole library. */

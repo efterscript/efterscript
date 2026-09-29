@@ -152,7 +152,13 @@ impl SystemParams {
     /// Whether `password` equals `StartJobPassword` or
     /// `SystemParamsPassword` (§C.3.1).
     pub(crate) fn start_job_allowed(&self, password: &[u8]) -> bool {
-        password == self.start_job_password || password == self.system_password
+        password == self.start_job_password || self.is_system_password(password)
+    }
+
+    /// Whether `password` equals `SystemParamsPassword`, which starts a
+    /// system-administrator job (§C.3.1).
+    pub(crate) fn is_system_password(&self, password: &[u8]) -> bool {
+        password == self.system_password
     }
 }
 
@@ -335,7 +341,7 @@ fn currentuserparams(i: &mut Interp) -> Result<(), VmError> {
 /// or the prelude running.
 fn permitted(i: &Interp, pairs: &[(Object, Object)]) -> Result<bool, VmError> {
     let params = i.system_params();
-    if params.system_password.is_empty() || i.prelude_running() {
+    if params.system_password.is_empty() || i.admin_job() {
         return Ok(true);
     }
     let mut password = None;

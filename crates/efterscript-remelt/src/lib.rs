@@ -246,8 +246,15 @@ impl<W: Write + 'static> Distillation<W> {
     /// [`Error::Prelude`] — seeds the sink's parameters into it, and
     /// installs the graphics backend over the sink.
     pub fn new(config: Config, sink: PdfSink<W>) -> Result<Self, Error> {
+        Ok(Self::over(Interp::try_with_config(config)?, sink))
+    }
+
+    /// A document over an interpreter the caller already has — a job
+    /// server's, between jobs — with a fresh graphics backend over
+    /// `sink` and the sink's parameters seeded into it.
+    /// [`Distillation::finish_keep`] hands the interpreter back.
+    pub fn over(mut interp: Interp, sink: PdfSink<W>) -> Self {
         let entries = sink.params().entries();
-        let mut interp = Interp::try_with_config(config)?;
         let shared = Rc::new(RefCell::new(Some(sink)));
         let identity = interp.statusdict_entries();
         let prelude_ran = interp.prelude_ran();
@@ -255,14 +262,14 @@ impl<W: Write + 'static> Distillation<W> {
         // left out of the job's view of the parameters; the writer keeps it.
         let _ = interp.set_distiller_params(&entries);
         interp.set_graphics_backend(Box::new(Graphics::new(Shared(shared.clone()))));
-        Ok(Distillation {
+        Distillation {
             interp,
             shared,
             source: ChunkSource::new(),
             outcome: None,
             identity,
             prelude_ran,
-        })
+        }
     }
 
     pub fn interp(&self) -> &Interp {
@@ -319,6 +326,13 @@ impl<W: Write + 'static> Distillation<W> {
     /// writing to memory keeps its bytes and one writing to a file can
     /// close it.
     pub fn finish(self) -> Result<(Report, W), Error> {
+        self.finish_keep().map(|(report, out, _)| (report, out))
+    }
+
+    /// As [`Distillation::finish`], handing back the interpreter as well,
+    /// with its graphics backend removed, so it can serve another
+    /// document.
+    pub fn finish_keep(self) -> Result<(Report, W, Interp), Error> {
         let Distillation {
             mut interp,
             shared,
@@ -335,11 +349,11 @@ impl<W: Write + 'static> Distillation<W> {
         };
         let substitutions = interp.font_substitutions().to_vec();
         let budget_exceeded = interp.budget_exceeded();
-        drop(interp);
+        drop(interp.take_graphics_backend());
         let sink = Rc::try_unwrap(shared)
             .ok()
             .and_then(RefCell::into_inner)
-            .expect("the interpreter has been dropped and with it the only other handle");
+            .expect("the backend has been dropped and with it the only other handle");
         let pages = sink.pages();
         let notes = sink.notes().to_vec();
         let marks_written = sink.marks_written();
@@ -364,6 +378,17 @@ impl<W: Write + 'static> Distillation<W> {
                 budget_exceeded,
             },
             out,
+            interp,
         ))
+    }
+
+    /// Ends the document without finishing the program: the sink and
+    /// whatever it holds are discarded, and the interpreter comes back
+    /// with its graphics backend removed — what a host does with a job
+    /// whose connection was lost.
+    pub fn abandon(self) -> Interp {
+        let mut interp = self.interp;
+        drop(interp.take_graphics_backend());
+        interp
     }
 }

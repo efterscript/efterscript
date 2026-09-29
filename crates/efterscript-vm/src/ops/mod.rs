@@ -187,6 +187,7 @@ const MODULES: &[&[OpEntry]] = &[
     params::OPS,
     file::LATER_OPS,
     graphics::PATH_OPS,
+    status::JOB_OPS,
 ];
 
 /// The complete operator table, built on first use.

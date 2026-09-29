@@ -170,3 +170,87 @@ Hosts opt in to persistence by creating a printer.
 ## Open Questions
 
 - None blocking.
+
+## Implementation notes
+
+Built from PLRM3 §3.7.3 and §3.7.7 (PDF pp. 75–76, 82–86), §C.3.1
+(p. 768), and the §8.2 entries for `startjob` (p. 709), `save`
+(p. 667), and `restore` (p. 662).
+
+- **Memory (D2).** `SaveRecord` gains an optional global arena;
+  `Memory::save_with(depth, global)` takes it and `restore` swaps it
+  back keeping the global handle counter. `outlived_by` checks global
+  handles too when the record covers global, so a global composite made
+  after such a save and left on a stack is `invalidrestore`.
+- **Derived state (D3), as built.** The tables stay where they were on
+  `Interp`; `interp/job.rs` defines `Derived`, which captures them into
+  one struct at a save covering global VM and reinstates them at its
+  restore, instead of moving the fields into a nested struct — the same
+  rule with no churn in the code that reads them. Captured: the VM-side
+  graphics state and its stack, font instances and their index, defined
+  matrices, font and CID programs, CMaps, predefined CMaps, pattern
+  instances, graphics procedures and their index, CIE spaces and their
+  index, the resident-font cache, loaded procsets, the default colour
+  rendering, and the no-backend font, screens, transfers, and colour
+  rendering. Every live save covering global VM keeps its `Derived` in
+  `Interp::derived_saves` by serial; a restore reinstates the matching
+  one and drops the ones nested inside. A debug assertion checks that
+  an encapsulated job leaves every table's size as it found it; the
+  growth test (1000 procedures, a resident font, a global array, 100
+  jobs) passes under it. Identifier counters (`next_fid`,
+  `next_cmap_id`) are not captured and only grow. Table indices (font
+  instance, pattern, procedure, and CIE ids) can recur after a job
+  reverts its entries, which is safe because each job has its own
+  document and graphics state.
+- **Save and restore (D1).** `save` and `restore` now go through
+  `Interp::vm_save` and `vm_restore`, which the job server shares. A
+  `save` covers global VM when `save_covers_global` holds (an
+  unencapsulated job with no save pending).
+- **A defect found and fixed during implementation:** a restore covering
+  global VM took back the graphics operators the backend had entered in
+  `systemdict` during the job, so drawing after an `exitserver` in the
+  same job raised `undefined` for `moveto`. `vm_restore` re-enters them
+  when such a restore happens with a backend installed, and
+  `set_graphics_backend` enters them on every installation, not only
+  the first. A `platen` test covers drawing after `exitserver`.
+- **The reset (D4)** also clears the execution stack when a job begins
+  and when it ends (an abandoned job leaves suspended frames), and sets
+  `$error /newerror` false.
+- **`startjob` (D5).** The operator pops its operands before deciding,
+  then pushes the result. Besides the three conditions, a job whose
+  restore something on the execution stack outlived (a procedure made
+  during the job) returns `false`, since the restore would be
+  `invalidrestore`. The execution stack is otherwise left as it is: the
+  input continues from where it was. `exitserver` reads `$error
+  /binary` before ending the job, because ending it restores `$error`.
+- **Administrator jobs.** `params::permitted` asks `Interp::admin_job`,
+  which is true while the prelude runs or in a job started with the
+  system-parameter password. With the default configuration both
+  passwords are the same, so `exitserver 0` starts an administrator
+  job.
+- **`remelt` (D6).** `Distillation::over`, `finish_keep`, and a new
+  `abandon` (the document discarded, the interpreter returned);
+  `Interp::take_graphics_backend` removes the backend.
+- **`platen` (D7, D8).** `Printer` and `Job` share a slot
+  (`Rc<RefCell<Slot>>`) holding the interpreter while idle, the writer
+  options, and the capture streams; `Drop` on an unfinished `Job`
+  abandons it. `Finished::permanent` reports a permanent job. A job
+  whose document cannot be closed takes the interpreter with it (writing
+  to memory does not fail). `ffi.rs` adds `platen_printer_new`,
+  `platen_printer_job`, and `platen_printer_free`; the header documents
+  them; the library exports the three new symbols and every earlier
+  one.
+- **Tests adjusted.** The split-feeding property test now compares
+  against a whole-program distillation over an interpreter serving one
+  job, since jobs report the encapsulating save level; two one-shot
+  scenarios expect the exitserver line. The `job-server-save-level`
+  divergence is reworded: printers' jobs report the level, direct runs
+  do not.
+- **Private tier.** The captured driver jobs (a current-generation
+  driver's setup query, print query, and two-page document job, kept in
+  the private vault) run in sequence on one printer through the C ABI in
+  578-byte pieces with the host's stock prelude, twice over and then
+  after a job that makes a procedure resident with `exitserver` and a
+  job that uses it: every job ends `ok` and each document job has its
+  two pages. Opening a job costs 0.03–0.16 ms; finishing and ending one
+  costs 0.02–2.8 ms, most of it closing the document.

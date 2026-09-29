@@ -45,9 +45,9 @@ pub use graphics::{
     SpaceSpec, apply64, envelope64, user_box_of,
 };
 pub use interp::{
-    Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, Limits,
-    LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, PreludeError, Quirks, ResourceKey,
-    SourceFrame, SourceSlot, StandardDicts,
+    Capabilities, Config, ErrorSummary, FontConfig, FontSubstitution, Frame, Interp, JobEnd,
+    Limits, LoopFrame, MAX_NESTED_ERROR_HANDLERS, Marker, Outcome, PreludeError, Quirks,
+    ResourceKey, SourceFrame, SourceSlot, StandardDicts,
 };
 pub use io::{Capture, Io};
 pub use memory::{
