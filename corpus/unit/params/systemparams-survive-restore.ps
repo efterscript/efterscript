@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 200000
+% Scenario: a system parameter set after save survives restore.
+save << /Password 0 /MaxFontCache 200000 >> setsystemparams restore
+currentsystemparams /MaxFontCache get =

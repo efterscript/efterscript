@@ -1134,6 +1134,11 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
         Ok(())
     }
 
+    fn reverse_path(&mut self) -> Result<(), VmError> {
+        self.gstate.path = self.gstate.path.reversed();
+        Ok(())
+    }
+
     fn set_screens(&mut self, screens: [Screen; 4]) -> Result<(), VmError> {
         self.gstate.screens = screens;
         Ok(())

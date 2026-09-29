@@ -79,6 +79,24 @@ pub trait Stream {
 /// request fails with `undefinedfilename`.
 pub trait FileCapability {
     fn open(&mut self, name: &[u8], mode: &[u8]) -> Result<Box<dyn Stream>, VmError>;
+
+    /// What `status` reports for a file name (PLRM3 §8.2), or `None`
+    /// when there is no such file; the default knows no file.
+    fn status(&mut self, name: &[u8]) -> Option<FileStatus> {
+        let _ = name;
+        None
+    }
+}
+
+/// A named file's `status` figures: its storage in implementation units,
+/// its length in bytes, and when it was last referenced and created, in
+/// whatever clock the capability keeps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FileStatus {
+    pub pages: i32,
+    pub bytes: i32,
+    pub referenced: i32,
+    pub created: i32,
 }
 
 /// A read-only stream over bytes held in memory: a string source, or a

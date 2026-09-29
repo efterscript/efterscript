@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a path with a curve, a closed subpath, and an open one,
+% reversed and filled: the IR carries the reversed segments.
+newpath
+100 100 moveto 200 100 lineto 200 200 lineto closepath
+300 300 moveto 350 400 400 400 450 300 curveto 400 250 lineto
+reversepath fill
+showpage

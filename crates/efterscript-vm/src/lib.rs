@@ -37,7 +37,7 @@ pub mod source;
 pub use clock::Clock;
 pub use dict::Dict;
 pub use error::VmError;
-pub use files::{FileCapability, FileTable, Stream};
+pub use files::{FileCapability, FileStatus, FileTable, Stream};
 pub use graphics::{
     Bounds, CieColor, DEFAULT_SMOOTHNESS, Encoded, FontInfo, FontRef, FontSource, FormInfo,
     FunctionSpec, Glyph, GraphicsBackend, ImageSpec, LineCap, LineJoin, MarkValue, Matrix,

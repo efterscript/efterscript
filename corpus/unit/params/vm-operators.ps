@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: -1
+% expect-output: 5000
+% expect-output: rangecheck
+% Scenario: vmreclaim and setvmthreshold write the VM user parameters;
+% an unknown vmreclaim code is rangecheck.
+-1 vmreclaim currentuserparams /VMReclaim get =
+5000 setvmthreshold currentuserparams /VMThreshold get =
+{ 7 vmreclaim } stopped pop pop $error /errorname get =

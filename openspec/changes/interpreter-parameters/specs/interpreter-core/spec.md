@@ -24,7 +24,7 @@ capability, or with one that does not answer, it SHALL return `false`.
 
 #### Scenario: A file object
 
-- **WHEN** `(%stdout) (w) file dup status = closefile` is executed
+- **WHEN** `(%stdout) (w) file status =` is executed
 - **THEN** the output is `true`
 
 #### Scenario: A file name without a file capability

@@ -85,6 +85,8 @@ job server's snapshot a mechanical question.
 - `printer-identity`: MODIFIED `statusdict and serverdict` — the
   `exitserver` password is compared as a string with either password
   parameter.
+- `expected-divergences`: MODIFIED `server-password-default` — it
+  covers `setsystemparams` as well as `exitserver`.
 
 ## Impact
 

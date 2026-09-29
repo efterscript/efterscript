@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use crate::dict::Dict;
 use crate::error::VmError;
-use crate::files::{FileCapability, FileTable, Stream};
+use crate::files::{FileCapability, FileStatus, FileTable, Stream};
 use crate::names::{Atom, NameTable, NameTooLong};
 use crate::object::{Access, Handle, Object, Space, Type};
 
@@ -664,6 +664,11 @@ impl Memory {
         }
         require(object.access().unwrap_or_default(), needed)?;
         Ok(object.handle().expect("file is composite"))
+    }
+
+    /// The file capability's `status` for `name`; `None` without one.
+    pub fn file_status(&mut self, name: &[u8]) -> Option<FileStatus> {
+        self.file_capability.as_mut()?.status(name)
     }
 
     pub fn file_is_open(&self, object: Object) -> bool {

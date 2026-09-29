@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 10.0
+% expect-output: 20.0
+% Scenario: after reversepath the current point is the start of the
+% open subpath.
+newpath 10 20 moveto 30 40 lineto 50 20 lineto
+reversepath currentpoint exch = =

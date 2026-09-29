@@ -48,6 +48,11 @@ op_table! { OPS {
     "eexec" => eexec;
 }}
 
+op_table! { LATER_OPS {
+    "writehexstring" => writehexstring, [Any, String];
+    "status" => status, [Any];
+}}
+
 pub(crate) fn file_operand(object: Object, needed: Access) -> Result<Handle, VmError> {
     if object.ty() != Type::File {
         return Err(VmError::TypeCheck);
@@ -255,6 +260,50 @@ fn readhexstring(i: &mut Interp) -> Result<(), VmError> {
         }
         Ok((n, n == buf.len()))
     })
+}
+
+/// Each byte of the string as two lowercase hexadecimal digits.
+fn writehexstring(i: &mut Interp) -> Result<(), VmError> {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let text = bytes(i, i.peek(0)?)?;
+    let hex: Vec<u8> = text
+        .iter()
+        .flat_map(|&b| [DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 15)]])
+        .collect();
+    let file = i.peek(1)?;
+    i.write_file(file, &hex)?;
+    i.pop()?;
+    i.pop()?;
+    Ok(())
+}
+
+/// `file status bool`: whether the file is open. `filename status`: the
+/// file capability's four figures and `true`, or `false` when it knows
+/// no such file or there is no capability.
+fn status(i: &mut Interp) -> Result<(), VmError> {
+    let operand = i.peek(0)?;
+    match operand.ty() {
+        Type::File => {
+            let open = i.mem.file_is_open(operand);
+            i.pop()?;
+            i.push(Object::boolean(open))
+        }
+        Type::String => {
+            let name = bytes(i, operand)?;
+            let found = i.mem.file_status(&name);
+            i.pop()?;
+            match found {
+                Some(found) => {
+                    for value in [found.pages, found.bytes, found.referenced, found.created] {
+                        i.push(Object::integer(value))?;
+                    }
+                    i.push(Object::boolean(true))
+                }
+                None => i.push(Object::boolean(false)),
+            }
+        }
+        _ => Err(VmError::TypeCheck),
+    }
 }
 
 fn writestring(i: &mut Interp) -> Result<(), VmError> {

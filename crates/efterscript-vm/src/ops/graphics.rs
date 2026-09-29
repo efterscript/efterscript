@@ -113,6 +113,10 @@ op_table! { graphics OUTLINE_OPS {
     "strokepath" => strokepath;
 }}
 
+op_table! { graphics PATH_OPS {
+    "reversepath" => reversepath;
+}}
+
 // --- operand helpers ---------------------------------------------------------
 //
 // Operands are read in place and popped only after the backend accepted
@@ -1431,12 +1435,22 @@ pub(crate) fn page_operator_allowed(i: &Interp) -> Result<(), VmError> {
 
 fn showpage(i: &mut Interp) -> Result<(), VmError> {
     page_operator_allowed(i)?;
-    i.backend()?.showpage()
+    i.backend()?.showpage()?;
+    i.count_page();
+    Ok(())
 }
 
 fn copypage(i: &mut Interp) -> Result<(), VmError> {
     page_operator_allowed(i)?;
-    i.backend()?.copypage()
+    i.backend()?.copypage()?;
+    i.count_page();
+    Ok(())
+}
+
+/// Replaces the current path with the same subpaths traversed in
+/// reverse (PLRM3 §8.2 `reversepath`).
+fn reversepath(i: &mut Interp) -> Result<(), VmError> {
+    i.backend()?.reverse_path()
 }
 
 fn erasepage(i: &mut Interp) -> Result<(), VmError> {
