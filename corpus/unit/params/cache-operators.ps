@@ -1,0 +1,14 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 2
+% expect-output: 3
+% expect-output: 900
+% expect-output: 0
+% oracle: skip other interpreters may clamp small cache values to a minimum
+% Scenario: the cache operators read and write the user parameters.
+mark 1 2 3 setcacheparams
+currentuserparams dup /MinFontCompress get = /MaxFontItem get =
+900 setcachelimit
+currentcacheparams = pop pop pop
+count =

@@ -2392,7 +2392,7 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("resource-instance-shape", 2),
                 ("resource-size-unknown", 5),
                 ("sampled-function-short-source", 1),
-                ("server-password-default", 1),
+                ("server-password-default", 4),
                 ("shading-colour-conversion-limit", 1),
                 ("uncoloured-cell-colour-operators", 1),
                 ("unspecified-forall-order", 1),
@@ -2419,9 +2419,13 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 "corpus/unit/graphics/no-backend-moveto-undefined.ps",
                 "corpus/unit/graphics/no-backend-names-unknown.ps",
                 "corpus/unit/interp/deep-recursion.ps",
+                "corpus/unit/params/cache-operators.ps",
+                "corpus/unit/params/userparams-defined-keys.ps",
+                "corpus/unit/params/userparams-unknown-and-fixed.ps",
                 "corpus/unit/pdfmark/guarded-idiom-no-backend.ps",
                 "corpus/unit/text/no-backend-fonts.ps",
                 "corpus/unit/upath/encoded-bad-opcode.ps",
+                "corpus/unit/vm/echo-undefined.ps",
             ]
         );
     }

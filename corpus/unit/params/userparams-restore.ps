@@ -1,0 +1,10 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: report
+% expect-output: 0
+% Scenario: a user parameter set after save reverts at restore.
+save << /JobName (report) >> setuserparams
+currentuserparams /JobName get =
+restore
+currentuserparams /JobName get length =

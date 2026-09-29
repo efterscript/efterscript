@@ -165,6 +165,46 @@ impl Path {
         path
     }
 
+    /// The same subpaths, in the same order, each traversed from its
+    /// last point back to its first: a curve's control points swap, a
+    /// closed subpath stays closed, and the current point becomes the
+    /// last subpath's new end. A subpath continuing after a close with
+    /// no `moveto` starts at the closed subpath's start, so it gains an
+    /// explicit one.
+    pub fn reversed(&self) -> Path {
+        let mut out = Vec::with_capacity(self.segs.len() + 1);
+        let mut subpath: Vec<Seg> = Vec::new();
+        let mut start: Option<Point> = None;
+        let flush = |subpath: &mut Vec<Seg>, out: &mut Vec<Seg>| {
+            if !subpath.is_empty() {
+                reverse_subpath(subpath, out);
+                subpath.clear();
+            }
+        };
+        for seg in self.segs.iter().copied() {
+            match seg {
+                Seg::Move(p) => {
+                    flush(&mut subpath, &mut out);
+                    start = Some(p);
+                    subpath.push(seg);
+                }
+                Seg::Close => {
+                    subpath.push(seg);
+                    flush(&mut subpath, &mut out);
+                }
+                Seg::Line(_) | Seg::Curve(..) => {
+                    if subpath.is_empty() {
+                        let Some(p) = start else { continue };
+                        subpath.push(Seg::Move(p));
+                    }
+                    subpath.push(seg);
+                }
+            }
+        }
+        flush(&mut subpath, &mut out);
+        Path::from_segments(out)
+    }
+
     /// The device-space current point before rounding.
     pub fn current64(&self) -> Result<P64, VmError> {
         self.current64.ok_or(VmError::NoCurrentPoint)
@@ -177,6 +217,35 @@ impl Path {
             Seg::Curve(a, b, c) => vec![a, b, c],
             Seg::Close => Vec::new(),
         })
+    }
+}
+
+/// Appends one subpath — a `Move`, its segments, and perhaps a `Close` —
+/// reversed.
+fn reverse_subpath(subpath: &[Seg], out: &mut Vec<Seg>) {
+    let closed = matches!(subpath.last(), Some(Seg::Close));
+    let body = if closed {
+        &subpath[..subpath.len() - 1]
+    } else {
+        subpath
+    };
+    let end = |seg: &Seg| match *seg {
+        Seg::Move(p) | Seg::Line(p) | Seg::Curve(_, _, p) => Some(p),
+        Seg::Close => None,
+    };
+    let Some(last) = body.last().and_then(end) else {
+        return;
+    };
+    out.push(Seg::Move(last));
+    for at in (1..body.len()).rev() {
+        let previous = end(&body[at - 1]).expect("a point before every segment");
+        out.push(match body[at] {
+            Seg::Curve(c1, c2, _) => Seg::Curve(c2, c1, previous),
+            _ => Seg::Line(previous),
+        });
+    }
+    if closed {
+        out.push(Seg::Close);
     }
 }
 
@@ -406,6 +475,70 @@ mod tests {
     use super::*;
 
     use efterscript_vm::PatternKind;
+
+    fn pt(x: f32, y: f32) -> Point {
+        Point::new(x, y)
+    }
+
+    #[test]
+    fn reversed_open_subpath_runs_back_to_its_start() {
+        let path = Path::from_segments(vec![
+            Seg::Move(pt(10.0, 20.0)),
+            Seg::Line(pt(30.0, 40.0)),
+            Seg::Curve(pt(1.0, 2.0), pt(3.0, 4.0), pt(50.0, 20.0)),
+        ]);
+        let reversed = path.reversed();
+        assert_eq!(
+            *reversed.segs,
+            vec![
+                Seg::Move(pt(50.0, 20.0)),
+                Seg::Curve(pt(3.0, 4.0), pt(1.0, 2.0), pt(30.0, 40.0)),
+                Seg::Line(pt(10.0, 20.0)),
+            ]
+        );
+        assert_eq!(reversed.current, Some(pt(10.0, 20.0)));
+    }
+
+    #[test]
+    fn reversed_closed_subpath_stays_closed_and_order_is_kept() {
+        let path = Path::from_segments(vec![
+            Seg::Move(pt(0.0, 0.0)),
+            Seg::Line(pt(1.0, 0.0)),
+            Seg::Line(pt(1.0, 1.0)),
+            Seg::Close,
+            Seg::Line(pt(5.0, 5.0)),
+            Seg::Move(pt(9.0, 9.0)),
+        ]);
+        let reversed = path.reversed();
+        assert_eq!(
+            *reversed.segs,
+            vec![
+                Seg::Move(pt(1.0, 1.0)),
+                Seg::Line(pt(1.0, 0.0)),
+                Seg::Line(pt(0.0, 0.0)),
+                Seg::Close,
+                Seg::Move(pt(5.0, 5.0)),
+                Seg::Line(pt(0.0, 0.0)),
+                Seg::Move(pt(9.0, 9.0)),
+            ]
+        );
+        assert_eq!(reversed.current, Some(pt(9.0, 9.0)));
+    }
+
+    #[test]
+    fn reversing_twice_restores_the_path() {
+        let segs = vec![
+            Seg::Move(pt(0.0, 0.0)),
+            Seg::Curve(pt(1.0, 2.0), pt(3.0, 4.0), pt(5.0, 0.0)),
+            Seg::Line(pt(2.0, -3.0)),
+            Seg::Close,
+            Seg::Move(pt(7.0, 7.0)),
+            Seg::Line(pt(8.0, 9.0)),
+        ];
+        let path = Path::from_segments(segs.clone());
+        assert_eq!(*path.reversed().reversed().segs, segs);
+        assert!(Path::default().reversed().is_empty());
+    }
 
     #[test]
     fn path_tracks_current_point_and_start() {

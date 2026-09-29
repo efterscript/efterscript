@@ -19,7 +19,7 @@ op_table! { OPS {
 }}
 
 /// What `vmstatus` reports as the maximum, until memory is metered.
-const VM_MAXIMUM: i32 = 1 << 30;
+pub(crate) const VM_MAXIMUM: i32 = 1 << 30;
 
 fn save(i: &mut Interp) -> Result<(), VmError> {
     let depth = i.graphics_backend().map(|backend| backend.gstate_depth());

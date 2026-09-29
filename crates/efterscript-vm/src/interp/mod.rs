@@ -372,9 +372,18 @@ pub struct Interp {
     // set repeatedly from one object is one entry.
     cie_spaces: Vec<CieEntry>,
     cie_index: HashMap<CompositeRef, u32>,
-    server_password: i32,
     server_level: bool,
     prelude_ran: bool,
+    /// Whether the prelude is running: the host configuring its device,
+    /// which may change system parameters without a password.
+    prelude_running: bool,
+    /// The user parameters (PLRM3 §C.1.1): a dictionary in local VM made
+    /// before any `save`, so `restore` reverts its contents.
+    pub(crate) user_params: Object,
+    /// The system parameters and passwords (PLRM3 §C.1.2), outside VM.
+    system_params: ops::params::SystemParams,
+    /// Pages shown by `showpage` and `copypage` in the interpreter's life.
+    page_count: u64,
     // Program snapshots by `FID`, built on the first glyph a font needs
     // and never invalidated: a job that alters its font dictionary
     // afterwards is not followed.
@@ -518,6 +527,7 @@ impl Interp {
         // dictionary would refuse.
         let statusdict = mem.new_dict(64);
         let serverdict = mem.new_dict(8);
+        let user_params = mem.new_dict(24);
         let font_directory = mem.new_dict(32);
         let local_encodings = mem.new_dict(8);
         let local_procsets = mem.new_dict(8);
@@ -626,9 +636,12 @@ impl Interp {
             cie_spaces: Vec::new(),
             cie_index: HashMap::new(),
             graphics_proc_index: HashMap::new(),
-            server_password,
             server_level: false,
             prelude_ran: false,
+            prelude_running: false,
+            user_params,
+            system_params: ops::params::SystemParams::new(server_password),
+            page_count: 0,
             font_programs: HashMap::new(),
             cid_programs: HashMap::new(),
             cmaps: HashMap::new(),
@@ -682,7 +695,9 @@ impl Interp {
     /// `quit` in it ends the prelude, not the interpreter.
     fn run_prelude(&mut self, prelude: &[u8]) -> Result<(), PreludeError> {
         self.server_level = true;
+        self.prelude_running = true;
         let outcome = self.run(&mut SliceSource::new(prelude));
+        self.prelude_running = false;
         self.server_level = false;
         self.quit = false;
         self.prelude_ran = true;
@@ -750,6 +765,7 @@ impl Interp {
         ops::pagedevice::seed(self).expect("fresh dictionary");
         ops::distiller::seed(self).expect("fresh dictionary");
         ops::status::seed(self).expect("fresh dictionary");
+        ops::params::seed(self).expect("fresh dictionary");
 
         let atoms = self.atoms;
         for (key, value) in [
@@ -1315,8 +1331,27 @@ impl Interp {
         self.dstack.truncate(self.dstack_floor);
     }
 
-    pub(crate) fn server_password(&self) -> i32 {
-        self.server_password
+    /// Whether the prelude is running.
+    pub(crate) fn prelude_running(&self) -> bool {
+        self.prelude_running
+    }
+
+    pub(crate) fn system_params(&self) -> &ops::params::SystemParams {
+        &self.system_params
+    }
+
+    pub(crate) fn system_params_mut(&mut self) -> &mut ops::params::SystemParams {
+        &mut self.system_params
+    }
+
+    /// Pages shown by `showpage` and `copypage` in the interpreter's life
+    /// (the `PageCount` system parameter).
+    pub fn page_count(&self) -> u64 {
+        self.page_count
+    }
+
+    pub(crate) fn count_page(&mut self) {
+        self.page_count += 1;
     }
 
     /// Whether a configured prelude has run.

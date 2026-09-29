@@ -1287,6 +1287,16 @@ pub trait GraphicsBackend {
         Ok(())
     }
 
+    /// Replaces the current path with one whose subpaths keep their
+    /// order but each run from its last point back to its first
+    /// (`reversepath`, PLRM3 §8.2): curve control points swap, a closed
+    /// subpath stays closed, and the current point becomes the last
+    /// subpath's new end. A backend that keeps no path accepts and
+    /// ignores it.
+    fn reverse_path(&mut self) -> Result<(), VmError> {
+        Ok(())
+    }
+
     // --- page and device ---------------------------------------------------------
 
     fn set_media_box(&mut self, media_box: Bounds) -> Result<(), VmError>;

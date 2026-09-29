@@ -177,3 +177,77 @@ change to an existing golden is a defect.
 
 - None blocking. The round-figure defaults for the cache limits are
   recorded in the implementation notes when chosen.
+
+## Implementation notes
+
+Built from PLRM3 Appendix C, §C.1–§C.4 (PDF pp. 759–774), and the
+§8.2 entries for `setuserparams` (p. 701), `currentuserparams`
+(p. 578), `setsystemparams` (p. 698), `currentsystemparams` (p. 577),
+`setdevparams` (p. 681), `currentdevparams` (p. 569), `cachestatus`
+(p. 554), `setcachelimit` (p. 674), `setcacheparams` (p. 675),
+`currentcacheparams` (p. 566), `setvmthreshold` (p. 702), `vmreclaim`
+(p. 730), `reversepath` (p. 663), `writehexstring` (p. 734), `status`
+(p. 710), and `echo` (p. 589), plus black-box comparison with the
+reference converter.
+
+- **Where things live.** `ops/params.rs` holds the operators, the
+  Table C.1 key list with each key's kind, and `SystemParams`.
+  `Interp` gains `user_params` (the local dictionary, allocated beside
+  `serverdict` and filled in `populate`), `system_params`, a `u64`
+  `page_count` (reported as `PageCount`, saturating at the largest
+  integer), and `prelude_running`, set around `run_prelude` for the
+  password exemption. The `server_password` field on `Interp` is gone:
+  the passwords in `SystemParams` replace it; `Config::server_password`
+  is unchanged.
+- **Kinds of user parameter.** Booleans are stored as given; counts
+  store a negative value as 0; `HalftoneMode` is clamped to 0–2 and
+  `VMReclaim` to −2–0 (the nearest achievable value); the stack limits,
+  `MaxLocalVM`, and `IdiomRecognition` are fixed and accept any value
+  without effect, including one of another type; `JobName` stops at a
+  null byte and is truncated to 100 bytes. A key that is not a name is
+  ignored like an unknown name.
+- **Defaults chosen** (D2): user — `MaxFontItem 12500`, `MaxFormItem
+  100000`, `MaxPatternItem 20000`, `MaxScreenItem 65536`,
+  `MaxSuperScreen 1016`, `MaxUPathItem 5000`, `MinFontCompress 100`,
+  `VMThreshold 40000`; system — `MaxDisplayAndSourceList 1000000`,
+  `MaxDisplayList 500000`, `MaxFontCache 400000`, `MaxFormCache
+  200000`, `MaxImageBuffer 500000`, `MaxOutlineCache 100000`,
+  `MaxPatternCache 100000`, `MaxScreenStorage 100000`, `MaxSourceList
+  500000`, `MaxStoredScreenCache 0`, `MaxUPathCache 100000`.
+  `cachestatus` reports `mmax` 100 and `cmax` 800.
+- **Validation.** `setuserparams` and `setsystemparams` check every
+  known key before storing any, so a request with one bad value changes
+  nothing (a corpus file checks this). Write-only password keys accept a
+  string or an integer.
+- **`reversepath`** is `Path::reversed` in `efterscript-graphics`
+  (`state.rs`). A segment following a `closepath` without a `moveto`
+  starts a subpath at the closed one's start; the reversal gives it an
+  explicit `Move`, which paints the same. The current point is
+  recovered by `Path::from_segments`, so its unrounded copy is the
+  rounded point.
+- **`status` and files.** `FileCapability::status` is a provided method
+  returning `Option<FileStatus>`; `FileStatus` is exported. The spec's
+  file-object scenario no longer closes the file: closing `%stdout`
+  left the `=` that follows with nowhere to write.
+- **Operator tables.** `params::OPS`, `file::LATER_OPS` (`writehexstring`,
+  `status`), and `graphics::PATH_OPS` (`reversepath`) are appended to
+  the table, so no earlier operator index moves.
+- **Oracle.** The reference converter accepts `setsystemparams` without
+  checking the password in the cases the corpus uses, so only the files
+  where its answer differs (a wrong password, a changed password, and
+  `exitserver` with a string) declare `server-password-default`, whose
+  requirement now names `setsystemparams` too. `echo-undefined.ps` is
+  skipped: the reference has an interactive executive and defines
+  `echo`. Files printing this interpreter's own limits are skipped with
+  that reason. Over `corpus/unit/params`, `vm`, `identity`, and the two
+  `reversepath` files: 40 files, 29 pass, 7 expected divergences,
+  4 skipped, no failure.
+- **The captured driver jobs** (a current-generation driver's setup
+  query, print query, and two-page document job, kept in the private
+  vault), fed through the C ABI in 578-byte pieces with the host's stock prelude
+  and no stand-ins: the setup query and the print query end `ok` with
+  every feature answered; the document job ends `ok` with its two
+  pages. Before this change the first stopped at `currentsystemparams`
+  and the last at `setuserparams`.
+- **Toolchain.** The gates were run on the pinned 1.98.0; an older
+  local toolchain flags an unrelated lint in a fonts test.

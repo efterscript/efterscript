@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% expect-output: 0
+% Scenario: a request with one bad value changes none of its keys.
+{ << /JobName (kept-out) /MaxFontItem (no) >> setuserparams } stopped =
+currentuserparams /JobName get length =

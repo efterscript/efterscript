@@ -18,7 +18,7 @@ op_table! { OPS {
 }}
 
 op_table! { server SERVER_OPS {
-    "exitserver" => exitserver, [Int];
+    "exitserver" => exitserver, [Any];
 }}
 
 /// The interpreter's own identity: what `statusdict` holds by default.
@@ -99,12 +99,14 @@ pub(crate) fn entries(i: &Interp) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `password exitserver`: `invalidaccess` unless the password is the
-/// configured one; then execution continues at the server level, so what
-/// follows persists for the interpreter's life.
+/// `password exitserver`: the password, a string or an integer, must
+/// equal the `StartJobPassword` or `SystemParamsPassword` system
+/// parameter (PLRM3 §C.3.1), else `invalidaccess`; then execution
+/// continues at the server level, so what follows persists for the
+/// interpreter's life.
 fn exitserver(i: &mut Interp) -> Result<(), VmError> {
-    let password = i.peek(0)?.as_i32().ok_or(VmError::TypeCheck)?;
-    if password != i.server_password() {
+    let password = crate::ops::params::password_bytes(i, i.peek(0)?)?;
+    if !i.system_params().start_job_allowed(&password) {
         return Err(VmError::InvalidAccess);
     }
     i.pop()?;

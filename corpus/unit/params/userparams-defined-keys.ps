@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 500
+% expect-output: true
+% oracle: skip the operand stack limit is this interpreter's configured one
+% Scenario: currentuserparams holds every defined key; the operand
+% stack limit reports the configured limit.
+currentuserparams dup /JobName known exch /MaxOpStack get = =

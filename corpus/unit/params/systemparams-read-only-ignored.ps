@@ -1,0 +1,7 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% Scenario: a read-only key in a request is ignored.
+<< /Password 0 /Revision 99 >> setsystemparams
+currentsystemparams /Revision get revision eq =

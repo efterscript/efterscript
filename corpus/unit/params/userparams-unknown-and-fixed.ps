@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 500
+% oracle: skip the operand stack limit is this interpreter's configured one
+% Scenario: an unknown key is ignored and a limit keeps its value.
+<< /NoSuchKey 1 /MaxOpStack 10 >> setuserparams
+currentuserparams /MaxOpStack get =

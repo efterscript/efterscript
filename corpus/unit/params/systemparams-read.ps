@@ -1,0 +1,8 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: false
+% expect-output: true
+% Scenario: currentsystemparams reports Revision as systemdict does and
+% never the write-only passwords.
+currentsystemparams dup /Revision get revision eq exch /SystemParamsPassword known = =

@@ -133,6 +133,7 @@ pub mod graphics;
 pub mod image;
 pub mod output;
 pub mod pagedevice;
+pub mod params;
 pub mod pattern;
 pub mod pdfmark;
 pub mod random;
@@ -183,6 +184,9 @@ const MODULES: &[&[OpEntry]] = &[
     graphics::STATE_OPS,
     graphics::OUTLINE_OPS,
     upath::OUTLINE_OPS,
+    params::OPS,
+    file::LATER_OPS,
+    graphics::PATH_OPS,
 ];
 
 /// The complete operator table, built on first use.

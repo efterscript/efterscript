@@ -243,3 +243,16 @@ fn the_writer_options_reach_the_document() {
     assert!(finished.report.params.compress_pages);
     assert!(finished.pdf.windows(11).any(|w| w == b"FlateDecode"));
 }
+
+#[test]
+fn page_count_counts_the_pages_shown() {
+    let mut job = job(JobConfig::default());
+    let progress = feed(
+        &mut job,
+        "showpage 0 0 moveto 1 1 lineto stroke copypage showpage \
+         currentsystemparams /PageCount get =\n",
+    );
+    assert_eq!(progress.replies, b"3\n");
+    let finished = job.finish().expect("the job finishes");
+    assert_eq!(finished.outcome, Outcome::Ok);
+}

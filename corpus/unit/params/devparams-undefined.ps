@@ -1,0 +1,6 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: 0
+% Scenario: a device parameter probe inside stopped falls back.
+mark { (%Serial%) currentdevparams } stopped { cleartomark 0 dict } { exch pop } ifelse length =
