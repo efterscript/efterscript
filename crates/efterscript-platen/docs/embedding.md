@@ -60,7 +60,7 @@ cargo build --release -p efterscript-platen --target wasm32-unknown-emscripten
 emcc host.c -I crates/efterscript-platen/include \
   target/wasm32-unknown-emscripten/release/libplaten.a \
   -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 \
-  -sEXPORTED_FUNCTIONS=_platen_job_new,_platen_job_feed,_platen_job_read_replies,_platen_job_read_errors,_platen_job_finish,_platen_job_pdf,_platen_job_error_name,_platen_job_offending,_platen_job_pages,_platen_job_free,_platen_last_error,_malloc,_free \
+  -sEXPORTED_FUNCTIONS=_platen_job_new,_platen_job_feed,_platen_job_read_replies,_platen_job_read_errors,_platen_job_finish,_platen_job_pdf,_platen_job_error_name,_platen_job_offending,_platen_job_pages,_platen_job_free,_platen_printer_new,_platen_printer_job,_platen_printer_free,_platen_last_error,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPU8 \
   -sALLOW_MEMORY_GROWTH=1 \
   -o host.js
@@ -87,7 +87,10 @@ The exported symbols, in the order the header declares them:
 | `platen_job_error_name` | the error name of an error outcome |
 | `platen_job_offending` | the offending command of an error outcome |
 | `platen_job_pages` | pages shown so far or in the document |
-| `platen_job_free` | release the job |
+| `platen_job_free` | release the job; a printer's unfinished job is abandoned |
+| `platen_printer_new` | create a printer from a `platen_config` |
+| `platen_printer_job` | open a job on the printer, one at a time |
+| `platen_printer_free` | release the printer |
 | `platen_last_error` | the last failure's message |
 
 A host calling from JavaScript allocates the configuration struct and
@@ -98,9 +101,23 @@ frame it runs in; the execution budget (`step_budget`) bounds it.
 
 ## Contract in brief
 
-- One job per connection; nothing persists between jobs. A host that
-  needs downloads to persist re-sends them per connection, which the
-  drivers of the era do when their query says the download is absent.
+- A job made with `platen_job_new` is a printer serving that one job:
+  nothing it does outlives it.
+- A printer made with `platen_printer_new` is the interpreter a device
+  keeps between jobs, built once with its identity and prelude. It
+  serves one job at a time (`platen_printer_job` returns NULL while one
+  is open), mapping naturally to one job per connection. Each job starts
+  from the same state and is reverted at its end, unless it runs
+  `exitserver` or `startjob`: what follows those persists for every
+  later job, as downloads to a device's memory do. A successful
+  `exitserver` writes `%%[exitserver: permanent state may be
+  changed]%%` among the job's replies.
+- A printer's job freed before `platen_job_finish` is abandoned, as a
+  lost connection would leave it: the printer reverts it (keeping what
+  it had already made permanent) and serves the next job. The printer
+  and its open job may be freed in either order. A host models a device
+  restart by freeing the printer and creating another.
+- The execution budget applies to each job.
 - Standard output is the reply channel and standard error the error
   channel; the host merges or phrases them as it likes. `flush` does
   nothing extra: a feed returns whatever the program has written.
