@@ -1,0 +1,40 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a colour-keyed image averaged. A 300x300-sample eight-bit
+% DeviceRGB type 4 image drawn one inch square, a checkerboard of 30
+% sample cells alternately white and orange, with MaskColor
+% [255 255 255]. With DownsampleColorImages true and
+% ColorImageResolution 72 the written image is 75x75 samples, each the
+% average of a 4x4 block; averaging mixes white into the orange at the
+% cell edges, so the key is first turned into a 300x300 stencil mask
+% from the unreduced samples and no averaged sample is matched by it.
+% The white cells show the striped backdrop.
+<< /DownsampleColorImages true /ColorImageResolution 72 >> setdistillerparams
+/white-first 900 string def
+/orange-first 900 string def
+0 1 299 {
+  /x exch def
+  x 30 idiv 2 mod 0 eq { [255 255 255] [240 140 40] } { [240 140 40] [255 255 255] } ifelse
+  /second exch def /first exch def
+  0 1 2 {
+    /k exch def
+    white-first x 3 mul k add first k get put
+    orange-first x 3 mul k add second k get put
+  } for
+} for
+/y 0 def
+72 648 translate
+72 72 scale
+0.3 setgray 0 0 1 1 rectfill
+0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+/DeviceRGB setcolorspace
+<< /ImageType 4 /Width 300 /Height 300 /BitsPerComponent 8
+   /ImageMatrix [300 0 0 -300 0 300] /Decode [0 1 0 1 0 1]
+   /MaskColor [255 255 255]
+   /DataSource {
+     y 30 idiv 2 mod 0 eq { white-first } { orange-first } ifelse
+     /y y 1 add def
+   } >> image
+showpage

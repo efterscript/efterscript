@@ -26,11 +26,18 @@
 //! conversion job; its default `Decode` is the space's ranges. One whose
 //! data arrived encoded cannot be converted and is handed on as it is,
 //! in the device space of its component count.
+//!
+//! Type 3 and type 4 dictionaries (masked images) are checked completely
+//! before any data is read; see `masked` for how a type 3 image's mask
+//! is collected and fitted. A type 3 image whose mask has its own source
+//! reads the mask completely first, then the image's samples.
+
+mod masked;
 
 use std::rc::Rc;
 
 use crate::error::VmError;
-use crate::graphics::{Encoded, ImageSpec, SpaceSpec};
+use crate::graphics::{Encoded, ImageMask, ImageSpec, SpaceSpec};
 use crate::interp::{Frame, Interp, LoopFrame};
 use crate::jpeg::{MarkerWalker, Walk};
 use crate::object::{Access, Handle, Object, Type};
@@ -39,6 +46,8 @@ use crate::ops::cie::{self, CieSpace};
 use crate::ops::file::{drain_to_marker, file_operand};
 use crate::ops::graphics::{current_cie, read_matrix};
 use crate::ops::pattern;
+
+use masked::MaskAcquisition;
 
 /// Sample data being collected for one image.
 #[derive(Clone, Debug)]
@@ -57,6 +66,9 @@ pub struct ImageAcquisition {
     /// The CIE space the samples convert through, when the image's space
     /// is one that does not collapse.
     cie: Option<Rc<CieSpace>>,
+    /// A type 3 image's mask; `needed` and `data` then count the image's
+    /// own source, which for interleave types 1 and 2 carries the mask.
+    mask: Option<Box<MaskAcquisition>>,
 }
 
 impl ImageAcquisition {
@@ -72,7 +84,17 @@ impl ImageAcquisition {
             planes: Vec::new(),
             current: 0,
             cie: None,
+            mask: None,
         })
+    }
+
+    /// As `new`, for a type 3 image whose mask arrives as `mask` says.
+    fn masked(spec: ImageSpec, mask: MaskAcquisition) -> Result<Self, VmError> {
+        let needed = mask.needed(&spec).ok_or(VmError::LimitCheck)?;
+        let mut acquisition = Self::new(spec, "image")?;
+        acquisition.needed = needed;
+        acquisition.mask = Some(Box::new(mask));
+        Ok(acquisition)
     }
 
     /// As `new`, collecting one plane per source.
@@ -97,6 +119,9 @@ impl ImageAcquisition {
     }
 
     pub(crate) fn is_complete(&self) -> bool {
+        if self.mask_pending() {
+            return false;
+        }
         if self.is_planar() {
             let needed = self.plane_needed();
             self.planes.iter().all(|plane| plane.len() >= needed)
@@ -108,7 +133,17 @@ impl ImageAcquisition {
     /// Appends a chunk — to the current plane when planar, which then
     /// moves on to the next incomplete one; returns whether more is
     /// wanted. An empty chunk ends the acquisition early.
+    /// While a separate mask is being read, the chunk goes to the mask,
+    /// and an empty chunk ends the mask's stage only.
     pub(crate) fn feed(&mut self, chunk: &[u8]) -> bool {
+        if let Some(separate) = self.mask.as_mut().and_then(|m| m.pending()) {
+            let room = separate.needed - separate.bytes.len();
+            separate
+                .bytes
+                .extend_from_slice(&chunk[..chunk.len().min(room)]);
+            separate.done = chunk.is_empty() || separate.bytes.len() >= separate.needed;
+            return !self.is_complete();
+        }
         if chunk.is_empty() {
             return false;
         }
@@ -132,9 +167,49 @@ impl ImageAcquisition {
         !self.is_complete()
     }
 
-    /// The procedure to call for the next chunk of a planar acquisition.
+    /// Whether a separate mask's source still has to deliver.
+    fn mask_pending(&self) -> bool {
+        self.mask
+            .as_ref()
+            .and_then(|m| m.separate())
+            .is_some_and(|separate| !separate.done)
+    }
+
+    /// The source of the next chunk: the current plane's for a planar
+    /// acquisition, the mask's and then the image's for a separate mask.
     pub(crate) fn next_source(&self) -> Option<Object> {
+        if let Some(separate) = self.mask.as_ref().and_then(|m| m.separate()) {
+            return Some(if separate.done {
+                separate.data_source
+            } else {
+                separate.source
+            });
+        }
         self.sources.get(self.current).copied()
+    }
+
+    /// Whether the next chunk comes from a procedure; when not, the
+    /// image's string or file source is read as the image finishes.
+    pub(crate) fn awaits_procedure(&self) -> bool {
+        self.next_source()
+            .is_none_or(|source| source_kind(source) == Some(SourceKind::Procedure))
+    }
+
+    /// Every source the acquisition still refers to.
+    pub(crate) fn references(&self) -> Vec<Object> {
+        let mut objects = self.sources.clone();
+        if let Some(separate) = self.mask.as_ref().and_then(|m| m.separate()) {
+            objects.extend([separate.source, separate.data_source]);
+        }
+        objects
+    }
+
+    /// A separate mask's image source when it is a string or file not
+    /// yet read.
+    fn unread_data_source(&self) -> Option<Object> {
+        let separate = self.mask.as_ref()?.separate()?;
+        let immediate = source_kind(separate.data_source) != Some(SourceKind::Procedure);
+        (separate.done && immediate && !separate.data_read).then_some(separate.data_source)
     }
 
     /// The planes interleaved sample by sample into `data`, as many
@@ -168,12 +243,17 @@ pub(crate) fn imagemask(i: &mut Interp) -> Result<(), VmError> {
 
 fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
     let top = i.peek(0)?;
-    let (spec, source, converting, operands) = if top.ty() == Type::Dict {
-        let (spec, source, converting) = from_dict(i, top, is_mask)?;
-        (spec, source, converting, 1)
+    let (prepared, operands) = if top.ty() == Type::Dict {
+        (from_dict(i, top, is_mask)?, 1)
     } else {
         let (spec, source) = from_operands(i, is_mask)?;
-        (spec, source, None, 5)
+        let prepared = Prepared {
+            spec,
+            source,
+            converting: None,
+            mask: None,
+        };
+        (prepared, 5)
     };
     let operator = if is_mask { "imagemask" } else { "image" };
     // A mask is painted with the current colour, so a pattern's cell is
@@ -187,8 +267,24 @@ fn start(i: &mut Interp, is_mask: bool) -> Result<(), VmError> {
     } else {
         pattern::colour_allowed(i)?;
     }
-    let mut acquisition = ImageAcquisition::new(spec, operator)?;
+    let Prepared {
+        spec,
+        source,
+        converting,
+        mask,
+    } = prepared;
+    let mut acquisition = match mask {
+        Some(mask) => ImageAcquisition::masked(spec, mask)?,
+        None => ImageAcquisition::new(spec, operator)?,
+    };
     acquisition.cie = converting;
+    if acquisition
+        .mask
+        .as_ref()
+        .is_some_and(|m| m.separate().is_some())
+    {
+        return acquire_separate(i, acquisition, source, operands);
+    }
     acquire(i, acquisition, &[source], operands)
 }
 
@@ -229,6 +325,7 @@ pub(crate) fn colorimage(i: &mut Interp) -> Result<(), VmError> {
         interpolate: false,
         is_mask: false,
         encoded: None,
+        mask: None,
     };
     let acquisition = if multi {
         ImageAcquisition::planar(spec, sources.clone())?
@@ -247,61 +344,34 @@ fn acquire(
     sources: &[Object],
     operands: usize,
 ) -> Result<(), VmError> {
-    let kind = |source: &Object| match source.ty() {
-        Type::String => Some(0),
-        Type::File => Some(1),
-        Type::Array | Type::PackedArray if source.is_executable() => Some(2),
-        _ => None,
-    };
-    let kinds: Vec<u8> = sources
+    let kinds: Vec<SourceKind> = sources
         .iter()
-        .map(kind)
+        .map(|&source| source_kind(source))
         .collect::<Option<_>>()
         .ok_or(VmError::TypeCheck)?;
     if kinds.windows(2).any(|pair| pair[0] != pair[1]) {
         return Err(VmError::TypeCheck);
     }
     match kinds[0] {
-        0 | 1 => {
+        SourceKind::Immediate => {
             if let Some(base) = encoded_source(i, &acquisition, sources)? {
-                let data = read_encoded(i, base)?;
-                drain_to_marker(i, sources[0])?;
-                acquisition.spec.encoded = Some(Encoded::Dct);
-                acquisition.needed = data.len();
-                acquisition.data = data;
+                take_encoded(i, &mut acquisition, sources[0], base)?;
                 drop_operands(i, operands)?;
                 return finish(i, acquisition);
             }
             for &source in sources {
-                let data = if source.ty() == Type::String {
-                    bytes(i, source)?
+                let wanted = if acquisition.is_planar() {
+                    acquisition.plane_needed()
                 } else {
-                    let wanted = if acquisition.is_planar() {
-                        acquisition.plane_needed()
-                    } else {
-                        acquisition.needed
-                    };
-                    let mut buffer = vec![0u8; wanted];
-                    let mut filled = 0;
-                    while filled < buffer.len() {
-                        let got = i.mem.file_read(source, &mut buffer[filled..])?;
-                        if got == 0 {
-                            break;
-                        }
-                        filled += got;
-                    }
-                    buffer.truncate(filled);
-                    // A decode filter is read through its end-of-data
-                    // marker, so the program resumes after the data.
-                    drain_to_marker(i, source)?;
-                    buffer
+                    acquisition.needed
                 };
+                let data = read_immediate(i, source, wanted)?;
                 acquisition.feed(&data);
             }
             drop_operands(i, operands)?;
             finish(i, acquisition)
         }
-        _ => {
+        SourceKind::Procedure => {
             drop_operands(i, operands)?;
             i.push_frame(Frame::Loop(LoopFrame::ImageData {
                 body: sources[0],
@@ -311,9 +381,118 @@ fn acquire(
     }
 }
 
+/// How a data source delivers: strings and files at once, procedures
+/// chunk by chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourceKind {
+    Immediate,
+    Procedure,
+}
+
+fn source_kind(source: Object) -> Option<SourceKind> {
+    match source.ty() {
+        Type::String | Type::File => Some(SourceKind::Immediate),
+        Type::Array | Type::PackedArray if source.is_executable() => Some(SourceKind::Procedure),
+        _ => None,
+    }
+}
+
+/// A string's bytes, or up to `wanted` bytes of a file, which, when it
+/// is a decode filter, is then read through its end-of-data marker so
+/// the program resumes after the data.
+fn read_immediate(i: &mut Interp, source: Object, wanted: usize) -> Result<Vec<u8>, VmError> {
+    if source.ty() == Type::String {
+        return bytes(i, source);
+    }
+    let mut buffer = vec![0u8; wanted];
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let got = i.mem.file_read(source, &mut buffer[filled..])?;
+        if got == 0 {
+            break;
+        }
+        filled += got;
+    }
+    buffer.truncate(filled);
+    drain_to_marker(i, source)?;
+    Ok(buffer)
+}
+
+/// The encoded stream under the `DCTDecode` filter `source` (whose file
+/// beneath is `base`) as the image's data.
+fn take_encoded(
+    i: &mut Interp,
+    acquisition: &mut ImageAcquisition,
+    source: Object,
+    base: Handle,
+) -> Result<(), VmError> {
+    let data = read_encoded(i, base)?;
+    drain_to_marker(i, source)?;
+    acquisition.spec.encoded = Some(Encoded::Dct);
+    acquisition.needed = data.len();
+    acquisition.data = data;
+    Ok(())
+}
+
+/// A type 3 image whose mask has its own source: the mask is read first,
+/// at once from a string or file, or by a loop frame that goes on to the
+/// image's source when the mask is complete.
+fn acquire_separate(
+    i: &mut Interp,
+    mut acquisition: ImageAcquisition,
+    source: Object,
+    operands: usize,
+) -> Result<(), VmError> {
+    let mask_source = acquisition.next_source().unwrap_or(source);
+    let mask_kind = source_kind(mask_source).ok_or(VmError::TypeCheck)?;
+    let data_kind = source_kind(source).ok_or(VmError::TypeCheck)?;
+    if mask_kind == SourceKind::Immediate && acquisition.mask_pending() {
+        let wanted = acquisition
+            .mask
+            .as_mut()
+            .and_then(|m| m.pending())
+            .map_or(0, |separate| separate.needed);
+        let bytes = read_immediate(i, mask_source, wanted)?;
+        acquisition.feed(&bytes);
+        if let Some(separate) = acquisition.mask.as_mut().and_then(|m| m.pending()) {
+            separate.done = true;
+        }
+    }
+    if acquisition.mask_pending() || data_kind == SourceKind::Procedure {
+        let body = acquisition.next_source().unwrap_or(source);
+        drop_operands(i, operands)?;
+        return i.push_frame(Frame::Loop(LoopFrame::ImageData {
+            body,
+            acquisition: Box::new(acquisition),
+        }));
+    }
+    read_data_source(i, &mut acquisition, source)?;
+    drop_operands(i, operands)?;
+    finish(i, acquisition)
+}
+
+/// Reads a separate mask's image source, a string or file, after the
+/// mask.
+fn read_data_source(
+    i: &mut Interp,
+    acquisition: &mut ImageAcquisition,
+    source: Object,
+) -> Result<(), VmError> {
+    if let Some(separate) = acquisition.mask.as_mut().and_then(|m| m.separate_mut()) {
+        separate.data_read = true;
+    }
+    if let Some(base) = encoded_source(i, acquisition, &[source])? {
+        return take_encoded(i, acquisition, source, base);
+    }
+    let data = read_immediate(i, source, acquisition.needed)?;
+    acquisition.feed(&data);
+    Ok(())
+}
+
 /// The file under a `DCTDecode` filter when the one source is such a
 /// filter and the image takes samples (a mask cannot be DCT-encoded),
-/// so the encoded bytes are read from there instead.
+/// so the encoded bytes are read from there instead. A mask interleaved
+/// with such samples cannot be separated from them: `limitcheck`.
 fn encoded_source(
     i: &mut Interp,
     acquisition: &ImageAcquisition,
@@ -329,6 +508,13 @@ fn encoded_source(
     let files = i.mem.files();
     if !files.is_dct_layer(handle) {
         return Ok(None);
+    }
+    if acquisition
+        .mask
+        .as_ref()
+        .is_some_and(|m| m.separate().is_none())
+    {
+        return Err(VmError::LimitCheck);
     }
     Ok(files.layer_base(handle))
 }
@@ -364,14 +550,20 @@ pub(crate) fn finish(i: &mut Interp, acquisition: ImageAcquisition) -> Result<()
     if acquisition.is_planar() {
         acquisition.interleave();
     }
+    if let Some(source) = acquisition.unread_data_source() {
+        read_data_source(i, &mut acquisition, source)?;
+    }
     let ImageAcquisition {
         mut spec,
         needed,
         mut data,
         cie,
+        mask,
         ..
     } = acquisition;
-    if data.len() < needed {
+    if let Some(mask) = mask {
+        data = mask.resolve(&mut spec, data)?;
+    } else if data.len() < needed {
         let row = spec.row_bytes().unwrap_or(0);
         let rows = data.len().checked_div(row).unwrap_or(0);
         data.truncate(rows * row);
@@ -485,6 +677,7 @@ fn from_operands(i: &mut Interp, is_mask: bool) -> Result<(ImageSpec, Object), V
             interpolate: false,
             is_mask,
             encoded: None,
+            mask: None,
         },
         source,
     ))
@@ -499,30 +692,136 @@ fn required(i: &mut Interp, dict: Object, key: &str) -> Result<Object, VmError> 
     entry(i, dict, key)?.ok_or(VmError::TypeCheck)
 }
 
-// The Level 2 dictionary form. `MultipleDataSources` other than `false`
-// and image types other than 1 are outside what the backend accepts.
-// The third result is the CIE space the samples convert through.
-fn from_dict(
-    i: &mut Interp,
-    dict: Object,
-    is_mask: bool,
-) -> Result<(ImageSpec, Object, Option<Rc<CieSpace>>), VmError> {
-    if let Some(kind) = entry(i, dict, "ImageType")?
-        && kind.as_i32() != Some(1)
-    {
+/// An image ready for its data: the spec, the image's source, the CIE
+/// space the samples convert through, and a type 3 image's mask.
+struct Prepared {
+    spec: ImageSpec,
+    source: Object,
+    converting: Option<Rc<CieSpace>>,
+    mask: Option<MaskAcquisition>,
+}
+
+/// What a type 1 dictionary describes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// Samples in the current colour space.
+    Image,
+    /// `imagemask`'s stencil: one bit per sample.
+    Stencil,
+    /// A type 3 image's mask: one component of any depth, its source
+    /// optional; the interleave type decides the rest.
+    Mask,
+}
+
+/// The dictionary form: type 1 for both operators, types 3 and 4 for
+/// `image` only. `MultipleDataSources` other than `false` is outside
+/// what the backend accepts.
+fn from_dict(i: &mut Interp, dict: Object, is_mask: bool) -> Result<Prepared, VmError> {
+    let kind = match entry(i, dict, "ImageType")? {
+        Some(kind) => kind.as_i32(),
+        None => Some(1),
+    };
+    match (kind, is_mask) {
+        (Some(1), _) => {
+            let role = if is_mask { Role::Stencil } else { Role::Image };
+            let (spec, source, converting) = type1(i, dict, role)?;
+            Ok(Prepared {
+                spec,
+                source: source.ok_or(VmError::TypeCheck)?,
+                converting,
+                mask: None,
+            })
+        }
+        (Some(3), false) => type3(i, dict),
+        (Some(4), false) => type4(i, dict),
+        _ => Err(VmError::RangeCheck),
+    }
+}
+
+/// A type 4 dictionary: type 1 plus `MaskColor`, kept as a colour key.
+fn type4(i: &mut Interp, dict: Object) -> Result<Prepared, VmError> {
+    let (mut spec, source, converting) = type1(i, dict, Role::Image)?;
+    let source = source.ok_or(VmError::TypeCheck)?;
+    let colors = required(i, dict, "MaskColor")?;
+    if !matches!(colors.ty(), Type::Array | Type::PackedArray) {
+        return Err(VmError::TypeCheck);
+    }
+    let values: Vec<i32> = items(i, colors)?
+        .into_iter()
+        .map(|o| o.as_i32().ok_or(VmError::TypeCheck))
+        .collect::<Result<_, _>>()?;
+    let ranges = masked::key_ranges(&values, spec.components(), spec.bits_per_component)?;
+    spec.mask = Some(ImageMask::ColorKey(ranges));
+    Ok(Prepared {
+        spec,
+        source,
+        converting,
+        mask: None,
+    })
+}
+
+/// A type 3 dictionary: its own entries, then each sub-dictionary as a
+/// type 1 dictionary, then the rules between them (PLRM3 §4.10.6).
+fn type3(i: &mut Interp, dict: Object) -> Result<Prepared, VmError> {
+    let data_dict = sub_dictionary(i, dict, "DataDict")?;
+    let mask_dict = sub_dictionary(i, dict, "MaskDict")?;
+    let interleave = required(i, dict, "InterleaveType")?
+        .as_i32()
+        .ok_or(VmError::TypeCheck)?;
+    if !(1..=3).contains(&interleave) {
         return Err(VmError::RangeCheck);
     }
+    for sub in [data_dict, mask_dict] {
+        if let Some(kind) = entry(i, sub, "ImageType")?
+            && kind.as_i32() != Some(1)
+        {
+            return Err(VmError::TypeCheck);
+        }
+    }
+    let (spec, source, converting) = type1(i, data_dict, Role::Image)?;
+    let (mask_spec, mask_source, _) = type1(i, mask_dict, Role::Mask)?;
+    let source = source.ok_or(VmError::TypeCheck)?;
+    let mask = MaskAcquisition::new(&spec, &mask_spec, interleave, mask_source, source)?;
+    Ok(Prepared {
+        spec,
+        source,
+        converting,
+        mask: Some(mask),
+    })
+}
+
+fn sub_dictionary(i: &mut Interp, dict: Object, key: &str) -> Result<Object, VmError> {
+    let sub = required(i, dict, key)?;
+    if sub.ty() != Type::Dict {
+        return Err(VmError::TypeCheck);
+    }
+    Ok(sub)
+}
+
+/// A type 1 dictionary's spec, its data source when it has one, and the
+/// CIE space its samples convert through.
+type Type1 = (ImageSpec, Option<Object>, Option<Rc<CieSpace>>);
+
+/// The Level 2 type 1 dictionary in `role`.
+fn type1(i: &mut Interp, dict: Object, role: Role) -> Result<Type1, VmError> {
     if let Some(multiple) = entry(i, dict, "MultipleDataSources")?
         && multiple.as_bool() != Some(false)
     {
         return Err(VmError::TypeCheck);
     }
+    let is_mask = role != Role::Image;
     let width = dimension(required(i, dict, "Width")?)?;
     let height = dimension(required(i, dict, "Height")?)?;
-    let bits_per_component = bits(required(i, dict, "BitsPerComponent")?, is_mask)?;
+    let bits_per_component = bits(
+        required(i, dict, "BitsPerComponent")?,
+        role == Role::Stencil,
+    )?;
     let matrix = required(i, dict, "ImageMatrix")?;
     let matrix = read_matrix(i, matrix)?;
-    let source = required(i, dict, "DataSource")?;
+    let source = entry(i, dict, "DataSource")?;
+    if source.is_none() && role != Role::Mask {
+        return Err(VmError::TypeCheck);
+    }
     let interpolate = match entry(i, dict, "Interpolate")? {
         Some(flag) => flag.as_bool().ok_or(VmError::TypeCheck)?,
         None => false,
@@ -558,8 +857,9 @@ fn from_dict(
             decode,
             matrix,
             interpolate,
-            is_mask,
+            is_mask: role == Role::Stencil,
             encoded: None,
+            mask: None,
         },
         source,
         converting,
@@ -582,6 +882,7 @@ mod tests {
             interpolate: false,
             is_mask: false,
             encoded: None,
+            mask: None,
         }
     }
 

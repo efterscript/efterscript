@@ -1,0 +1,24 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a colour key of ranges. A 4x2 eight-bit DeviceRGB type 4
+% image whose MaskColor gives 250 to 255 for each component: the near
+% whites FAFAFA, FFFCFA, and FFFFFF are kept off the page; F9FFFF (red
+% 249) and FFFFF0 (blue 240) lie just outside and are painted, as are
+% the green, yellow, and grey samples.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+gsave
+100 400 translate 200 200 scale
+backdrop
+/DeviceRGB setcolorspace
+<< /ImageType 4 /Width 4 /Height 2 /BitsPerComponent 8
+   /ImageMatrix [4 0 0 -2 0 2] /Decode [0 1 0 1 0 1]
+   /MaskColor [250 255 250 255 250 255]
+   /DataSource <FAFAFA 20A020 F9FFFF FFFCFA
+                FFFFFF E0E040 808080 FFFFF0> >> image
+grestore
+showpage

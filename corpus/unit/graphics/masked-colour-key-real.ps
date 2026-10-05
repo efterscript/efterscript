@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% Scenario: colour key entries are integers; a real is a typecheck.
+<< /ImageType 4 /Width 2 /Height 1 /BitsPerComponent 8
+   /ImageMatrix [2 0 0 -1 0 1] /MaskColor [0.5 1]
+   /DataSource <0080> >> image
+showpage

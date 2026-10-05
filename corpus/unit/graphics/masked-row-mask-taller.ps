@@ -1,0 +1,30 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: interleaved by row, the mask taller than the image. A 4x2
+% grey image under a 4x4 mask with Decode [0 1]: each block of the one
+% source is two mask rows (one byte each) then one image row. The mask
+% keeps the four corners and the four centre cells of the square off
+% the page, where the striped backdrop shows; the hexadecimal data is
+% read through its `>` and the line below is drawn after it.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+gsave
+100 400 translate 200 200 scale
+backdrop
+%%BeginData: 8 ASCII Lines
+<< /ImageType 3 /InterleaveType 2
+   /DataDict << /ImageType 1 /Width 4 /Height 2 /BitsPerComponent 8
+      /ImageMatrix [4 0 0 -2 0 2] /Decode [0 1]
+      /DataSource currentfile /ASCIIHexDecode filter >>
+   /MaskDict << /ImageType 1 /Width 4 /Height 4 /BitsPerComponent 1
+      /ImageMatrix [4 0 0 -4 0 4] /Decode [0 1] >> >> image
+90 60 FFFFFFFF
+60 90 B0B0B0B0 >
+%%EndData
+grestore
+0 setgray 4 setlinewidth
+100 380 moveto 300 380 lineto stroke
+showpage

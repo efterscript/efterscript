@@ -114,7 +114,8 @@ pub enum LoopFrame {
     },
     /// `image` or `imagemask` collecting sample data from a procedure: the
     /// body runs until enough bytes have been delivered or it returns an
-    /// empty string.
+    /// empty string. A type 3 image's separate mask is collected first,
+    /// the body then becoming the image's own source.
     ImageData {
         body: Object,
         acquisition: Box<ImageAcquisition>,
@@ -226,7 +227,7 @@ impl LoopFrame {
         match self {
             LoopFrame::ForAll { container, .. } => objects.push(*container),
             LoopFrame::ResourceForAll { scratch, .. } => objects.push(*scratch),
-            LoopFrame::ImageData { acquisition, .. } => objects.extend(&acquisition.sources),
+            LoopFrame::ImageData { acquisition, .. } => objects.extend(acquisition.references()),
             LoopFrame::PathForAll { procs, .. } => objects.extend(&procs[1..]),
             LoopFrame::Show(frame) => objects.extend(frame.references()),
             LoopFrame::PatternCell { dict, .. } | LoopFrame::FormBody { dict, .. } => {

@@ -1,0 +1,23 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: an explicit mask with Decode [1 0]. A 2x2 grey image under
+% a 4x4 mask from its own source whose samples of 1 are painted and 0
+% kept off the page. The PDF carries the mask as a separate image mask
+% with Decode [1 0], named by the image and painted only through it.
+% The painted cells form a ring around the square's centre.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+gsave
+100 400 translate 200 200 scale
+backdrop
+<< /ImageType 3 /InterleaveType 3
+   /DataDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+      /ImageMatrix [2 0 0 -2 0 2] /Decode [0 1] /DataSource <FFD0 B0E8> >>
+   /MaskDict << /ImageType 1 /Width 4 /Height 4 /BitsPerComponent 1
+      /ImageMatrix [4 0 0 -4 0 4] /Decode [1 0]
+      /DataSource <F0909 0F0> >> >> image
+grestore
+showpage

@@ -1,0 +1,23 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: separate sources, the mask at its own resolution. A 2x2
+% grey image with its own string source under an 8x8 mask with its own
+% string source and a matrix scaled to the same square. The mask keeps
+% everything outside a diamond off the page, so the image's four cells
+% show only inside the diamond's stepped edge.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+gsave
+100 400 translate 200 200 scale
+backdrop
+<< /ImageType 3 /InterleaveType 3
+   /DataDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+      /ImageMatrix [2 0 0 -2 0 2] /Decode [0 1] /DataSource <FFC0 E0A0> >>
+   /MaskDict << /ImageType 1 /Width 8 /Height 8 /BitsPerComponent 1
+      /ImageMatrix [8 0 0 -8 0 8] /Decode [0 1]
+      /DataSource <E7C3810000 81C3E7> >> >> image
+grestore
+showpage

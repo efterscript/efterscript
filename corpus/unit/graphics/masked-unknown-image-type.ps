@@ -1,0 +1,9 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: rangecheck
+% Scenario: an image dictionary of a type other than 1, 3, or 4 is a
+% rangecheck in image, and nothing is painted.
+<< /ImageType 2 /Width 2 /Height 2 /BitsPerComponent 8
+   /ImageMatrix [2 0 0 -2 0 2] /DataSource <004080FF> >> image
+showpage

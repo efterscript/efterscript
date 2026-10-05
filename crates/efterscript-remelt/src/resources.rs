@@ -16,7 +16,11 @@
 //! XObjects `/Imn` (§8.9.5) with their samples in the Flate container,
 //! reduced first when the downsampling parameters say so (see
 //! `downsample`); an image that arrived as a DCT stream keeps its bytes
-//! verbatim under the `DCTDecode` filter.
+//! verbatim under the `DCTDecode` filter. A stencil mask (§8.9.6.3) is
+//! an image XObject of its own, flagged as an image mask at its own
+//! size, written just before the image that names it in `/Mask` and
+//! listed in no `XObject` resources, since nothing paints it directly;
+//! a colour key (§8.9.6.4) is the `/Mask` array of its ranges.
 //!
 //! A shading resource is a shading object `/Shn` (§8.7.4.3): a
 //! dictionary for types 1 to 3, a Flate stream for the mesh types 4 to
@@ -64,7 +68,8 @@ use efterscript_graphics::{
 };
 use efterscript_pdf::{DictBuilder, Document, Filter, Ref, Val};
 use efterscript_vm::{
-    Bounds, Encoded, FunctionSpec, ImageSpec, Matrix, ShadingKind, ShadingSpec, SpaceSpec,
+    Bounds, Encoded, FunctionSpec, ImageMask, ImageSpec, Matrix, ShadingKind, ShadingSpec,
+    SpaceSpec,
 };
 
 use crate::content::{self, Recode};
@@ -409,6 +414,36 @@ fn write_image<W: Write>(
         Some(Encoded::Dct) => Filter::Dct,
         None => Filter::Flate,
     };
+    let stencil = match &spec.mask {
+        Some(ImageMask::Stencil {
+            width,
+            height,
+            decode_inverted,
+            interpolate,
+            data,
+        }) => {
+            let mask = doc.alloc();
+            doc.write_stream(mask, Filter::Flate, data, |d| {
+                d.key("Type").name("XObject");
+                d.key("Subtype").name("Image");
+                d.key("Width").int(i64::from(*width));
+                d.key("Height").int(i64::from(*height));
+                d.key("ImageMask").boolean(true);
+                d.key("BitsPerComponent").int(1);
+                if *decode_inverted {
+                    d.key("Decode").array(|a| {
+                        a.int(1);
+                        a.int(0);
+                    });
+                }
+                if *interpolate {
+                    d.key("Interpolate").boolean(true);
+                }
+            })?;
+            Some(mask)
+        }
+        _ => None,
+    };
     let xobject = doc.alloc();
     doc.write_stream(xobject, filter, &image.data, |d| {
         d.key("Type").name("XObject");
@@ -430,6 +465,16 @@ fn write_image<W: Write>(
         }
         if spec.interpolate {
             d.key("Interpolate").boolean(true);
+        }
+        match (&spec.mask, stencil) {
+            (_, Some(mask)) => d.key("Mask").reference(mask),
+            (Some(ImageMask::ColorKey(ranges)), None) => d.key("Mask").array(|a| {
+                for &(lo, hi) in ranges {
+                    a.int(i64::from(lo));
+                    a.int(i64::from(hi));
+                }
+            }),
+            _ => {}
         }
     })?;
     Ok(xobject)
@@ -753,7 +798,7 @@ impl Objects {
                 } => {
                     tally.images += 1;
                     tally.mono_subsampled |= mono_subsampled;
-                    reduced = smaller;
+                    reduced = *smaller;
                     &reduced
                 }
                 Outcome::Unsupported(why) => {
@@ -1009,6 +1054,7 @@ mod tests {
             interpolate: false,
             is_mask: false,
             encoded: None,
+            mask: None,
         }
     }
 

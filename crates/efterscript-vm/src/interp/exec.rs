@@ -723,7 +723,7 @@ impl Interp {
                             match self.mem.string(chunk).filter(|_| readable) {
                                 None => LoopStep::Failed(VmError::InvalidAccess, operator),
                                 Some(bytes) => {
-                                    if acquisition.feed(bytes) {
+                                    if acquisition.feed(bytes) && acquisition.awaits_procedure() {
                                         if let Some(next) = acquisition.next_source() {
                                             *body = next;
                                         }

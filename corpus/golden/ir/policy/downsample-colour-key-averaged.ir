@@ -1,0 +1,46 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 DeviceRGB
+img 0 300x300 bpc=8 cs=0 decode=[0 1 0 1 0 1] 270000 bytes key=[255 255 255 255 255 255]
+ops:
+sc 0.3
+m 72 648
+l 144 648
+l 144 720
+l 72 720
+h
+f
+sc 0
+m 72 648
+l 81 648
+l 81 720
+l 72 720
+h
+f
+m 90 648
+l 99 648
+l 99 720
+l 90 720
+h
+f
+m 108 648
+l 117 648
+l 117 720
+l 108 720
+h
+f
+m 126 648
+l 135 648
+l 135 720
+l 126 720
+h
+f
+Do img 0 72 0 0 72 72 648
+
+doc:
+param /DownsampleColorImages true
+param /ColorImageResolution 72

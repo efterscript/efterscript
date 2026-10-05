@@ -1,0 +1,26 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: data that ends early. A 4x4 grey image interleaved by
+% separate sources: the mask is complete, but the data procedure returns
+% one row, then another, then an empty string. The image is cut to its
+% upper half, masked by the upper half of the mask (its two middle
+% columns kept off), with no error; the lower half shows the backdrop.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+/rows [<F0F0F0F0> <C0C0C0C0> <>] def
+/next 0 def
+gsave
+100 400 translate 200 200 scale
+backdrop
+<< /ImageType 3 /InterleaveType 3
+   /DataDict << /ImageType 1 /Width 4 /Height 4 /BitsPerComponent 8
+      /ImageMatrix [4 0 0 -4 0 4] /Decode [0 1]
+      /DataSource { rows next get /next next 1 add def } >>
+   /MaskDict << /ImageType 1 /Width 4 /Height 4 /BitsPerComponent 1
+      /ImageMatrix [4 0 0 -4 0 4] /Decode [0 1]
+      /DataSource <60606060> >> >> image
+grestore
+showpage

@@ -1,0 +1,42 @@
+ir/1
+# SPDX-FileCopyrightText: 2026 EfterScript contributors
+# SPDX-License-Identifier: MIT
+# GENERATED-BY: difftest --update-ir
+page 612 792
+resources:
+cs 0 Lab white=0.95 1 1.09 black=0 0 0 range=-128 127 -128 127
+img 0 2x2 bpc=8 cs=0 decode=[0 100 -128 127 -128 127] 12 bytes mask=2x2 decode=[0 1] 2 bytes
+ops:
+sc 0.3
+m 100 400
+l 300 400
+l 300 600
+l 100 600
+h
+f
+sc 0
+m 100 400
+l 125 400
+l 125 600
+l 100 600
+h
+f
+m 150 400
+l 175 400
+l 175 600
+l 150 600
+h
+f
+m 200 400
+l 225 400
+l 225 600
+l 200 600
+h
+f
+m 250 400
+l 275 400
+l 275 600
+l 250 600
+h
+f
+Do img 0 200 0 0 200 100 400
