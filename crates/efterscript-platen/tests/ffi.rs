@@ -7,6 +7,7 @@
 
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::sync::{Mutex, MutexGuard};
 
 use platen::ffi::{
     PLATEN_ABI_VERSION, PLATEN_DONE, PLATEN_ERR_STATE, PLATEN_OK, PLATEN_OUTCOME_BUDGET,
@@ -16,6 +17,16 @@ use platen::ffi::{
     platen_job_read_replies, platen_last_error, platen_printer_free, platen_printer_job,
     platen_printer_new,
 };
+
+/// The tests below share the one last-error buffer, which the
+/// interface leaves unguarded by contract; they run one at a time.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn config(entries: &[platen_entry], prelude: &[u8], budget: u64) -> platen_config {
     platen_config {
@@ -70,6 +81,7 @@ fn last_error() -> String {
 
 #[test]
 fn the_query_scenario_through_the_abi() {
+    let _serial = serial();
     let key = CString::new("product").unwrap();
     let value = CString::new("(Fictional Press)").unwrap();
     let entries = [platen_entry {
@@ -107,6 +119,7 @@ fn the_query_scenario_through_the_abi() {
 
 #[test]
 fn a_page_job_and_a_prelude_through_the_abi() {
+    let _serial = serial();
     let prelude = b"/box { 0 0 72 72 rectfill } def";
     let cfg = config(&[], prelude, 0);
     let job = unsafe { platen_job_new(&cfg) };
@@ -129,6 +142,7 @@ fn a_page_job_and_a_prelude_through_the_abi() {
 
 #[test]
 fn an_error_and_the_budget_through_the_abi() {
+    let _serial = serial();
     let cfg = config(&[], b"", 0);
     let job = unsafe { platen_job_new(&cfg) };
     assert_eq!(feed(job, "(a) = 1 0 div (b) ="), PLATEN_DONE);
@@ -158,6 +172,7 @@ fn an_error_and_the_budget_through_the_abi() {
 
 #[test]
 fn a_rejected_identity_and_a_failing_prelude_return_null() {
+    let _serial = serial();
     let key = CString::new("product").unwrap();
     let value = CString::new("add").unwrap();
     let entries = [platen_entry {
@@ -177,6 +192,7 @@ fn a_rejected_identity_and_a_failing_prelude_return_null() {
 
 #[test]
 fn a_printer_keeps_a_download_across_jobs() {
+    let _serial = serial();
     let cfg = config(&[], b"", 0);
     let printer = unsafe { platen_printer_new(&cfg) };
     assert!(!printer.is_null(), "{}", last_error());
@@ -208,6 +224,7 @@ fn a_printer_keeps_a_download_across_jobs() {
 
 #[test]
 fn freeing_an_unfinished_printer_job_abandons_it() {
+    let _serial = serial();
     let cfg = config(&[], b"", 0);
     let printer = unsafe { platen_printer_new(&cfg) };
     let first = unsafe { platen_printer_job(printer) };
