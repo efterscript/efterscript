@@ -15,7 +15,7 @@
 //!   function …                        the function, or one line per function of an array
 //!   data <hex>                        the packed vertex data of a mesh
 //! }
-//! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate] [dct]
+//! img <n> <w>x<h> bpc=<b> cs=<n>|mask decode=[<d>…] <len> bytes [interpolate] [dct] [<mask>]
 //! font <n> <BaseName> [diff=[<code> /<name>…]]
 //! font <n> type3 <a> <b> <c> <d> <tx> <ty> bbox=[<llx> <lly> <urx> <ury>] enc=[<code> /<name>…]
 //! font <n> embedded <type1|truetype|cff> <FontName> glyphs=<count> enc=[<code> /<name>…]
@@ -52,6 +52,11 @@
 //! ignored /<kind>
 //! param /<key> <value>              one line per entry, PostScript syntax
 //! ```
+//!
+//! A masked image's `<mask>` is its stencil, `mask=<w>x<h>
+//! decode=[0 1]|[1 0] <len> bytes [interpolate]`, or its colour key,
+//! `key=[<min> <max>…]` with one range per component in raw sample
+//! values.
 //!
 //! A pattern resource gives the matrix from pattern space to the space
 //! of the content that names it, its box and steps in pattern space,
@@ -132,8 +137,8 @@
 
 use efterscript_fonts::ProgramKind;
 use efterscript_vm::{
-    Bounds, Encoded, FunctionSpec, Glyph, ImageSpec, MarkValue, Matrix, Seg, ShadingKind,
-    ShadingSpec, SpaceSpec,
+    Bounds, Encoded, FunctionSpec, Glyph, ImageMask, ImageSpec, MarkValue, Matrix, Seg,
+    ShadingKind, ShadingSpec, SpaceSpec,
 };
 
 use crate::ir::{
@@ -604,6 +609,7 @@ fn image(index: usize, image: &Image) -> String {
         decode,
         interpolate,
         encoded,
+        mask,
         ..
     } = &image.spec;
     let cs = match image.color_space {
@@ -620,6 +626,32 @@ fn image(index: usize, image: &Image) -> String {
     }
     if let Some(Encoded::Dct) = encoded {
         line.push_str(" dct");
+    }
+    match mask {
+        None => {}
+        Some(ImageMask::Stencil {
+            width,
+            height,
+            decode_inverted,
+            interpolate,
+            data,
+        }) => {
+            let decode = if *decode_inverted { "[1 0]" } else { "[0 1]" };
+            line.push_str(&format!(
+                " mask={width}x{height} decode={decode} {} bytes",
+                data.len()
+            ));
+            if *interpolate {
+                line.push_str(" interpolate");
+            }
+        }
+        Some(ImageMask::ColorKey(ranges)) => {
+            let ends: Vec<String> = ranges
+                .iter()
+                .flat_map(|&(lo, hi)| [lo.to_string(), hi.to_string()])
+                .collect();
+            line.push_str(&format!(" key=[{}]", ends.join(" ")));
+        }
     }
     line
 }
@@ -968,6 +1000,7 @@ mod tests {
             interpolate: true,
             is_mask: false,
             encoded: Some(Encoded::Dct),
+            mask: None,
         };
         let img = Image {
             spec,
@@ -982,6 +1015,7 @@ mod tests {
             spec: ImageSpec {
                 interpolate: false,
                 encoded: None,
+                mask: None,
                 ..img.spec.clone()
             },
             ..img
@@ -989,6 +1023,69 @@ mod tests {
         assert_eq!(
             image(0, &plain),
             "img 0 16x16 bpc=8 cs=0 decode=[0 1] 4 bytes"
+        );
+    }
+
+    #[test]
+    fn a_masked_image_names_its_mask() {
+        use crate::ir::SpaceRef;
+        let spec = ImageSpec {
+            width: 4,
+            height: 2,
+            bits_per_component: 8,
+            color_space: Some(SpaceSpec::DeviceGray),
+            decode: vec![0.0, 1.0],
+            matrix: Matrix::IDENTITY,
+            interpolate: false,
+            is_mask: false,
+            encoded: None,
+            mask: Some(ImageMask::Stencil {
+                width: 4,
+                height: 4,
+                decode_inverted: false,
+                interpolate: false,
+                data: vec![0xA0; 4],
+            }),
+        };
+        let stencil = Image {
+            spec,
+            color_space: Some(SpaceRef(0)),
+            data: vec![0; 8],
+        };
+        assert_eq!(
+            image(1, &stencil),
+            "img 1 4x2 bpc=8 cs=0 decode=[0 1] 8 bytes mask=4x4 decode=[0 1] 4 bytes"
+        );
+        let inverted = Image {
+            spec: ImageSpec {
+                interpolate: true,
+                mask: Some(ImageMask::Stencil {
+                    width: 8,
+                    height: 1,
+                    decode_inverted: true,
+                    interpolate: true,
+                    data: vec![0x0F],
+                }),
+                ..stencil.spec.clone()
+            },
+            ..stencil.clone()
+        };
+        assert_eq!(
+            image(1, &inverted),
+            "img 1 4x2 bpc=8 cs=0 decode=[0 1] 8 bytes interpolate \
+             mask=8x1 decode=[1 0] 1 bytes interpolate"
+        );
+        let keyed = Image {
+            spec: ImageSpec {
+                color_space: Some(SpaceSpec::DeviceRGB),
+                mask: Some(ImageMask::ColorKey(vec![(255, 255), (0, 3), (7, 2)])),
+                ..stencil.spec.clone()
+            },
+            ..stencil
+        };
+        assert_eq!(
+            image(2, &keyed),
+            "img 2 4x2 bpc=8 cs=0 decode=[0 1] 8 bytes key=[255 255 0 3 7 2]"
         );
     }
 

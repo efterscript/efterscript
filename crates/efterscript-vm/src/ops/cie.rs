@@ -1129,12 +1129,17 @@ pub(crate) fn color_job(
 /// `spec.decode` into a component value (twelve-bit samples reduced to
 /// eight first, so a component's procedure runs at most 256 times) and
 /// the image is handed on as eight-bit L*a*b* with the matching decode.
+/// A colour key, which names raw samples, becomes a stencil first; a
+/// stencil mask goes along unchanged.
 pub(crate) fn image_job(
     space: Rc<CieSpace>,
     mut spec: ImageSpec,
     data: &[u8],
     operator: &'static str,
 ) -> Result<CieJob, VmError> {
+    if let Some(stencil) = spec.key_to_stencil(data) {
+        spec.mask = Some(stencil);
+    }
     let components = space.components();
     let bits = spec.bits_per_component;
     let reduce = bits > 8;

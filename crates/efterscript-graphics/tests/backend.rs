@@ -545,6 +545,7 @@ fn images_carry_a_unit_square_matrix_and_masks_take_the_colour() {
         interpolate: false,
         is_mask: false,
         encoded: None,
+        mask: None,
     };
     g.image(&spec, &[0; 24]).unwrap();
     let mask = ImageSpec {
@@ -557,6 +558,7 @@ fn images_carry_a_unit_square_matrix_and_masks_take_the_colour() {
         interpolate: false,
         is_mask: true,
         encoded: None,
+        mask: None,
     };
     g.set_color_space(&SpaceSpec::DeviceRGB).unwrap();
     g.set_color(&[1.0, 0.0, 0.0]).unwrap();
@@ -1449,6 +1451,7 @@ fn the_null_pattern_paints_nothing() {
         interpolate: false,
         is_mask: true,
         encoded: None,
+        mask: None,
     };
     g.imagemask(&mask, &[0]).unwrap();
     assert!(ops(&g).is_empty(), "{:?}", ops(&g));
@@ -1869,6 +1872,7 @@ fn overprint_is_emitted_where_it_changes_and_restored_with_the_clip() {
         interpolate: false,
         is_mask: false,
         encoded: None,
+        mask: None,
     };
     g.image(&spec, &[0]).unwrap();
     let kinds: Vec<String> = ops(&g)

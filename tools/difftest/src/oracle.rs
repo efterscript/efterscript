@@ -2384,6 +2384,8 @@ printf '%s\\n' \"$(sed -n 's/^%fake-text //p' \"$1\")\"
                 ("integer-range", 2),
                 ("job-server-save-level", 1),
                 ("malformed-font-invalidfont", 2),
+                ("masked-dct-interleaved", 1),
+                ("masked-mask-misaligned", 1),
                 ("pagedevice-records-unknown-keys", 1),
                 ("procedure-nesting-limit", 1),
                 ("radix-without-digits", 1),

@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use efterscript_graphics::{FillRule, IrOp, Op, Page, PageSink};
 use efterscript_remelt::{Error, Options, PdfSink};
 use efterscript_vm::{
-    Bounds, Encoded, ImageSpec, LineCap, LineJoin, Matrix, Point, Seg, SpaceSpec,
+    Bounds, Encoded, ImageMask, ImageSpec, LineCap, LineJoin, Matrix, Point, Seg, SpaceSpec,
 };
 use support::{
     Value, array, check, color_space, content, decoded, distil_pages, kids, media_box, number,
@@ -67,6 +67,7 @@ fn image_spec(space: Option<SpaceSpec>, bits: u8, decode: Vec<f32>) -> ImageSpec
         interpolate: false,
         is_mask: space.is_none(),
         encoded: None,
+        mask: None,
     }
 }
 
@@ -505,6 +506,7 @@ fn a_dct_image_keeps_its_stream_under_the_dct_filter() {
     let mut page = Page::new(LETTER);
     let spec = ImageSpec {
         encoded: Some(Encoded::Dct),
+        mask: None,
         ..image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0])
     };
     // Not a real stream: the writer passes the bytes on unread.
@@ -526,6 +528,150 @@ fn a_dct_image_keeps_its_stream_under_the_dct_filter() {
     assert_eq!(xobject.get("Width").unwrap().as_int(), 2);
     assert_eq!(xobject.get("BitsPerComponent").unwrap().as_int(), 8);
     assert_eq!(xobject.get("ColorSpace").unwrap().as_name(), b"DeviceGray");
+}
+
+/// A page painting one image built from `spec` and `data` at 50 × 50.
+fn page_painting(spec: &ImageSpec, data: &[u8]) -> Page {
+    let mut page = Page::new(LETTER);
+    let image = page.resources.add_image(spec, data);
+    page.ops = vec![Op::from(IrOp::Image {
+        image,
+        matrix: Matrix([50.0, 0.0, 0.0, 50.0, 100.0, 100.0]),
+    })];
+    page
+}
+
+#[test]
+fn a_stencil_mask_is_its_own_unlisted_xobject_named_in_mask() {
+    let spec = ImageSpec {
+        mask: Some(ImageMask::Stencil {
+            width: 4,
+            height: 4,
+            decode_inverted: true,
+            interpolate: false,
+            data: vec![0x90, 0x60, 0x60, 0x90],
+        }),
+        ..image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0])
+    };
+    let page = page_painting(&spec, &[0x00, 0x55, 0xAA, 0xFF]);
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    assert_eq!(content(&pdf, 0), "q 50 0 0 50 100 100 cm /Im0 Do Q\n");
+    let xobjects = resources(&pdf, 0).get("XObject").unwrap();
+    let Value::Dict(entries) = xobjects else {
+        panic!("XObject is a dictionary")
+    };
+    assert_eq!(entries.len(), 1, "only the base image is listed");
+    let base_id = xobjects.get("Im0").unwrap().as_reference();
+    let base = pdf.resolve(base_id);
+    assert_eq!(base.get("ColorSpace").unwrap().as_name(), b"DeviceGray");
+    assert_eq!(decoded(base), [0x00, 0x55, 0xAA, 0xFF]);
+    let mask_id = base.get("Mask").unwrap().as_reference();
+    assert_eq!(mask_id + 1, base_id, "allocated just before its image");
+    let mask = pdf.resolve(mask_id);
+    assert_eq!(mask.get("Type").unwrap().as_name(), b"XObject");
+    assert_eq!(mask.get("Subtype").unwrap().as_name(), b"Image");
+    assert_eq!(mask.get("ImageMask"), Some(&Value::Bool(true)));
+    assert_eq!(mask.get("Width").unwrap().as_int(), 4);
+    assert_eq!(mask.get("Height").unwrap().as_int(), 4);
+    assert_eq!(mask.get("BitsPerComponent").unwrap().as_int(), 1);
+    assert!(mask.get("ColorSpace").is_none());
+    assert!(mask.get("Interpolate").is_none());
+    let decode: Vec<f64> = array(mask.get("Decode").unwrap())
+        .iter()
+        .map(number)
+        .collect();
+    assert_eq!(decode, [1.0, 0.0]);
+    assert_eq!(mask.get("Filter").unwrap().as_name(), b"FlateDecode");
+    assert_eq!(decoded(mask), [0x90, 0x60, 0x60, 0x90]);
+}
+
+#[test]
+fn a_stencil_under_the_default_polarity_omits_decode_and_carries_interpolate() {
+    let spec = ImageSpec {
+        mask: Some(ImageMask::Stencil {
+            width: 8,
+            height: 1,
+            decode_inverted: false,
+            interpolate: true,
+            data: vec![0x0F],
+        }),
+        ..image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0])
+    };
+    let pdf = check(&distil_pages(
+        vec![page_painting(&spec, &[1, 2, 3, 4])],
+        uncompressed(),
+    ));
+    let base = xobject(&pdf, 0, "Im0");
+    let mask = pdf.resolve(base.get("Mask").unwrap().as_reference());
+    assert!(mask.get("Decode").is_none());
+    assert_eq!(mask.get("Interpolate"), Some(&Value::Bool(true)));
+    assert!(
+        base.get("Interpolate").is_none(),
+        "the base keeps its own flag"
+    );
+}
+
+#[test]
+fn a_colour_key_is_the_mask_array() {
+    let spec = ImageSpec {
+        mask: Some(ImageMask::ColorKey(vec![(250, 255); 3])),
+        ..image_spec(
+            Some(SpaceSpec::DeviceRGB),
+            8,
+            vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        )
+    };
+    let pdf = check(&distil_pages(
+        vec![page_painting(&spec, &[0; 12])],
+        uncompressed(),
+    ));
+    let base = xobject(&pdf, 0, "Im0");
+    let key: Vec<i64> = array(base.get("Mask").unwrap())
+        .iter()
+        .map(Value::as_int)
+        .collect();
+    assert_eq!(key, [250, 255, 250, 255, 250, 255]);
+}
+
+#[test]
+fn a_dct_image_keeps_its_stream_and_its_mask() {
+    let stream = [0xFF, 0xD8, 0x00, 0xFF, 0xD9];
+    let keyed = ImageSpec {
+        encoded: Some(Encoded::Dct),
+        mask: Some(ImageMask::ColorKey(vec![(0, 10)])),
+        ..image_spec(Some(SpaceSpec::DeviceGray), 8, vec![0.0, 1.0])
+    };
+    let pdf = check(&distil_pages(
+        vec![page_painting(&keyed, &stream)],
+        uncompressed(),
+    ));
+    let base = xobject(&pdf, 0, "Im0");
+    assert_eq!(base.get("Filter").unwrap().as_name(), b"DCTDecode");
+    assert_eq!(base.stream_data(), stream);
+    let key: Vec<i64> = array(base.get("Mask").unwrap())
+        .iter()
+        .map(Value::as_int)
+        .collect();
+    assert_eq!(key, [0, 10]);
+    let stencilled = ImageSpec {
+        mask: Some(ImageMask::Stencil {
+            width: 2,
+            height: 2,
+            decode_inverted: false,
+            interpolate: false,
+            data: vec![0x40, 0x80],
+        }),
+        ..keyed
+    };
+    let pdf = check(&distil_pages(
+        vec![page_painting(&stencilled, &stream)],
+        uncompressed(),
+    ));
+    let base = xobject(&pdf, 0, "Im0");
+    assert_eq!(base.stream_data(), stream);
+    let mask = pdf.resolve(base.get("Mask").unwrap().as_reference());
+    assert_eq!(mask.get("Filter").unwrap().as_name(), b"FlateDecode");
+    assert_eq!(decoded(mask), [0x40, 0x80]);
 }
 
 #[test]

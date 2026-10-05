@@ -1,0 +1,27 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: limitcheck
+% divergence: masked-dct-interleaved
+% Scenario: an image interleaved by row with its mask whose data comes
+% through DCTDecode cannot be separated from the mask without decoding
+% the stream: limitcheck, and nothing is painted. The stream is the
+% project's own 16x16 grey baseline JPEG (`cargo xtask tiny-jpeg`),
+% so a decoder can read it; its 256 samples fall short of the 288
+% bytes the interleaved layout asks for, which cuts the image.
+100 100 translate
+200 200 scale
+%%BeginData: 12 ASCII Lines
+<< /ImageType 3 /InterleaveType 2
+   /DataDict << /ImageType 1 /Width 16 /Height 16 /BitsPerComponent 8
+      /ImageMatrix [16 0 0 -16 0 16] /Decode [0 1]
+      /DataSource currentfile /ASCIIHexDecode filter /DCTDecode filter >>
+   /MaskDict << /ImageType 1 /Width 16 /Height 16 /BitsPerComponent 1
+      /ImageMatrix [16 0 0 -16 0 16] /Decode [0 1] >> >> image
+FFD8FFDB00430001010101010101010101010101010101010101010101010101
+0101010101010101010101010101010101010101010101010101010101010101
+01010101010101FFC0000B080010001001011100FFC400160001010100000000
+00000000000000000000090AFFC4001410010000000000000000000000000000
+0000FFDA0008010100003F002803400CFF00BFFFD9>
+%%EndData
+showpage

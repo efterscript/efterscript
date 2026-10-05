@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: rangecheck
+% Scenario: interleave types run from 1 to 3; type 4 is a rangecheck.
+<< /ImageType 3 /InterleaveType 4
+   /DataDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+      /ImageMatrix [2 0 0 -2 0 2] /DataSource <004080FF> >>
+   /MaskDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 1
+      /ImageMatrix [2 0 0 -2 0 2] /DataSource <4080> >> >> image
+showpage

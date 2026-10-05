@@ -13,8 +13,9 @@ use std::rc::Rc;
 
 use common::{Call, Log, Recording};
 use efterscript_vm::{
-    Bounds, Config, Encoded, FontRef, Glyph, GraphicsBackend, ImageSpec, Interp, Io, LineCap,
-    LineJoin, Matrix, Object, Outcome, Point, Rect, Seg, SliceSource, SpaceSpec, Stream, VmError,
+    Bounds, Config, Encoded, FontRef, Glyph, GraphicsBackend, ImageMask, ImageSpec, Interp, Io,
+    LineCap, LineJoin, Matrix, Object, Outcome, Point, Rect, Seg, SliceSource, SpaceSpec, Stream,
+    VmError,
 };
 
 // --- helpers -----------------------------------------------------------------
@@ -769,6 +770,7 @@ fn image_dictionary_form() {
             interpolate: true,
             is_mask: false,
             encoded: None,
+            mask: None,
         }
     );
     assert_eq!(data, b"12345678");
@@ -792,7 +794,7 @@ fn image_dictionary_form() {
 
     for (program, error) in [
         (
-            "<< /Width 2 /Height 1 /BitsPerComponent 8 /ImageMatrix [2 0 0 1 0 0] /DataSource <80> /ImageType 3 >> image",
+            "<< /Width 2 /Height 1 /BitsPerComponent 8 /ImageMatrix [2 0 0 1 0 0] /DataSource <80> /ImageType 2 >> image",
             "rangecheck",
         ),
         (
@@ -824,6 +826,390 @@ fn image_dictionary_form() {
         let run = exec(program);
         assert_eq!(run.error(), Some(error), "{program}");
     }
+}
+
+// --- masked images ---------------------------------------------------------------
+
+/// A type 3 dictionary from its interleave type and the bodies of its
+/// two sub-dictionaries.
+fn type3(interleave: u8, data: &str, mask: &str) -> String {
+    format!(
+        "<< /ImageType 3 /InterleaveType {interleave} \
+         /DataDict << /ImageType 1 {data} >> /MaskDict << /ImageType 1 {mask} >> >>"
+    )
+}
+
+/// The stencil a masked image carried: width, height, inverted, bits.
+fn stencil_of(spec: &ImageSpec) -> (u32, u32, bool, Vec<u8>) {
+    match &spec.mask {
+        Some(ImageMask::Stencil {
+            width,
+            height,
+            decode_inverted,
+            data,
+            ..
+        }) => (*width, *height, *decode_inverted, data.clone()),
+        other => panic!("not a stencil: {other:?}"),
+    }
+}
+
+#[test]
+fn interleaved_by_row_in_both_height_ratios() {
+    // Mask taller: blocks of two mask rows then one image row, read from
+    // the current file; the program continues after the data.
+    let program = format!(
+        "{} image\n{}\n(after) =",
+        type3(
+            2,
+            "/Width 4 /Height 2 /BitsPerComponent 8 /ImageMatrix [4 0 0 -2 0 2] \
+             /DataSource currentfile /ASCIIHexDecode filter",
+            "/Width 4 /Height 4 /BitsPerComponent 1 /ImageMatrix [4 0 0 -4 0 4] /Decode [0 1]",
+        ),
+        "F0 30 00112233 C0 00 44556677>"
+    );
+    let run = exec(&program);
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(run.output, "after\n");
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(data, &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
+    assert_eq!((spec.width, spec.height), (4, 2));
+    assert_eq!(spec.matrix, Matrix([4.0, 0.0, 0.0, -2.0, 0.0, 2.0]));
+    assert_eq!(
+        stencil_of(spec),
+        (4, 4, false, vec![0xF0, 0x30, 0xC0, 0x00])
+    );
+
+    // Image taller: one mask row governs two image rows.
+    let run = exec(&format!(
+        "{} image",
+        type3(
+            2,
+            "/Width 4 /Height 4 /BitsPerComponent 8 /ImageMatrix [4 0 0 -4 0 4] \
+             /DataSource <A0 01020304 05060708 50 090A0B0C 0D0E0F10>",
+            "/Width 4 /Height 2 /BitsPerComponent 1 /ImageMatrix [4 0 0 -2 0 2]",
+        )
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(data, &(1..=16).collect::<Vec<u8>>());
+    assert_eq!(spec.height, 4);
+    assert_eq!(stencil_of(spec), (4, 2, false, vec![0xA0, 0x50]));
+}
+
+#[test]
+fn interleaved_by_sample() {
+    // A mask byte other than 0 or 255 counts as 255.
+    let run = exec(&format!(
+        "/DeviceRGB setcolorspace {} image",
+        type3(
+            1,
+            "/Width 3 /Height 1 /BitsPerComponent 8 /ImageMatrix [3 0 0 -1 0 1] \
+             /DataSource <00 FF0000 FF 00FF00 07 0000FF>",
+            "/Width 3 /Height 1 /BitsPerComponent 8 /ImageMatrix [3 0 0 -1 0 1] /Decode [0 1]",
+        )
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(spec.color_space, Some(SpaceSpec::DeviceRGB));
+    assert_eq!(data, &[255, 0, 0, 0, 255, 0, 0, 0, 255]);
+    assert_eq!(stencil_of(spec), (3, 1, false, vec![0b0110_0000]));
+}
+
+#[test]
+fn separate_sources_read_the_mask_first() {
+    let dicts = |data_source: &str, mask_source: &str| {
+        type3(
+            3,
+            &format!(
+                "/Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 -2 0 2] \
+                 /DataSource {data_source}"
+            ),
+            &format!(
+                "/Width 8 /Height 8 /BitsPerComponent 1 /ImageMatrix [8 0 0 -8 0 8] \
+                 /DataSource {mask_source}"
+            ),
+        )
+    };
+    let full = |run: &Run| {
+        assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+        let (spec, data) = &image_calls(run)[0];
+        assert_eq!(data, b"wxyz");
+        assert_eq!(spec.height, 2);
+        assert_eq!(stencil_of(spec), (8, 8, false, b"ABCDEFGH".to_vec()));
+    };
+    // Two procedures reading one file: the mask's eight bytes come
+    // first, then the image's four, and the program goes on after them.
+    let run = exec(&format!(
+        "/m 1 string def /d 1 string def {} image\nABCDEFGHwxyz(after) print",
+        dicts(
+            "{ (d) print currentfile d readstring pop }",
+            "{ (m) print currentfile m readstring pop }"
+        )
+    ));
+    full(&run);
+    assert_eq!(run.output, "mmmmmmmmddddafter");
+    // Strings and files, in every combination with procedures.
+    full(&exec(&format!("{} image", dicts("(wxyz)", "(ABCDEFGH)"))));
+    full(&exec(&format!(
+        "{} image",
+        dicts("(wxyz)", "{ (ABCDEFGH) }")
+    )));
+    full(&exec(&format!(
+        "{} image",
+        dicts("{ (wxyz) }", "(ABCDEFGH)")
+    )));
+    full(&exec(&format!(
+        "{} image\nABCDEFGHwxyz",
+        dicts("currentfile", "currentfile")
+    )));
+    full(&exec(&format!(
+        "{} image\nABCDEFGHwxyz",
+        dicts("currentfile", "{ currentfile 8 string readstring pop }")
+    )));
+}
+
+#[test]
+fn short_masked_data_cuts_both_parts() {
+    // The data procedure ends after half the rows: the upper half of
+    // the image with the matching half of the mask, and no error.
+    let run = exec(&format!(
+        "/n 0 def {} image",
+        type3(
+            3,
+            "/Width 2 /Height 4 /BitsPerComponent 8 /ImageMatrix [2 0 0 -4 0 4] \
+             /DataSource { /n n 1 add def n 3 lt { (ab) } { () } ifelse }",
+            "/Width 8 /Height 8 /BitsPerComponent 1 /ImageMatrix [8 0 0 -8 0 8] \
+             /DataSource (ABCDEFGH)",
+        )
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, data) = &image_calls(&run)[0];
+    assert_eq!(data, b"abab");
+    assert_eq!(spec.height, 2);
+    assert_eq!(stencil_of(spec), (8, 4, false, b"ABCD".to_vec()));
+}
+
+#[test]
+fn an_indexed_image_with_an_inverted_mask_through_a_filter() {
+    let program = format!(
+        "[/Indexed /DeviceRGB 3 <000000 FF0000 00FF00 0000FF>] setcolorspace {} image\n\
+         05C0010240030080>\n(after) =",
+        type3(
+            2,
+            "/Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 -2 0 2] \
+             /DataSource currentfile /ASCIIHexDecode filter /RunLengthDecode filter",
+            "/Width 2 /Height 2 /BitsPerComponent 1 /ImageMatrix [2 0 0 -2 0 2] /Decode [1 0]",
+        )
+    );
+    let run = exec(&program);
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(run.output, "after\n");
+    let (spec, data) = &image_calls(&run)[0];
+    assert!(matches!(spec.color_space, Some(SpaceSpec::Indexed { .. })));
+    assert_eq!(spec.decode, vec![0.0, 255.0]);
+    assert_eq!(data, &[1, 2, 3, 0]);
+    assert_eq!(stencil_of(spec), (2, 2, true, vec![0xC0, 0x40]));
+}
+
+#[test]
+fn a_mask_with_reversed_rows_is_turned() {
+    let run = exec(&format!(
+        "{} image",
+        type3(
+            3,
+            "/Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 -2 0 2] \
+             /DataSource (wxyz)",
+            "/Width 4 /Height 2 /BitsPerComponent 1 /ImageMatrix [4 0 0 2 0 0] \
+             /DataSource <8010>",
+        )
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(stencil_of(&image_calls(&run)[0].0).3, [0x10, 0x80]);
+}
+
+#[test]
+fn colour_keys_are_carried() {
+    let run = exec(
+        "/DeviceRGB setcolorspace << /ImageType 4 /Width 4 /Height 1 /BitsPerComponent 8 \
+         /ImageMatrix [4 0 0 -1 0 1] /MaskColor [255 255 255] \
+         /DataSource <FFFFFF 000000 FFFFFF 102030> >> image \
+         /DeviceGray setcolorspace << /ImageType 4 /Width 4 /Height 1 /BitsPerComponent 4 \
+         /ImageMatrix [4 0 0 -1 0 1] /Decode [1 0] /MaskColor [0 3] /DataSource <0F37> >> image \
+         << /ImageType 4 /Width 1 /Height 1 /BitsPerComponent 8 /ImageMatrix [1 0 0 1 0 0] \
+         /MaskColor [-1 300] /DataSource <00> >> image",
+    );
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let images = image_calls(&run);
+    assert_eq!(
+        images[0].0.mask,
+        Some(ImageMask::ColorKey(vec![(255, 255); 3]))
+    );
+    assert_eq!(images[0].1.len(), 12);
+    assert_eq!(images[1].0.mask, Some(ImageMask::ColorKey(vec![(0, 3)])));
+    assert_eq!(images[1].0.decode, vec![1.0, 0.0]);
+    assert_eq!(images[2].0.mask, Some(ImageMask::ColorKey(vec![(0, 255)])));
+}
+
+#[test]
+fn a_dct_source_and_an_interleaved_mask() {
+    let data = |source: &str| {
+        format!(
+            "/Width 16 /Height 16 /BitsPerComponent 8 /ImageMatrix [16 0 0 -16 0 16] \
+             /DataSource {source}"
+        )
+    };
+    let dct = "currentfile /ASCIIHexDecode filter /DCTDecode filter";
+    // Interleaved by row or sample: the mask cannot be separated.
+    let run = exec(&format!(
+        "{} image\n{DCT_HEX}>",
+        type3(
+            2,
+            &data(dct),
+            "/Width 16 /Height 16 /BitsPerComponent 1 /ImageMatrix [16 0 0 -16 0 16]"
+        )
+    ));
+    assert_eq!(run.error(), Some("limitcheck"));
+    let run = exec(&format!(
+        "{} image\n{DCT_HEX}>",
+        type3(
+            1,
+            &data(dct),
+            "/Width 16 /Height 16 /BitsPerComponent 8 /ImageMatrix [16 0 0 -16 0 16]"
+        )
+    ));
+    assert_eq!(run.error(), Some("limitcheck"));
+    // A separate mask keeps the passthrough.
+    let run = exec(&format!(
+        "{} image\n{DCT_HEX}>\n(after) =",
+        type3(
+            3,
+            &data(dct),
+            "/Width 8 /Height 2 /BitsPerComponent 1 /ImageMatrix [8 0 0 -2 0 2] \
+             /DataSource <FF00>"
+        )
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    assert_eq!(run.output, "after\n");
+    let (spec, bytes) = &image_calls(&run)[0];
+    assert_eq!(spec.encoded, Some(Encoded::Dct));
+    assert_eq!(*bytes, dct_bytes());
+    assert_eq!(stencil_of(spec), (8, 2, false, vec![0xFF, 0x00]));
+    // A colour key rides along with encoded data.
+    let run = exec(&format!(
+        "<< /ImageType 4 /MaskColor [0 10] {} >> image\n{DCT_HEX}>",
+        data(dct)
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, _) = &image_calls(&run)[0];
+    assert_eq!(spec.encoded, Some(Encoded::Dct));
+    assert_eq!(spec.mask, Some(ImageMask::ColorKey(vec![(0, 10)])));
+}
+
+#[test]
+fn masked_dictionaries_are_checked_before_any_data_is_read() {
+    let data = "/Width 4 /Height 2 /BitsPerComponent 8 /ImageMatrix [4 0 0 -2 0 2] \
+                /DataSource currentfile";
+    let mask = "/Width 4 /Height 4 /BitsPerComponent 1 /ImageMatrix [4 0 0 -4 0 4]";
+    let cases = [
+        (type3(4, data, mask), "rangecheck"),
+        (type3(0, data, mask), "rangecheck"),
+        (
+            type3(
+                2,
+                "/Width 4 /Height 3 /BitsPerComponent 8 /ImageMatrix [4 0 0 -3 0 3] \
+                 /DataSource currentfile",
+                "/Width 4 /Height 2 /BitsPerComponent 1 /ImageMatrix [4 0 0 -2 0 2]",
+            ),
+            "typecheck",
+        ),
+        (
+            type3(2, data, &format!("{mask} /DataSource currentfile")),
+            "typecheck",
+        ),
+        (type3(3, data, mask), "typecheck"),
+        (
+            type3(
+                3,
+                data,
+                "/Width 4 /Height 4 /BitsPerComponent 1 /ImageMatrix [4 0 0 -4 2 4] \
+                 /DataSource currentfile",
+            ),
+            "typecheck",
+        ),
+        (
+            type3(
+                2,
+                data,
+                "/Width 4 /Height 4 /BitsPerComponent 8 /ImageMatrix [4 0 0 -4 0 4]",
+            ),
+            "typecheck",
+        ),
+        (type3(1, data, mask), "typecheck"),
+        (
+            type3(2, data, &format!("{mask} /Decode [0 1 0 1]")),
+            "rangecheck",
+        ),
+        (
+            format!("<< /ImageType 3 /InterleaveType 2 /DataDict << {data} >> >>"),
+            "typecheck",
+        ),
+        (
+            format!(
+                "<< /ImageType 3 /InterleaveType 2 /DataDict << {data} >> \
+                 /MaskDict << /ImageType 4 {mask} >> >>"
+            ),
+            "typecheck",
+        ),
+        (
+            format!("<< /ImageType 3 /DataDict << {data} >> /MaskDict << {mask} >> >>"),
+            "typecheck",
+        ),
+        (
+            format!(
+                "<< /ImageType 3 /InterleaveType 2.0 /DataDict << {data} >> \
+                 /MaskDict << {mask} >> >>"
+            ),
+            "typecheck",
+        ),
+        (
+            format!(
+                "<< /ImageType 3 /InterleaveType 3 /DataDict << {data} /MultipleDataSources true >> \
+                 /MaskDict << {mask} /DataSource currentfile >> >>"
+            ),
+            "typecheck",
+        ),
+        (format!("<< /ImageType 2 {data} >>"), "rangecheck"),
+        (
+            format!("<< /ImageType 4 {data} /MaskColor [1 2 3] >>"),
+            "rangecheck",
+        ),
+        (
+            format!("<< /ImageType 4 {data} /MaskColor [1.0] >>"),
+            "typecheck",
+        ),
+        (
+            format!("<< /ImageType 4 {data} /MaskColor 1 >>"),
+            "typecheck",
+        ),
+        (format!("<< /ImageType 4 {data} >>"), "typecheck"),
+    ];
+    for (dict, error) in cases {
+        let program = format!(
+            "/rest {{ currentfile 4 string readstring pop == }} def \
+             {{ {dict} image }} stopped pop $error /errorname get == rest\nwxyz"
+        );
+        let run = exec(&program);
+        assert_eq!(run.outcome, Outcome::Ok, "{dict}");
+        assert_eq!(run.output, format!("/{error}\n(wxyz)\n"), "{dict}");
+        assert!(image_calls(&run).is_empty(), "{dict}");
+    }
+    // imagemask takes type 1 only.
+    let run = exec(&format!("{} imagemask", type3(2, data, mask)));
+    assert_eq!(run.error(), Some("rangecheck"));
+    let run = exec(&format!(
+        "<< /ImageType 4 /MaskColor [0] {data} >> imagemask"
+    ));
+    assert_eq!(run.error(), Some("rangecheck"));
 }
 
 // --- page device -------------------------------------------------------------------

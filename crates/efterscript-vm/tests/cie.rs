@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use common::{Call, Log, Recording};
-use efterscript_vm::{Config, ImageSpec, Interp, Io, Outcome, SliceSource, SpaceSpec};
+use efterscript_vm::{Config, ImageMask, ImageSpec, Interp, Io, Outcome, SliceSource, SpaceSpec};
 
 struct Run {
     outcome: Outcome,
@@ -793,6 +793,53 @@ fn a_two_pixel_image_converts_to_lab_bytes() {
     assert_eq!((spec.width, spec.height), (2, 1));
     assert!(matches!(spec.color_space, Some(SpaceSpec::Lab { .. })));
     assert_eq!(spec.decode, [0.0, 100.0, -128.0, 127.0, -128.0, 127.0]);
+}
+
+#[test]
+fn masks_survive_the_conversion_and_a_key_becomes_a_stencil_first() {
+    // The key names raw samples, which the conversion replaces: it is
+    // turned into a stencil from the samples as read.
+    let space = "[/CIEBasedABC << /WhitePoint W /DecodeABC [{0.5 mul} {} {}] >>] setcolorspace";
+    let run = with_defs(&format!(
+        "{space} << /ImageType 4 /Width 3 /Height 1 /BitsPerComponent 8 \
+            /ImageMatrix [3 0 0 1 0 0] /MaskColor [250 255 0 255 0 255] \
+            /DataSource <FF0000 00FF00 FAFAFA> >> image"
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, data) = &run.images()[0];
+    assert!(matches!(spec.color_space, Some(SpaceSpec::Lab { .. })));
+    assert_eq!(data.len(), 9);
+    assert_eq!(
+        spec.mask,
+        Some(ImageMask::Stencil {
+            width: 3,
+            height: 1,
+            decode_inverted: false,
+            interpolate: false,
+            data: vec![0b1010_0000],
+        })
+    );
+    // A type 3 image's stencil goes along as it is.
+    let run = with_defs(&format!(
+        "{space} << /ImageType 3 /InterleaveType 3 \
+            /DataDict << /ImageType 1 /Width 1 /Height 1 /BitsPerComponent 8 \
+                /ImageMatrix [1 0 0 1 0 0] /DataSource <102030> >> \
+            /MaskDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 1 \
+                /ImageMatrix [2 0 0 2 0 0] /Decode [1 0] /DataSource <8040> >> >> image"
+    ));
+    assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
+    let (spec, _) = &run.images()[0];
+    assert!(matches!(spec.color_space, Some(SpaceSpec::Lab { .. })));
+    assert_eq!(
+        spec.mask,
+        Some(ImageMask::Stencil {
+            width: 2,
+            height: 2,
+            decode_inverted: true,
+            interpolate: false,
+            data: vec![0x80, 0x40],
+        })
+    );
 }
 
 #[test]

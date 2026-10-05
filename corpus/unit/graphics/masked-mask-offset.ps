@@ -1,0 +1,13 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% divergence: masked-mask-misaligned
+% Scenario: a mask whose matrix places its square half a width to the
+% right of the image's does not overlay the image.
+<< /ImageType 3 /InterleaveType 3
+   /DataDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8
+      /ImageMatrix [2 0 0 -2 0 2] /DataSource <004080FF> >>
+   /MaskDict << /ImageType 1 /Width 4 /Height 4 /BitsPerComponent 1
+      /ImageMatrix [4 0 0 -4 2 4] /DataSource <F0F00000> >> >> image
+showpage

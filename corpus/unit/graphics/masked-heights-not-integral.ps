@@ -1,0 +1,12 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-error: typecheck
+% Scenario: interleaved by row, an image 3 rows high and a mask 2 rows
+% high are in no integral ratio: typecheck before any data is read.
+<< /ImageType 3 /InterleaveType 2
+   /DataDict << /ImageType 1 /Width 4 /Height 3 /BitsPerComponent 8
+      /ImageMatrix [4 0 0 -3 0 3] /DataSource currentfile >>
+   /MaskDict << /ImageType 1 /Width 4 /Height 2 /BitsPerComponent 1
+      /ImageMatrix [4 0 0 -2 0 2] >> >> image
+showpage

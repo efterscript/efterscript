@@ -15,6 +15,13 @@
 //! Indexed images, every other depth, and images carried in an encoded
 //! form (a DCT stream has no samples to average) are left alone.
 //!
+//! A masked image is reduced by its own class; its stencil mask keeps
+//! its resolution, since a PDF mask need not match its image's
+//! (ISO 32000-1 §8.9.6.3). Averaging makes sample values a colour key
+//! would match by accident and loses ones it should, so a key on an
+//! averaged image becomes a stencil computed from the unreduced
+//! samples; subsampling keeps sample values, and with them the key.
+//!
 //! An image inside a form body is painted through the body's matrix
 //! and every placement of the form; one inside a pattern cell through
 //! the pattern's matrix (each tile is a translation of the same
@@ -90,7 +97,10 @@ pub(crate) enum Outcome {
     Unchanged,
     /// Reduced; `mono_subsampled` says a one-bit image was subsampled
     /// where averaging was asked.
-    Reduced { image: Image, mono_subsampled: bool },
+    Reduced {
+        image: Box<Image>,
+        mono_subsampled: bool,
+    },
     /// Left as delivered for the reason given, worth a note.
     Unsupported(String),
 }
@@ -230,30 +240,37 @@ pub(crate) fn reduce(image: &Image, matrices: &[Matrix], params: &Params) -> Out
     }
     let f = factor as usize;
     let (width, height) = (spec.width as usize, spec.height as usize);
+    let mut mask = spec.mask.clone();
     let (data, mono_subsampled) = match (class, method) {
         (Class::Mono, method) => (
             subsample_bits(&image.data, width, height, f),
             method == Downsample::Average,
         ),
-        (_, Downsample::Average) => (
-            average_bytes(&image.data, width, height, spec.components(), f),
-            false,
-        ),
+        (_, Downsample::Average) => {
+            if let Some(stencil) = spec.key_to_stencil(&image.data) {
+                mask = Some(stencil);
+            }
+            (
+                average_bytes(&image.data, width, height, spec.components(), f),
+                false,
+            )
+        }
         (_, Downsample::Subsample) => (
             subsample_bytes(&image.data, width, height, spec.components(), f),
             false,
         ),
     };
     Outcome::Reduced {
-        image: Image {
+        image: Box::new(Image {
             spec: ImageSpec {
                 width: width.div_ceil(f) as u32,
                 height: height.div_ceil(f) as u32,
+                mask,
                 ..spec.clone()
             },
             color_space: image.color_space,
             data,
-        },
+        }),
         mono_subsampled,
     }
 }
@@ -334,6 +351,7 @@ mod tests {
             matrix: Matrix::IDENTITY,
             interpolate: false,
             encoded: None,
+            mask: None,
         }
     }
 
@@ -555,6 +573,100 @@ mod tests {
             panic!("reduced")
         };
         assert!(!mono_subsampled);
+    }
+
+    #[test]
+    fn a_stencil_mask_keeps_its_resolution_while_the_base_is_reduced() {
+        use efterscript_vm::ImageMask;
+        let stencil = ImageMask::Stencil {
+            width: 8,
+            height: 8,
+            decode_inverted: true,
+            interpolate: false,
+            data: (0..8).collect(),
+        };
+        let masked = image(
+            ImageSpec {
+                mask: Some(stencil.clone()),
+                ..spec(Some(SpaceSpec::DeviceGray), 8, 4, 4)
+            },
+            vec![100; 16],
+        );
+        for method in [Downsample::Average, Downsample::Subsample] {
+            let Outcome::Reduced { image: small, .. } =
+                reduce(&masked, &[POINT], &gray_on(72, method))
+            else {
+                panic!("reduced")
+            };
+            assert_eq!((small.spec.width, small.spec.height), (1, 1));
+            assert_eq!(small.spec.mask.as_ref(), Some(&stencil));
+        }
+    }
+
+    #[test]
+    fn a_colour_key_becomes_a_stencil_only_when_samples_are_averaged() {
+        use efterscript_vm::ImageMask;
+        // 4×2 RGB: white, red, white, red / red, white, red, white.
+        let (w, r) = ([255, 255, 255], [255, 0, 0]);
+        let data: Vec<u8> = [w, r, w, r, r, w, r, w].concat();
+        let keyed = image(
+            ImageSpec {
+                mask: Some(ImageMask::ColorKey(vec![(250, 255); 3])),
+                ..spec(Some(SpaceSpec::DeviceRGB), 8, 4, 2)
+            },
+            data,
+        );
+        let colour = |method| Params {
+            downsample_color_images: true,
+            color_image_resolution: 72,
+            color_image_downsample_type: method,
+            ..Params::default()
+        };
+        // Two rows over a point at 72: factor 2, each 2×2 block averaged
+        // to (255, 128, 128), which the key would not match; the stencil
+        // keeps exactly the white samples off.
+        let Outcome::Reduced { image: small, .. } =
+            reduce(&keyed, &[POINT], &colour(Downsample::Average))
+        else {
+            panic!("reduced")
+        };
+        assert_eq!(small.data, [255, 128, 128].repeat(2));
+        assert_eq!(
+            small.spec.mask,
+            Some(ImageMask::Stencil {
+                width: 4,
+                height: 2,
+                decode_inverted: false,
+                interpolate: false,
+                data: vec![0b1010_0000, 0b0101_0000],
+            })
+        );
+        // Subsampling keeps sample values, so the key stays.
+        let Outcome::Reduced { image: small, .. } =
+            reduce(&keyed, &[POINT], &colour(Downsample::Subsample))
+        else {
+            panic!("reduced")
+        };
+        assert_eq!(small.data, [w, w].concat());
+        assert_eq!(small.spec.mask, keyed.spec.mask);
+        // A one-bit gray image is subsampled even under averaging.
+        let bits = image(
+            ImageSpec {
+                mask: Some(ImageMask::ColorKey(vec![(1, 1)])),
+                ..spec(Some(SpaceSpec::DeviceGray), 1, 8, 8)
+            },
+            vec![0b1000_0000; 8],
+        );
+        let mono = Params {
+            downsample_mono_images: true,
+            mono_image_resolution: 72,
+            mono_image_downsample_type: Downsample::Average,
+            ..Params::default()
+        };
+        let Outcome::Reduced { image: small, .. } = reduce(&bits, &[POINT], &mono) else {
+            panic!("reduced")
+        };
+        assert_eq!(small.spec.mask, bits.spec.mask);
     }
 
     #[test]

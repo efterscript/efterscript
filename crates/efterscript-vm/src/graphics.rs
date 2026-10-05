@@ -402,6 +402,30 @@ pub struct ImageSpec {
     /// format, passed through as read; the dimensions and depth still
     /// describe the decoded samples.
     pub encoded: Option<Encoded>,
+    /// What keeps parts of the image off the page (PLRM3 §4.10.6); never
+    /// set on a mask.
+    pub mask: Option<ImageMask>,
+}
+
+/// The mask of a masked image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageMask {
+    /// A stencil over the image's unit square at its own resolution: one
+    /// bit per sample, rows padded to a byte, the first row the one the
+    /// image's first data row lies under. Under the default polarity a
+    /// 0 lets the image through and a 1 keeps it off; `decode_inverted`
+    /// swaps the two.
+    Stencil {
+        width: u32,
+        height: u32,
+        decode_inverted: bool,
+        interpolate: bool,
+        data: Vec<u8>,
+    },
+    /// One inclusive range of raw sample values per component: a sample
+    /// whose every component lies in its range is kept off the page. A
+    /// range whose minimum exceeds its maximum matches nothing.
+    ColorKey(Vec<(u16, u16)>),
 }
 
 /// An encoding an image's data is carried in rather than decoded.
@@ -430,6 +454,55 @@ impl ImageSpec {
     pub fn data_len(&self) -> Option<usize> {
         self.row_bytes()?.checked_mul(self.height as usize)
     }
+
+    /// The colour key turned into a stencil at the image's resolution,
+    /// computed from `data` (the raw samples this spec describes), for a
+    /// consumer about to change sample values. `None` unless the image
+    /// carries a key over raw samples; rows `data` lacks are not masked.
+    pub fn key_to_stencil(&self, data: &[u8]) -> Option<ImageMask> {
+        let Some(ImageMask::ColorKey(ranges)) = &self.mask else {
+            return None;
+        };
+        if self.encoded.is_some() || self.is_mask {
+            return None;
+        }
+        let width = self.width as usize;
+        let components = self.components();
+        let bits = usize::from(self.bits_per_component);
+        let row_bytes = self.row_bytes()?;
+        let mask_row = width.div_ceil(8);
+        let mut out = vec![0u8; mask_row * self.height as usize];
+        let rows = data.chunks(row_bytes.max(1)).take(self.height as usize);
+        for (y, row) in rows.enumerate() {
+            for x in 0..width {
+                let keyed = (0..components).all(|k| {
+                    let value = packed_sample(row, (x * components + k) * bits, bits);
+                    ranges
+                        .get(k)
+                        .is_some_and(|&(lo, hi)| lo <= value && value <= hi)
+                });
+                if keyed {
+                    out[y * mask_row + x / 8] |= 0x80 >> (x % 8);
+                }
+            }
+        }
+        Some(ImageMask::Stencil {
+            width: self.width,
+            height: self.height,
+            decode_inverted: false,
+            interpolate: false,
+            data: out,
+        })
+    }
+}
+
+/// The `bits`-wide value starting `at` bits into `row`, most significant
+/// bit first; bits beyond the row read as 0.
+fn packed_sample(row: &[u8], at: usize, bits: usize) -> u16 {
+    (at..at + bits).fold(0u16, |value, bit| {
+        let byte = row.get(bit / 8).copied().unwrap_or(0);
+        (value << 1) | u16::from((byte >> (7 - bit % 8)) & 1)
+    })
 }
 
 /// The current font as the graphics state holds it: the VM's instance id
@@ -1737,6 +1810,93 @@ mod tests {
         assert_eq!(bare.place_form(&form), Ok(()));
     }
 
+    fn keyed(space: SpaceSpec, width: u32, height: u32, bits: u8, key: &[(u16, u16)]) -> ImageSpec {
+        ImageSpec {
+            width,
+            height,
+            bits_per_component: bits,
+            decode: [0.0, 1.0].repeat(space.components()),
+            color_space: Some(space),
+            matrix: Matrix::IDENTITY,
+            interpolate: true,
+            is_mask: false,
+            encoded: None,
+            mask: Some(ImageMask::ColorKey(key.to_vec())),
+        }
+    }
+
+    fn stencil_bits(spec: &ImageSpec, data: &[u8]) -> (u32, u32, Vec<u8>) {
+        match spec.key_to_stencil(data) {
+            Some(ImageMask::Stencil {
+                width,
+                height,
+                decode_inverted: false,
+                interpolate: false,
+                data,
+            }) => (width, height, data),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_colour_key_becomes_a_stencil_from_the_raw_samples() {
+        // Exact RGB values: two of four samples are white.
+        let rgb = keyed(SpaceSpec::DeviceRGB, 4, 1, 8, &[(255, 255); 3]);
+        let data = [255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255, 254];
+        assert_eq!(stencil_bits(&rgb, &data), (4, 1, vec![0b1010_0000]));
+        // Ranges on 4-bit gray, compared before any decode.
+        let gray = ImageSpec {
+            decode: vec![1.0, 0.0],
+            ..keyed(SpaceSpec::DeviceGray, 4, 2, 4, &[(0, 3)])
+        };
+        assert_eq!(
+            stencil_bits(&gray, &[0x04, 0x3F, 0x21, 0x00]),
+            (4, 2, vec![0b1010_0000, 0b1111_0000])
+        );
+        // One, two, and twelve bits; rows padded to bytes.
+        let one = keyed(SpaceSpec::DeviceGray, 10, 1, 1, &[(1, 1)]);
+        assert_eq!(stencil_bits(&one, &[0xF0, 0x40]), (10, 1, vec![0xF0, 0x40]));
+        let two = keyed(SpaceSpec::DeviceGray, 4, 1, 2, &[(1, 2)]);
+        assert_eq!(
+            stencil_bits(&two, &[0b0001_1011]),
+            (4, 1, vec![0b0110_0000])
+        );
+        let twelve = keyed(SpaceSpec::DeviceGray, 2, 1, 12, &[(0xABC, 0xFFF)]);
+        assert_eq!(
+            stencil_bits(&twelve, &[0xAB, 0xBA, 0xBC]),
+            (2, 1, vec![0b0100_0000])
+        );
+        // A range taken to the widest a sample holds matches everything,
+        // and one whose minimum exceeds its maximum nothing.
+        let all = keyed(SpaceSpec::DeviceGray, 2, 1, 8, &[(0, 255)]);
+        assert_eq!(stencil_bits(&all, &[0, 255]), (2, 1, vec![0xC0]));
+        let none = keyed(SpaceSpec::DeviceGray, 2, 1, 8, &[(9, 2)]);
+        assert_eq!(stencil_bits(&none, &[5, 9]), (2, 1, vec![0]));
+        // An Indexed image keys its indices.
+        let indexed = SpaceSpec::Indexed {
+            base: Box::new(SpaceSpec::DeviceRGB),
+            hival: 3,
+            lookup: vec![0; 12],
+        };
+        let indexed = keyed(indexed, 4, 1, 8, &[(2, 2)]);
+        assert_eq!(
+            stencil_bits(&indexed, &[0, 2, 3, 2]),
+            (4, 1, vec![0b0101_0000])
+        );
+        // Missing rows are not masked; no key or encoded data, no stencil.
+        assert_eq!(stencil_bits(&all, &[]), (2, 1, vec![0]));
+        let plain = ImageSpec {
+            mask: None,
+            ..rgb.clone()
+        };
+        assert_eq!(plain.key_to_stencil(&data), None);
+        let encoded = ImageSpec {
+            encoded: Some(Encoded::Dct),
+            ..rgb
+        };
+        assert_eq!(encoded.key_to_stencil(&data), None);
+    }
+
     #[test]
     fn image_rows_pad_to_bytes() {
         let spec = ImageSpec {
@@ -1749,6 +1909,7 @@ mod tests {
             interpolate: false,
             is_mask: true,
             encoded: None,
+            mask: None,
         };
         assert_eq!(spec.row_bytes(), Some(2));
         assert_eq!(spec.data_len(), Some(6));
@@ -1762,6 +1923,7 @@ mod tests {
             interpolate: false,
             is_mask: false,
             encoded: None,
+            mask: None,
         };
         assert_eq!(rgb.row_bytes(), Some(9));
         assert_eq!(rgb.data_len(), Some(18));

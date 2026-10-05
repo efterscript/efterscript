@@ -1,0 +1,22 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% oracle: colour
+% Scenario: a colour key of one exact colour. A 4x1 eight-bit DeviceRGB
+% type 4 image whose MaskColor is [255 255 255]: its two white samples
+% are kept off the page, where the striped backdrop shows, and its red
+% and blue samples are painted.
+/backdrop {
+  0.3 setgray 0 0 1 1 rectfill
+  0 setgray 0 0.25 0.75 { 0 0.125 1 rectfill } for
+} def
+gsave
+100 400 translate 200 200 scale
+backdrop
+/DeviceRGB setcolorspace
+<< /ImageType 4 /Width 4 /Height 1 /BitsPerComponent 8
+   /ImageMatrix [4 0 0 -1 0 1] /Decode [0 1 0 1 0 1]
+   /MaskColor [255 255 255]
+   /DataSource <FFFFFF FF0000 FFFFFF 0000FF> >> image
+grestore
+showpage
