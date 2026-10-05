@@ -27,6 +27,7 @@ page 612 792
 resources:
 ops:
 w 30
+sa false
 m 120 150
 l 420 150
 l 270 410

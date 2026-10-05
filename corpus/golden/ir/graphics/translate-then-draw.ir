@@ -5,6 +5,7 @@ ir/1
 page 612 792
 resources:
 ops:
+sa false
 stroke-ctm 1 0 0 1 72 72
 m 72 72
 l 144 72

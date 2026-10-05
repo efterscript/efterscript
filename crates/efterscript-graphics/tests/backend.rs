@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use efterscript_graphics::{
-    FillRule, Graphics, IrOp, Page, PatternIndex, PatternSpec, ShadingIndex, SpaceRef,
+    FillRule, Graphics, IrOp, Op, Page, PatternIndex, PatternSpec, ShadingIndex, SpaceRef,
 };
 use efterscript_vm::{
     Bounds, FormInfo, FunctionSpec, GraphicsBackend, ImageSpec, LineCap, Matrix, PatternInfo,
@@ -50,16 +50,20 @@ fn points_are_transformed_when_added_not_later() {
     g.concat(Matrix::scaling(2.0, 2.0)).unwrap();
     g.lineto(p(0.0, 10.0)).unwrap();
     g.stroke().unwrap();
+    // A page's first stroke states the stroke adjustment in effect.
     assert_eq!(
         ops(&g),
-        [IrOp::Stroke {
-            path: vec![
-                Seg::Move(p(72.0, 72.0)),
-                Seg::Line(p(144.0, 72.0)),
-                Seg::Line(p(72.0, 92.0)),
-            ],
-            ctm: Matrix([2.0, 0.0, 0.0, 2.0, 72.0, 72.0]),
-        }]
+        [
+            IrOp::StrokeAdjust(false),
+            IrOp::Stroke {
+                path: vec![
+                    Seg::Move(p(72.0, 72.0)),
+                    Seg::Line(p(144.0, 72.0)),
+                    Seg::Line(p(72.0, 92.0)),
+                ],
+                ctm: Matrix([2.0, 0.0, 0.0, 2.0, 72.0, 72.0]),
+            },
+        ]
     );
     assert_eq!(g.current_point(), Err(VmError::NoCurrentPoint));
 }
@@ -189,7 +193,7 @@ fn arcto_rounds_a_corner_and_reports_tangents() {
     assert!(close(g.current_point().unwrap(), p(100.0, 10.0)));
     g.stroke().unwrap();
     let recorded = ops(&g);
-    let [IrOp::Stroke { path, .. }] = recorded.as_slice() else {
+    let [IrOp::StrokeAdjust(false), IrOp::Stroke { path, .. }] = recorded.as_slice() else {
         panic!("one stroke");
     };
     assert_eq!(path.len(), 3);
@@ -243,6 +247,7 @@ fn rect_operators_leave_the_current_path_alone() {
                 path: expected.clone(),
                 rule: FillRule::NonZero
             },
+            IrOp::StrokeAdjust(false),
             IrOp::Stroke {
                 path: expected.clone(),
                 ctm: Matrix::IDENTITY
@@ -279,7 +284,17 @@ fn settings_are_emitted_once_and_only_when_needed() {
                 .to_string()
         })
         .collect();
-    assert_eq!(kinds, ["Fill", "LineWidth", "LineCap", "Stroke", "Stroke"]);
+    assert_eq!(
+        kinds,
+        [
+            "Fill",
+            "LineWidth",
+            "LineCap",
+            "StrokeAdjust",
+            "Stroke",
+            "Stroke"
+        ]
+    );
 }
 
 #[test]
@@ -376,10 +391,21 @@ fn clips_open_and_close_lazily_around_paints() {
         })
         .collect();
     // The line width set inside the clip does not survive the `Q`, so
-    // the outer stroke (width 1) needs no setting.
+    // the outer stroke (width 1) needs no setting; the stroke adjustment
+    // first stated inside the clip does not survive either, so the outer
+    // stroke states it again.
     assert_eq!(
         kinds,
-        ["Save", "Clip", "LineWidth", "Stroke", "Restore", "Stroke"]
+        [
+            "Save",
+            "Clip",
+            "LineWidth",
+            "StrokeAdjust",
+            "Stroke",
+            "Restore",
+            "StrokeAdjust",
+            "Stroke"
+        ]
     );
 
     // A clip that nothing paints under leaves no trace, and initclip
@@ -494,9 +520,10 @@ fn showpage_delivers_and_reinitializes_keeping_the_media_box() {
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].media_box, Bounds::new(0.0, 0.0, 200.0, 100.0));
     assert_eq!(pages[1].media_box, Bounds::new(0.0, 0.0, 200.0, 100.0));
-    assert_eq!(pages[0].ops.len(), 2);
-    // The second page starts from PDF defaults again.
-    assert_eq!(pages[1].ops.len(), 1);
+    assert_eq!(pages[0].ops.len(), 3);
+    // The second page starts from PDF defaults again, and states the
+    // stroke adjustment again at its first stroke.
+    assert_eq!(pages[1].ops.len(), 2);
     assert_eq!(g.ops().len(), 0);
 }
 
@@ -1075,7 +1102,7 @@ fn a_glyph_keeps_its_own_settings_clips_and_nested_text_only() {
         "ir/1\npage 612 792\nresources:\ncs 0 DeviceRGB\nfont 0 Helvetica\n\
          font 1 type3 0.001 0 0 0.001 0 0 bbox=[0 0 1000 1000] enc=[97 /a]\n\
          glyph /a 1000 0 {\n  q\n  m 0 0\n  l 600 0\n  l 600 600\n  l 0 600\n  h\n  W n\n\
-         \x20 cs 0\n  sc 0 0 1\n  m 0 0\n  l 500 500\n  S\n\
+         \x20 cs 0\n  sc 0 0 1\n  sa false\n  m 0 0\n  l 500 500\n  S\n\
          \x20 text 0 0.4 0 0 0.4 100 100 (H) 722 0\n  Q\n}\n\
          ops:\nq\nm 0 0\nl 500 0\nl 500 500\nl 0 500\nh\nW n\ncs 0\nsc 1 0 0\nw 3\n\
          text 1 0.01 0 0 0.01 10 10 (a) 1000 0\nQ\n"
@@ -1804,7 +1831,7 @@ fn current_point_and_arcto_readings_are_rounded_once() {
     assert_eq!((t1, t2), (p(-22.0, 8.0), p(23.0, 53.0)));
     g.stroke().unwrap();
     let recorded = ops(&g);
-    let [IrOp::Stroke { path, .. }] = recorded.as_slice() else {
+    let [IrOp::StrokeAdjust(false), IrOp::Stroke { path, .. }] = recorded.as_slice() else {
         panic!("one stroke");
     };
     assert_eq!(path.len(), 3, "{path:?}");
@@ -1891,6 +1918,7 @@ fn overprint_is_emitted_where_it_changes_and_restored_with_the_clip() {
             "Fill",
             "Overprint",
             "Fill",
+            "StrokeAdjust",
             "Stroke",
             "Save",
             "Clip",
@@ -1920,6 +1948,111 @@ fn overprint_is_emitted_where_it_changes_and_restored_with_the_clip() {
     line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
     g.fill().unwrap();
     assert_eq!(ops(&g).first(), Some(&IrOp::Overprint(true)));
+}
+
+/// The stroke adjustment settings among `ops`, in order.
+fn stroke_adjusts(ops: &[Op]) -> Vec<bool> {
+    ops.iter()
+        .filter_map(|o| match o.op {
+            IrOp::StrokeAdjust(on) => Some(on),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn stroke_adjustment_is_stated_at_the_first_stroke_and_where_it_changes() {
+    let (mut g, pages) = backend();
+    // A fill needs no stroke adjustment; the first stroke states the
+    // default, the second repeats nothing.
+    square(&mut g, 0.0, 0.0, 5.0);
+    assert!(ops(&g).iter().all(|o| !matches!(o, IrOp::StrokeAdjust(_))));
+    line(&mut g, p(0.0, 0.0), p(1.0, 0.0));
+    g.stroke().unwrap();
+    line(&mut g, p(0.0, 1.0), p(1.0, 1.0));
+    g.stroke().unwrap();
+    // A change inside a clip, and the restore that brings the earlier
+    // setting back with the clip's `Q`.
+    g.gsave().unwrap();
+    g.rectclip(&[Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 5.0,
+        height: 5.0,
+    }])
+    .unwrap();
+    g.set_stroke_adjust(true).unwrap();
+    line(&mut g, p(0.0, 2.0), p(1.0, 2.0));
+    g.stroke().unwrap();
+    g.grestore().unwrap();
+    assert!(!g.state().stroke_adjust);
+    line(&mut g, p(0.0, 3.0), p(1.0, 3.0));
+    g.stroke().unwrap();
+    assert_eq!(stroke_adjusts(g.ops()), [false, true]);
+    let kinds: Vec<&str> = ops(&g)
+        .iter()
+        .filter_map(|o| match o {
+            IrOp::StrokeAdjust(_) => Some("sa"),
+            IrOp::Stroke { .. } => Some("S"),
+            IrOp::Restore => Some("Q"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, ["sa", "S", "S", "sa", "S", "Q", "S"]);
+
+    // Every capture states its own setting, whatever the page stated:
+    // a stroking glyph procedure, a pattern cell, and a form body.
+    g.set_stroke_adjust(true).unwrap();
+    line(&mut g, p(0.0, 4.0), p(1.0, 4.0));
+    g.stroke().unwrap();
+    g.define_font(0, &square_font(7)).unwrap();
+    g.set_font(Some(font(0, 10.0))).unwrap();
+    g.moveto(p(10.0, 10.0)).unwrap();
+    g.gsave().unwrap();
+    let ctm = font(0, 10.0)
+        .matrix
+        .then(Matrix::translation(10.0, 10.0))
+        .then(g.current_matrix());
+    g.set_matrix(ctm).unwrap();
+    g.newpath().unwrap();
+    g.begin_glyph(font(0, 10.0), b'a', b"a", false).unwrap();
+    g.set_stroke_adjust(false).unwrap();
+    line(&mut g, p(0.0, 0.0), p(500.0, 0.0));
+    g.stroke().unwrap();
+    g.end_glyph((1000.0, 0.0), None).unwrap();
+    g.grestore().unwrap();
+    assert!(g.state().stroke_adjust);
+    g.show(&[glyph(97, 1000.0)]).unwrap();
+
+    let info = pattern(3, Matrix::IDENTITY, 1);
+    let depth = g.gstate_depth();
+    assert!(g.begin_pattern_cell(&info).unwrap());
+    line(&mut g, p(0.0, 0.0), p(5.0, 0.0));
+    g.stroke().unwrap();
+    g.end_pattern_cell().unwrap();
+    g.grestore_to(depth).unwrap();
+
+    let body = form(11, Matrix::IDENTITY);
+    assert!(g.begin_form(&body).unwrap());
+    line(&mut g, p(0.0, 0.0), p(5.0, 0.0));
+    g.stroke().unwrap();
+    g.end_form().unwrap();
+    g.grestore_to(depth).unwrap();
+    g.place_form(&body).unwrap();
+    // Placing the form and showing the glyph state nothing on the page.
+    assert_eq!(stroke_adjusts(g.ops()), [false, true, true]);
+    g.showpage().unwrap();
+
+    let pages = pages.borrow();
+    let resources = &pages[0].resources;
+    let FontSpec::Type3 { glyphs, .. } = &resources.fonts[0] else {
+        panic!("a Type 3 resource");
+    };
+    assert_eq!(stroke_adjusts(&glyphs[b"a".as_slice()].ops), [false]);
+    assert_eq!(stroke_adjusts(resources.patterns[0].ops()), [true]);
+    assert_eq!(stroke_adjusts(&resources.forms[0].ops), [true]);
+    assert!(pages[0].dump().contains("sa false\n"));
+    assert!(pages[0].dump().contains("sa true\n"));
 }
 
 #[test]

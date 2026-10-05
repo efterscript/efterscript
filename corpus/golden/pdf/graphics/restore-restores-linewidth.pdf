@@ -4,36 +4,41 @@
 % SPDX-License-Identifier: MIT
 % GENERATED-BY: difftest --update-pdf
 2 0 obj
-<< /Length 18 >>
+<< /Type /ExtGState /SA false >>
+endobj
+3 0 obj
+<< /Length 26 >>
 stream
+/SA0 gs
 10 10 m
 50 50 l
 S
 
 endstream
 endobj
-3 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 2 0 R >>
+4 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 2 0 R >> >> /Contents 3 0 R >>
 endobj
 1 0 obj
-<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>
-endobj
-4 0 obj
-<< /Type /Catalog /Pages 1 0 R >>
+<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>
 endobj
 5 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+6 0 obj
 << /Producer (EfterScript) >>
 endobj
 xref
-0 6
+0 7
 0000000000 65535 f
-0000000314 00000 n
+0000000398 00000 n
 0000000140 00000 n
-0000000208 00000 n
-0000000373 00000 n
-0000000422 00000 n
+0000000188 00000 n
+0000000264 00000 n
+0000000457 00000 n
+0000000506 00000 n
 trailer
-<< /Size 6 /Root 4 0 R /Info 5 0 R >>
+<< /Size 7 /Root 5 0 R /Info 6 0 R >>
 startxref
-467
+551
 %%EOF

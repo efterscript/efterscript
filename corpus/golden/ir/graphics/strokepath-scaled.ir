@@ -27,6 +27,7 @@ page 612 792
 resources:
 ops:
 w 10
+sa false
 stroke-ctm 3 0 0 1 0 0
 m 120 150
 l 120 450

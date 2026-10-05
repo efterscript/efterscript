@@ -2899,6 +2899,94 @@ fn an_overprint_setting_is_an_extended_graphics_state_selected_with_gs() {
 }
 
 #[test]
+fn stroke_adjustment_has_extended_graphics_states_of_its_own() {
+    let stroke = || IrOp::Stroke {
+        path: line(),
+        ctm: Matrix::IDENTITY,
+    };
+    let pdf = check(&distil_pages(
+        vec![page_with(vec![
+            IrOp::StrokeAdjust(false),
+            stroke(),
+            IrOp::StrokeAdjust(true),
+            stroke(),
+            IrOp::Overprint(true),
+            IrOp::Fill {
+                path: line(),
+                rule: FillRule::NonZero,
+            },
+        ])],
+        uncompressed(),
+    ));
+    assert_eq!(
+        content(&pdf, 0),
+        "/SA0 gs\n10 10 m\n100 10 l\nS\n/SA1 gs\n10 10 m\n100 10 l\nS\n\
+         /GS1 gs\n10 10 m\n100 10 l\nf\n"
+    );
+    // Each dictionary holds its own keys only, so selecting one setting
+    // never changes the other.
+    let states = resources(&pdf, 0).get("ExtGState").unwrap();
+    for (name, keys) in [
+        ("SA0", vec!["SA", "Type"]),
+        ("SA1", vec!["SA", "Type"]),
+        ("GS1", vec!["OP", "Type", "op"]),
+    ] {
+        let state = pdf.resolve(states.get(name).unwrap().as_reference());
+        let Value::Dict(entries) = state else {
+            panic!("{name} is a dictionary");
+        };
+        let mut found: Vec<String> = entries
+            .iter()
+            .map(|(k, _)| String::from_utf8_lossy(k).into_owned())
+            .collect();
+        found.sort();
+        assert_eq!(found, keys, "{name}");
+    }
+    let sa = |name: &str| {
+        pdf.resolve(states.get(name).unwrap().as_reference())
+            .get("SA")
+    };
+    assert!(matches!(sa("SA0"), Some(Value::Bool(false))));
+    assert!(matches!(sa("SA1"), Some(Value::Bool(true))));
+    assert!(states.get("GS0").is_none());
+}
+
+#[test]
+fn a_form_body_that_strokes_lists_its_stroke_adjustment_in_its_own_resources() {
+    use efterscript_graphics::{FormIndex, FormSpec};
+    let mut page = Page::new(LETTER);
+    let body = page.resources.add_form(FormSpec {
+        bbox: Bounds::new(0.0, 0.0, 200.0, 200.0),
+        ops: vec![
+            IrOp::StrokeAdjust(true).into(),
+            IrOp::Stroke {
+                path: line(),
+                ctm: Matrix::IDENTITY,
+            }
+            .into(),
+        ],
+    });
+    page.ops = vec![
+        Op::from(IrOp::StrokeAdjust(false)),
+        Op::from(IrOp::Stroke {
+            path: line(),
+            ctm: Matrix::IDENTITY,
+        }),
+        Op::from(IrOp::Form {
+            form: body,
+            matrix: Matrix::IDENTITY,
+        }),
+    ];
+    let pdf = check(&distil_pages(vec![page], uncompressed()));
+    let form = xobject(&pdf, 0, &format!("Fm{}", FormIndex(0).0));
+    let inner = form.get("Resources").unwrap().get("ExtGState").unwrap();
+    assert!(inner.get("SA1").is_some());
+    assert!(inner.get("SA0").is_none());
+    let outer = resources(&pdf, 0).get("ExtGState").unwrap();
+    assert!(outer.get("SA0").is_some() && outer.get("SA1").is_some());
+}
+
+#[test]
 fn a_form_body_that_overprints_lists_the_state_in_its_own_resources() {
     use efterscript_graphics::{FormIndex, FormSpec};
     let mut page = Page::new(LETTER);

@@ -5,6 +5,7 @@ ir/1
 page 200 200
 resources:
 ops:
+sa false
 m 20 20
 l 180 180
 S
@@ -13,6 +14,7 @@ ir/1
 page 612 792
 resources:
 ops:
+sa false
 m 20 20
 l 300 300
 S

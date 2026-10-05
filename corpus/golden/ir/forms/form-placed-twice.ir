@@ -12,6 +12,7 @@ form 0 bbox 0 0 20 10 {
   l 0 10
   h
   W n
+  sa false
   m 0 0
   l 20 10
   S

@@ -38,6 +38,7 @@ resources:
 ops:
 w 30
 J 2
+sa false
 m 120 150
 l 360 220
 l 220 500

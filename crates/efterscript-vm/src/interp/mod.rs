@@ -874,8 +874,11 @@ impl Interp {
         self.vm_gstate.stroke_adjust
     }
 
-    pub(crate) fn set_stroke_adjust(&mut self, on: bool) {
+    /// Sets the stroke adjustment parameter and tells the backend.
+    pub(crate) fn set_stroke_adjust(&mut self, on: bool) -> Result<(), VmError> {
+        self.backend()?.set_stroke_adjust(on)?;
         self.vm_gstate.stroke_adjust = on;
+        Ok(())
     }
 
     /// The overprint parameter of the current graphics state.
@@ -927,13 +930,16 @@ impl Interp {
     }
 
     /// Makes `state` current and tells the backend what changed: the
-    /// overprint setting, and the media box when the restored page
+    /// overprint and stroke adjustment settings, and the media box when the restored page
     /// device is another dictionary (the backend keeps its own media
     /// box per state, so the call repeats what its restore did).
     fn restore_vm_gstate(&mut self, state: VmGState) -> Result<(), VmError> {
         let before = std::mem::replace(&mut self.vm_gstate, state);
         if before.overprint != state.overprint {
             self.backend()?.set_overprint(state.overprint)?;
+        }
+        if before.stroke_adjust != state.stroke_adjust {
+            self.backend()?.set_stroke_adjust(state.stroke_adjust)?;
         }
         if !before.page_device.eq(state.page_device)
             && let Some(media_box) = ops::pagedevice::media_box(self)

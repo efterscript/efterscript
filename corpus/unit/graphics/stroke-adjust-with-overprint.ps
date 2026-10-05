@@ -1,0 +1,15 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: both values and overprint on one page.
+% A stroke with stroke adjustment off, a stroke with it on, and a fill
+% with overprint on: the page's resources hold three extended graphics
+% states, /SA false, /SA true, and /OP true /op true, none carrying
+% another's keys.
+0.3 setlinewidth
+72 500.4 moveto 400 500.4 lineto stroke
+true setstrokeadjust
+72 480.7 moveto 400 480.7 lineto stroke
+true setoverprint
+72 300 200 100 rectfill
+showpage

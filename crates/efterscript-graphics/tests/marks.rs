@@ -396,12 +396,15 @@ fn a_second_moveto_replaces_the_first() {
         .collect();
     assert_eq!(
         ops,
-        [IrOp::Stroke {
-            path: vec![
-                Seg::Move(Point::new(20.0, 20.0)),
-                Seg::Line(Point::new(30.0, 30.0)),
-            ],
-            ctm: Matrix::IDENTITY,
-        }]
+        [
+            IrOp::StrokeAdjust(false),
+            IrOp::Stroke {
+                path: vec![
+                    Seg::Move(Point::new(20.0, 20.0)),
+                    Seg::Line(Point::new(30.0, 30.0)),
+                ],
+                ctm: Matrix::IDENTITY,
+            },
+        ]
     );
 }

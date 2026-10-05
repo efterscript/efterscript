@@ -1,0 +1,18 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: false
+% Scenario: a change is recorded and a restore brings it back.
+% The first stroke states false; inside gsave, true setstrokeadjust and a
+% second stroke state true; after grestore the third stroke states false
+% again (the pair holds no clip, so nothing in the output restores the
+% setting on its own), and currentstrokeadjust answers false.
+0.3 setlinewidth
+72 500.4 moveto 400 500.4 lineto stroke
+gsave
+  true setstrokeadjust
+  72 480.7 moveto 400 480.7 lineto stroke
+grestore
+72 460.2 moveto 400 460.2 lineto stroke
+currentstrokeadjust =
+showpage

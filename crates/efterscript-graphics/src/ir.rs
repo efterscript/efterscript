@@ -441,6 +441,11 @@ pub enum IrOp {
     /// absent until a program sets it, so a page without `setoverprint`
     /// never carries one.
     Overprint(bool),
+    /// The stroke adjustment parameter in effect for the strokes that
+    /// follow; stated before the first stroke of every content whatever
+    /// its value, since renderers differ on what a silent document means,
+    /// and thereafter only where it changes.
+    StrokeAdjust(bool),
     SetColorSpace(SpaceRef),
     SetColor(Vec<f32>),
     /// The colour is a tiling pattern, in the pattern space last set:

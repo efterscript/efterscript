@@ -108,6 +108,9 @@
 //! q  Q                                save / restore around clips
 //! w <n>  J <0-2>  j <0-2>  M <n>  d [<n>…] <phase>  i <n>
 //! op true|false                       overprint, only where it changes
+//! sa true|false                       stroke adjustment, before a
+//!                                     content's first stroke and then
+//!                                     only where it changes
 //! cs <n>                              colour space by resource index
 //! sc <n>…                             components
 //! pattern <n> [<c>…]                  a pattern as the colour, with the
@@ -689,6 +692,7 @@ fn op(out: &mut String, op: &IrOp) {
         )),
         IrOp::Flatness(f) => out.push_str(&format!("i {}\n", fmt_real(*f))),
         IrOp::Overprint(on) => out.push_str(&format!("op {on}\n")),
+        IrOp::StrokeAdjust(on) => out.push_str(&format!("sa {on}\n")),
         IrOp::SetColorSpace(r) => out.push_str(&format!("cs {}\n", r.0)),
         IrOp::SetColor(c) => out.push_str(&format!("sc {}\n", fmt_reals(c))),
         IrOp::SetPattern {

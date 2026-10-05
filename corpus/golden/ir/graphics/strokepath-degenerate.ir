@@ -35,6 +35,7 @@ resources:
 ops:
 w 40
 J 1
+sa false
 m 200 300
 l 200 300
 m 350 300
@@ -51,6 +52,7 @@ page 612 792
 resources:
 ops:
 w 40
+sa false
 m 200 300
 l 200 300
 m 350 300

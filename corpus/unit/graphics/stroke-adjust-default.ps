@@ -1,0 +1,16 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: the default is stated at the first stroke.
+% A page fills a rectangle and strokes thin lines at fractional
+% positions without calling setstrokeadjust: the IR states the setting
+% in effect (false) once, after the fill and before the first stroke, and
+% the PDF selects an extended graphics state with /SA false there, so a
+% renderer that adjusts strokes in a silent document draws them as asked.
+0.5 setgray
+72 600 200 100 rectfill
+0 setgray
+0.3 setlinewidth
+72 500.4 moveto 400 500.4 lineto stroke
+72 480.7 moveto 400 480.7 lineto stroke
+showpage

@@ -56,6 +56,7 @@ fn a_stroked_line() {
         ops(&run.pages[0]),
         [
             IrOp::LineWidth(2.0),
+            IrOp::StrokeAdjust(false),
             IrOp::Stroke {
                 path: vec![Seg::Move(p(10.0, 10.0)), Seg::Line(p(100.0, 10.0))],
                 ctm: Matrix::IDENTITY,
@@ -64,7 +65,7 @@ fn a_stroked_line() {
     );
     assert_eq!(
         run.pages[0].dump(),
-        "ir/1\npage 612 792\nresources:\nops:\nw 2\nm 10 10\nl 100 10\nS\n"
+        "ir/1\npage 612 792\nresources:\nops:\nw 2\nsa false\nm 10 10\nl 100 10\nS\n"
     );
 }
 
@@ -75,10 +76,13 @@ fn unpainted_paths_leave_no_trace() {
     assert_eq!(run.outcome, Outcome::Ok);
     assert_eq!(
         ops(&run.pages[0]),
-        [IrOp::Stroke {
-            path: vec![Seg::Move(p(1.0, 1.0)), Seg::Line(p(2.0, 2.0))],
-            ctm: Matrix::IDENTITY,
-        }]
+        [
+            IrOp::StrokeAdjust(false),
+            IrOp::Stroke {
+                path: vec![Seg::Move(p(1.0, 1.0)), Seg::Line(p(2.0, 2.0))],
+                ctm: Matrix::IDENTITY,
+            },
+        ]
     );
 }
 
@@ -136,10 +140,13 @@ fn translate_then_draw() {
     assert_eq!(run.outcome, Outcome::Ok);
     assert_eq!(
         ops(&run.pages[0]),
-        [IrOp::Stroke {
-            path: vec![Seg::Move(p(72.0, 72.0)), Seg::Line(p(144.0, 72.0))],
-            ctm: Matrix::translation(72.0, 72.0),
-        }]
+        [
+            IrOp::StrokeAdjust(false),
+            IrOp::Stroke {
+                path: vec![Seg::Move(p(72.0, 72.0)), Seg::Line(p(144.0, 72.0))],
+                ctm: Matrix::translation(72.0, 72.0),
+            },
+        ]
     );
     assert!(
         run.pages[0]
@@ -173,7 +180,7 @@ fn clip_inside_gsave_is_bracketed() {
     assert_eq!(
         run.pages[0].dump(),
         "ir/1\npage 612 792\nresources:\nops:\nq\nm 10 10\nl 60 10\nl 60 60\nl 10 60\nh\nW n\n\
-         m 0 0\nl 100 100\nS\nQ\nm 0 0\nl 5 5\nS\n"
+         sa false\nm 0 0\nl 100 100\nS\nQ\nsa false\nm 0 0\nl 5 5\nS\n"
     );
 }
 

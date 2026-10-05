@@ -9,6 +9,7 @@ ops:
 cs 0
 sc 0.6
 w 6
+sa false
 m 100 100
 l 300 100
 S

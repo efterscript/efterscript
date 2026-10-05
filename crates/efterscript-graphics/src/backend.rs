@@ -15,6 +15,9 @@
 //! colour, as PDF's `Q` does. A `gsave`/`grestore` pair that paints
 //! nothing therefore leaves no trace. Overprint is recorded the same
 //! way, ahead of every kind of paint, since it bears on all of them.
+//! Stroke adjustment is recorded ahead of a stroke only, and stated at
+//! the first stroke of every content even at its default, since a
+//! renderer may adjust strokes when a document says nothing.
 //!
 //! A Type 3 glyph, a pattern cell, and a form body are captured by
 //! redirecting emission: between `begin_*` and `end_*` the page's
@@ -64,6 +67,11 @@ struct Emitted {
     dash: (Vec<f32>, f32),
     flatness: f32,
     overprint: bool,
+    /// The stroke adjustment the IR has stated in this content, `None`
+    /// until its first stroke; every content starts unstated, since a
+    /// glyph procedure or a form body is used in contexts that state
+    /// nothing, and a pattern cell starts from the initial state.
+    stroke_adjust: Option<bool>,
     space: SpaceSpec,
     color: Vec<f32>,
     /// The pattern resource the colour last set names, if a pattern.
@@ -87,6 +95,7 @@ impl Emitted {
             dash: state.dash.clone(),
             flatness: state.flatness,
             overprint: state.overprint,
+            stroke_adjust: None,
             space: state.space.clone(),
             color: state.color.clone(),
             pattern: None,
@@ -559,6 +568,13 @@ impl<S: PageSink> Graphics<S> {
         self.sync_clip();
         self.flush(needs);
         let op = make(path, self.gstate.ctm);
+        if matches!(op, IrOp::Stroke { .. }) {
+            let on = self.gstate.stroke_adjust;
+            if self.emitter.current().stroke_adjust != Some(on) {
+                self.emitter.current().stroke_adjust = Some(on);
+                self.record(IrOp::StrokeAdjust(on));
+            }
+        }
         self.record(op);
     }
 
@@ -916,6 +932,11 @@ impl<S: PageSink> GraphicsBackend for Graphics<S> {
 
     fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
         self.gstate.overprint = on;
+        Ok(())
+    }
+
+    fn set_stroke_adjust(&mut self, on: bool) -> Result<(), VmError> {
+        self.gstate.stroke_adjust = on;
         Ok(())
     }
 

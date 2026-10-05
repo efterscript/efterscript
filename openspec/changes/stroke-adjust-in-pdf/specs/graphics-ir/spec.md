@@ -27,7 +27,7 @@ where it changes; the dump SHALL print it as a state line.
 #### Scenario: A change is recorded and a restore brings it back
 
 - **WHEN** a page strokes a line, then inside `gsave` calls `true setstrokeadjust` and strokes a second, then after `grestore` strokes a third
-- **THEN** the dump shows `false` before the first stroke and `true` before the second, the third follows the restore with no further setting, and `currentstrokeadjust` after the `grestore` answers `false`
+- **THEN** the dump shows `false` before the first stroke, `true` before the second, and `false` again before the third (the pair holds no clip, so the IR has no `Restore` that would bring the setting back), and `currentstrokeadjust` after the `grestore` answers `false`
 
 #### Scenario: A glyph procedure states its own setting
 

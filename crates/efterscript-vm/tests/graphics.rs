@@ -1669,8 +1669,8 @@ fn stroke_adjust_and_overprint_live_in_the_graphics_state() {
         run.output,
         "false\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
     );
-    // The backend hears every setoverprint and the restorations that
-    // change the value; stroke adjustment never crosses the boundary.
+    // The backend hears every setter and the restorations that change
+    // the value, for both parameters alike.
     let overprints: Vec<bool> = run
         .calls()
         .into_iter()
@@ -1680,6 +1680,15 @@ fn stroke_adjust_and_overprint_live_in_the_graphics_state() {
         })
         .collect();
     assert_eq!(overprints, [true, false, true, false, true]);
+    let stroke_adjusts: Vec<bool> = run
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::StrokeAdjust(on) => Some(on),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stroke_adjusts, [true, false, true, false, true]);
     assert!(run.interp.stroke_adjust());
     assert!(run.interp.overprint());
 
@@ -1703,6 +1712,22 @@ fn a_glyph_procedure_starts_without_stroke_adjustment() {
     );
     assert_eq!(run.outcome, Outcome::Ok, "{:?}", run.outcome);
     assert_eq!(run.output, "false\ntrue\nfalse\nfalse\n");
+    // The reset reaches the backend inside the glyph's state, and the
+    // restoration after it repeats the outer value only when it differs.
+    let stroke_adjusts: Vec<bool> = run
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::StrokeAdjust(on) => Some(on),
+            _ => None,
+        })
+        .collect();
+    // Set, reset, set by the procedure; the first restore changes
+    // nothing, the second brings `false` back.
+    assert_eq!(
+        stroke_adjusts,
+        [true, false, true, false, false, true, false]
+    );
 }
 
 // pagedevice-in-gstate.ps, pagedevice-merges.ps

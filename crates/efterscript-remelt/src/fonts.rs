@@ -35,7 +35,7 @@ use efterscript_vm::{Bounds, Matrix, ShadingSpec, SpaceSpec};
 
 use crate::content::{self, Recode};
 use crate::embedded::EmbeddedTable;
-use crate::resources::Objects;
+use crate::resources::{ExtState, Objects};
 
 /// What a content — a glyph procedure, a pattern cell, a form body —
 /// refers to on its page, by index: what its own resource dictionary
@@ -48,9 +48,8 @@ pub(crate) struct Refs {
     pub patterns: BTreeSet<usize>,
     pub forms: BTreeSet<usize>,
     pub shadings: BTreeSet<usize>,
-    /// The overprint values the content selects, each an extended
-    /// graphics state resource.
-    pub overprints: BTreeSet<bool>,
+    /// The extended graphics states the content selects.
+    pub ext_states: BTreeSet<ExtState>,
 }
 
 impl Refs {
@@ -97,7 +96,10 @@ fn collect(ops: &[Op], resources: &Resources, refs: &mut Refs, deep: bool) {
                 refs.shadings.insert(shading.0);
             }
             IrOp::Overprint(on) => {
-                refs.overprints.insert(*on);
+                refs.ext_states.insert(ExtState::Overprint(*on));
+            }
+            IrOp::StrokeAdjust(on) => {
+                refs.ext_states.insert(ExtState::StrokeAdjust(*on));
             }
             IrOp::Form { form, .. } => {
                 if refs.forms.insert(form.0)

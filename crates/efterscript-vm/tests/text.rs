@@ -250,7 +250,11 @@ fn type3_glyphs_run_inside_a_captured_graphics_state() {
         .filter(|c| {
             !matches!(
                 c,
-                Call::MediaBox(_) | Call::SetFont(_) | Call::MoveTo(_) | Call::NewPath
+                Call::MediaBox(_)
+                    | Call::SetFont(_)
+                    | Call::MoveTo(_)
+                    | Call::NewPath
+                    | Call::StrokeAdjust(_)
             )
         })
         .collect();

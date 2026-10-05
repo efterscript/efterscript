@@ -1350,6 +1350,15 @@ pub trait GraphicsBackend {
         let _ = on;
         Ok(())
     }
+    /// The stroke adjustment parameter (`setstrokeadjust`, PLRM3
+    /// §6.5.2), handed over as overprint is: on every change the VM makes
+    /// (including the reset a glyph procedure starts with) and on a
+    /// restoration that changes it. A backend that keeps nothing accepts
+    /// and ignores it.
+    fn set_stroke_adjust(&mut self, on: bool) -> Result<(), VmError> {
+        let _ = on;
+        Ok(())
+    }
 
     /// Replaces the current path with the outline of the stroke the
     /// current line parameters would draw (`strokepath`, PLRM3 §8.2):

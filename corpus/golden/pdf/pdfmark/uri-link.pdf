@@ -3,41 +3,46 @@
 % SPDX-FileCopyrightText: 2026 EfterScript contributors
 % SPDX-License-Identifier: MIT
 % GENERATED-BY: difftest --update-pdf
-3 0 obj
-<< /Length 21 >>
+2 0 obj
+<< /Type /ExtGState /SA false >>
+endobj
+4 0 obj
+<< /Length 29 >>
 stream
+/SA0 gs
 72 700 m
 300 700 l
 S
 
 endstream
 endobj
-4 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 3 0 R /Annots [ 2 0 R ] >>
+5 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 2 0 R >> >> /Contents 4 0 R /Annots [ 3 0 R ] >>
 endobj
-2 0 obj
+3 0 obj
 << /Type /Annot /Subtype /Link /Rect [ 72 700 300 720 ] /Border [ 0 0 1 ] /C [ 0 0 1 ] /A << /Type /Action /S /URI /URI (https://example.org/) >> >>
 endobj
 1 0 obj
-<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>
-endobj
-5 0 obj
-<< /Type /Catalog /Pages 1 0 R >>
+<< /Type /Pages /Kids [ 5 0 R ] /Count 1 >>
 endobj
 6 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+7 0 obj
 << /Producer (EfterScript) >>
 endobj
 xref
-0 7
+0 8
 0000000000 65535 f
-0000000499 00000 n
-0000000335 00000 n
+0000000583 00000 n
 0000000140 00000 n
-0000000211 00000 n
-0000000558 00000 n
-0000000607 00000 n
+0000000419 00000 n
+0000000188 00000 n
+0000000267 00000 n
+0000000642 00000 n
+0000000691 00000 n
 trailer
-<< /Size 7 /Root 5 0 R /Info 6 0 R >>
+<< /Size 8 /Root 6 0 R /Info 7 0 R >>
 startxref
-652
+736
 %%EOF

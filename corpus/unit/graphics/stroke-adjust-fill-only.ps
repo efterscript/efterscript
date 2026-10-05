@@ -1,0 +1,11 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% Scenario: a page without strokes is unchanged.
+% A page that only fills and shows text in a resident font states no
+% stroke adjustment, whatever the program set.
+true setstrokeadjust
+72 600 200 100 rectfill
+/Helvetica findfont 24 scalefont setfont
+72 500 moveto (Filled only) show
+showpage

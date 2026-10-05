@@ -80,7 +80,7 @@ fn a_stroked_line_distils() {
     let pdf = check(&run.pdf);
     assert_eq!(kids(&pdf).len(), 1);
     assert_eq!(media_box(&pdf, 0), [0.0, 0.0, 612.0, 792.0]);
-    assert_eq!(content(&pdf, 0), "2 w\n10 10 m\n100 10 l\nS\n");
+    assert_eq!(content(&pdf, 0), "2 w\n/SA0 gs\n10 10 m\n100 10 l\nS\n");
 }
 
 // The identity in the report: seeded entries and what the prelude added
@@ -194,7 +194,7 @@ fn dash_and_line_parameters() {
     let pdf = check(&run.pdf);
     assert_eq!(
         content(&pdf, 0),
-        "1 J\n2 j\n4 M\n[3 1] 0 d\n10 10 m\n100 10 l\nS\n"
+        "1 J\n2 j\n4 M\n[3 1] 0 d\n/SA0 gs\n10 10 m\n100 10 l\nS\n"
     );
 }
 
@@ -204,7 +204,10 @@ fn scaled_stroke_keeps_its_width() {
     let run = distil("2 2 scale 1 setlinewidth 5 5 moveto 50 5 lineto stroke showpage");
     let pdf = check(&run.pdf);
     // A width of 1 is PDF's initial value too, so nothing sets it.
-    assert_eq!(content(&pdf, 0), "q\n2 0 0 2 0 0 cm\n5 5 m\n50 5 l\nS\nQ\n");
+    assert_eq!(
+        content(&pdf, 0),
+        "/SA0 gs\nq\n2 0 0 2 0 0 cm\n5 5 m\n50 5 l\nS\nQ\n"
+    );
 }
 
 // translate-then-draw.ps covers the IR; the PDF form is pinned here.
@@ -214,7 +217,7 @@ fn translated_stroke_needs_no_width_change() {
     let pdf = check(&run.pdf);
     assert_eq!(
         content(&pdf, 0),
-        "q\n1 0 0 1 10 20 cm\n0 0 m\n30 0 l\nS\nQ\n"
+        "/SA0 gs\nq\n1 0 0 1 10 20 cm\n0 0 m\n30 0 l\nS\nQ\n"
     );
 }
 
