@@ -20,4 +20,4 @@
 
 - [x] 4.1 The driver-construction corpus file (D10) and the remaining scenarios of the `images` and `remelt` deltas exist as corpus files with goldens; the oracle tier over `corpus/unit/graphics/masked-*` gives pass or the registered divergence for every file
 - [ ] 4.2 Private tier: the real job re-captured from the emulator pairing against this branch's library, vaulted under `corpora/realworld-drivers/` with its `PROVENANCE.md` and checksums, distils with the hosting application's prelude to outcome `ok`, and passes the oracle
-- [ ] 4.3 Gates: `cargo test --workspace`, clippy, fmt, `difftest run`, `parse-survival`, `fuzz-round`, `lint-strings` (with the vault path), `check-wasm`, `openspec validate masked-images`; design.md gains "## Implementation notes" with provenance (manual sections and black-box observations)
+- [x] 4.3 Gates: `cargo test --workspace`, clippy, fmt, `difftest run`, `parse-survival`, `fuzz-round`, `lint-strings` (with the vault path), `check-wasm`, `openspec validate masked-images`; design.md gains "## Implementation notes" with provenance (manual sections and black-box observations)
