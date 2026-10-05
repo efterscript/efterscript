@@ -57,7 +57,9 @@ from the initial state (ISO 32000-1 §8.7.3.1). So none of them may rely
 on what the enclosing content stated: `Emitted::of` and the initial
 record both start at `None`, and each content states the value before
 its own first stroke. A `Restore` pops the record with the rest, which
-matches PDF's `Q`.
+matches PDF's `Q`. A `gsave`/`grestore` pair without a clip leaves no
+`Save` in the IR, so a value changed inside it and restored by its
+`grestore` is stated again at the next stroke.
 
 **D3. Only strokes trigger it.** The setting is flushed before an
 `IrOp::Stroke` and nothing else. In particular it is not flushed by the
@@ -110,3 +112,61 @@ job-print-window.ps`, run through `difftest oracle --profile default`
 with the hosting application's prelude, passes. It reports 1.373% of
 pixels differing before the change, and 0.007% with `/SA false` written
 by hand.
+
+## Implementation notes
+
+**As designed**, with one correction to a scenario. In the `graphics-ir`
+delta, the restore scenario first said that the stroke after `grestore`
+needs no further setting. That holds only when the pair holds a clip. A
+`gsave`/`grestore` without a clip leaves no `Save` in the IR (lazy
+emission), so nothing in the output undoes the `true` set inside it, and
+the stroke after it states `false` again. The scenario, its corpus file,
+and D2 say so now.
+
+**Where the setting is flushed.** In `paint`, after the other settings,
+when the operation being recorded is a stroke. A Type 3 `show` and a
+form placement flush the line parameters with `Needs::Stroke` but never
+stroke adjustment (D3).
+
+**Tests.** The VM's recording backend sees every `setstrokeadjust`, the
+reset at the start of a glyph procedure, and a restoration only when the
+value changes. The backend tests cover the default stated once, a change
+and its restore through a clip's `Q`, a stroking glyph procedure, a
+pattern cell, a form body, and a fill-only page. remelt tests cover the
+names and dictionaries (each holding its own keys only) and a form
+body's own resources. Tests that pinned an exact operation list or
+content stream with a stroke now include the stated setting.
+
+**Goldens.** 45 IR goldens and their 45 PDF goldens changed. The IR
+diff adds `sa false` lines and nothing else. The PDF content changes are
+the added `/SA0 gs` lines and `<< /Type /ExtGState /SA false >>`
+objects, with the page resources listing them; the other differing
+lines are the object numbers, offsets, and stream lengths they shift.
+Five new corpus files: `stroke-adjust-default`, `-restore`, `-glyph`,
+`-with-overprint`, and `-fill-only`. `qpdf --check`, run as the external
+checker, accepts every document `difftest run` writes.
+
+**Oracle tier** (profile `default`). All five new files pass. On
+`stroke-adjust-restore.ps` the program's output differs: after the
+`grestore` the reference answers `true` to `currentstrokeadjust` when it
+runs a program for its output, so its default is on there. Its PDF
+output states `/SA false` for the same kind of job, so its own default
+depends on the output device; the manual leaves the default to the
+device, and ours stays `false` (proposal, out of scope). Output
+differences are reported, not counted.
+
+**Acceptance.** The vaulted job `job-print-window.ps`, run with the
+hosting application's prelude, passes: 0.007% of pixels differ (limit
+0.5%), against 1.373% before.
+
+**Gates.** `cargo test --workspace` 1299 passed (1296 before); clippy
+and `cargo fmt --check` clean; `difftest run` 390 files, 390 passed;
+`parse-survival` no errors; `fuzz-round` 1300 + 1300 programs, 0
+failed; `lint-strings` with the vault 1416 files clean; `check-wasm`
+passes; `cargo doc` with warnings denied clean; the build without
+default features, the browser package's tests (10 passed), and the site
+build pass; `openspec validate stroke-adjust-in-pdf` valid. One full
+test run showed a failure in `efterscript-platen`'s FFI test
+`a_rejected_identity_and_a_failing_prelude_return_null`, which read
+another test's error message. It passed in eight runs of its own and in
+the full runs before and after. This change does not touch that code.

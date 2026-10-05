@@ -1,0 +1,29 @@
+%!PS
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% expect-output: true
+% Scenario: a glyph procedure states its own setting.
+% A Type 3 glyph procedure strokes a path; it starts without stroke
+% adjustment (PLRM3 §8.2, setstrokeadjust), so its operations state false
+% before its stroke even though the page set true and stroked before it.
+% The page's setting is unchanged after the show.
+/StrokedBox <<
+  /FontType 3
+  /FontMatrix [0.001 0 0 0.001 0 0]
+  /FontBBox [0 0 1000 1000]
+  /Encoding 256 array dup 66 /B put
+  /BuildGlyph {
+    pop pop
+    1000 0 0 0 1000 1000 setcachedevice
+    40 setlinewidth
+    100 100 moveto 900 100 lineto 900 900 lineto 100 900 lineto closepath
+    stroke
+  }
+>> definefont pop
+true setstrokeadjust
+0.3 setlinewidth
+72 500.4 moveto 400 500.4 lineto stroke
+/StrokedBox findfont 48 scalefont setfont
+72 400 moveto (BB) show
+currentstrokeadjust =
+showpage

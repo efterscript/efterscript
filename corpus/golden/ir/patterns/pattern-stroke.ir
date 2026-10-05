@@ -25,6 +25,7 @@ ops:
 cs 0
 pattern 0
 w 12
+sa false
 m 100 100
 l 400 400
 S

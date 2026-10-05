@@ -1000,7 +1000,7 @@ fn begin_glyph(i: &mut Interp, f: &mut ShowFrame, code: u8, by_name: bool) -> Re
         i.gsave()?;
         // A glyph procedure starts without stroke adjustment (PLRM3
         // §8.2 `setstrokeadjust`); the saved state brings it back.
-        i.set_stroke_adjust(false);
+        i.set_stroke_adjust(false)?;
         f.running = Some(run);
         let backend = i.backend()?;
         let ctm = backend.current_matrix();

@@ -10,42 +10,47 @@ stream
 endstream
 endobj
 3 0 obj
-<< /Length 58 >>
+<< /Type /ExtGState /SA false >>
+endobj
+4 0 obj
+<< /Length 66 >>
 stream
 /CS0 cs
 /CS0 CS
 0.6 scn
 0.6 SCN
 6 w
+/SA0 gs
 100 100 m
 300 100 l
 S
 
 endstream
 endobj
-4 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ColorSpace << /CS0 [ /Separation /Spot /DeviceCMYK 2 0 R ] >> >> /Contents 3 0 R >>
+5 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ColorSpace << /CS0 [ /Separation /Spot /DeviceCMYK 2 0 R ] >> /ExtGState << /SA0 3 0 R >> >> /Contents 4 0 R >>
 endobj
 1 0 obj
-<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>
-endobj
-5 0 obj
-<< /Type /Catalog /Pages 1 0 R >>
+<< /Type /Pages /Kids [ 5 0 R ] /Count 1 >>
 endobj
 6 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+7 0 obj
 << /Producer (EfterScript) >>
 endobj
 xref
-0 7
+0 8
 0000000000 65535 f
-0000000543 00000 n
+0000000627 00000 n
 0000000140 00000 n
 0000000266 00000 n
-0000000374 00000 n
-0000000602 00000 n
-0000000651 00000 n
+0000000314 00000 n
+0000000430 00000 n
+0000000686 00000 n
+0000000735 00000 n
 trailer
-<< /Size 7 /Root 5 0 R /Info 6 0 R >>
+<< /Size 8 /Root 6 0 R /Info 7 0 R >>
 startxref
-696
+780
 %%EOF

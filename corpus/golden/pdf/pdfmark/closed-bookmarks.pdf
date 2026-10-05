@@ -4,70 +4,80 @@
 % SPDX-License-Identifier: MIT
 % GENERATED-BY: difftest --update-pdf
 2 0 obj
-<< /Length 21 >>
+<< /Type /ExtGState /SA false >>
+endobj
+3 0 obj
+<< /Length 29 >>
 stream
+/SA0 gs
 72 700 m
 300 700 l
 S
 
 endstream
 endobj
-3 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 2 0 R >>
-endobj
 4 0 obj
-<< /Length 21 >>
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 2 0 R >> >> /Contents 3 0 R >>
+endobj
+5 0 obj
+<< /Type /ExtGState /SA false >>
+endobj
+6 0 obj
+<< /Length 29 >>
 stream
+/SA0 gs
 72 600 m
 300 600 l
 S
 
 endstream
 endobj
-5 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 4 0 R >>
-endobj
-6 0 obj
-<< /Type /Outlines /First 7 0 R /Last 10 0 R /Count 2 >>
-endobj
 7 0 obj
-<< /Title (Part) /Parent 6 0 R /Next 10 0 R /First 8 0 R /Last 9 0 R /Count -2 /Dest [ 3 0 R /Fit ] >>
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 5 0 R >> >> /Contents 6 0 R >>
 endobj
 8 0 obj
-<< /Title (One) /Parent 7 0 R /Next 9 0 R /Dest [ 3 0 R /FitH 700 ] >>
+<< /Type /Outlines /First 9 0 R /Last 12 0 R /Count 2 >>
 endobj
 9 0 obj
-<< /Title (Two) /Parent 7 0 R /Prev 8 0 R /Dest [ 3 0 R /Fit ] >>
+<< /Title (Part) /Parent 8 0 R /Next 12 0 R /First 10 0 R /Last 11 0 R /Count -2 /Dest [ 4 0 R /Fit ] >>
 endobj
 10 0 obj
-<< /Title (Appendix) /Parent 6 0 R /Prev 7 0 R /Dest [ 5 0 R /XYZ 0 792 1 ] >>
-endobj
-1 0 obj
-<< /Type /Pages /Kids [ 3 0 R 5 0 R ] /Count 2 >>
+<< /Title (One) /Parent 9 0 R /Next 11 0 R /Dest [ 4 0 R /FitH 700 ] >>
 endobj
 11 0 obj
-<< /Type /Catalog /Pages 1 0 R /Outlines 6 0 R >>
+<< /Title (Two) /Parent 9 0 R /Prev 10 0 R /Dest [ 4 0 R /Fit ] >>
 endobj
 12 0 obj
+<< /Title (Appendix) /Parent 8 0 R /Prev 9 0 R /Dest [ 7 0 R /XYZ 0 792 1 ] >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 4 0 R 7 0 R ] /Count 2 >>
+endobj
+13 0 obj
+<< /Type /Catalog /Pages 1 0 R /Outlines 8 0 R >>
+endobj
+14 0 obj
 << /Producer (EfterScript) >>
 endobj
 xref
-0 13
+0 15
 0000000000 65535 f
-0000000946 00000 n
+0000001120 00000 n
 0000000140 00000 n
-0000000211 00000 n
-0000000317 00000 n
-0000000388 00000 n
-0000000494 00000 n
-0000000566 00000 n
-0000000684 00000 n
-0000000770 00000 n
-0000000851 00000 n
-0000001011 00000 n
-0000001077 00000 n
+0000000188 00000 n
+0000000267 00000 n
+0000000401 00000 n
+0000000449 00000 n
+0000000528 00000 n
+0000000662 00000 n
+0000000734 00000 n
+0000000854 00000 n
+0000000942 00000 n
+0000001025 00000 n
+0000001185 00000 n
+0000001251 00000 n
 trailer
-<< /Size 13 /Root 11 0 R /Info 12 0 R >>
+<< /Size 15 /Root 13 0 R /Info 14 0 R >>
 startxref
-1123
+1297
 %%EOF

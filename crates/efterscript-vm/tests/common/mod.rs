@@ -66,6 +66,7 @@ pub enum Call {
     Shade(ShadingSpec),
     Smoothness(f32),
     Overprint(bool),
+    StrokeAdjust(bool),
     StrokeOutline,
     MediaBox(Bounds),
     ShowPage,
@@ -568,6 +569,11 @@ impl GraphicsBackend for Recording {
 
     fn set_overprint(&mut self, on: bool) -> Result<(), VmError> {
         self.record(Call::Overprint(on));
+        Ok(())
+    }
+
+    fn set_stroke_adjust(&mut self, on: bool) -> Result<(), VmError> {
+        self.record(Call::StrokeAdjust(on));
         Ok(())
     }
 

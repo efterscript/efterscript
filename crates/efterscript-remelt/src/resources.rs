@@ -53,7 +53,9 @@
 //! cell, a body, or a glyph procedure — has an extended graphics state
 //! dictionary `/GSn` (ISO 32000-1 §8.4.5) carrying `OP` and `op` with
 //! the value, one per distinct value used, listed under `ExtGState` by
-//! the page and by every content that selects it.
+//! the page and by every content that selects it. A stroke adjustment
+//! setting has `/SAn` carrying `SA` alone (§10.7.5), gathered and listed
+//! the same way.
 //!
 //! The objects a page needs are written before the page itself, so a
 //! `Resources` dictionary only ever refers to objects already in the file.
@@ -101,10 +103,24 @@ pub(crate) fn shading_name(shading: ShadingIndex) -> String {
     format!("Sh{}", shading.0)
 }
 
-/// The extended graphics state selecting overprint `on`: `GS0` turns
-/// it off, `GS1` on.
-pub(crate) fn ext_gstate_name(on: bool) -> String {
-    format!("GS{}", u8::from(on))
+/// One parameter at one value, as an extended graphics state selects
+/// it; a `gs` changes only the keys its dictionary holds (ISO 32000-1
+/// §8.4.5), so each setting has a dictionary of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ExtState {
+    /// `OP` and `op`.
+    Overprint(bool),
+    /// `SA` (§10.7.5).
+    StrokeAdjust(bool),
+}
+
+/// The extended graphics state selecting `state`: `GS0` and `GS1` turn
+/// overprint off and on, `SA0` and `SA1` stroke adjustment.
+pub(crate) fn ext_gstate_name(state: ExtState) -> String {
+    match state {
+        ExtState::Overprint(on) => format!("GS{}", u8::from(on)),
+        ExtState::StrokeAdjust(on) => format!("SA{}", u8::from(on)),
+    }
 }
 
 /// A colour space with its function streams already written.
@@ -719,33 +735,41 @@ fn put_axis(d: &mut DictBuilder<'_>, domain: &[f32; 2], extend: &[bool; 2], func
     }
 }
 
-/// The overprint values selected anywhere on `page`: its operations
-/// and those of every cell, body, and glyph procedure it holds.
-fn overprints_used(page: &Page) -> BTreeSet<bool> {
+/// The extended graphics states selected anywhere on `page`: by its
+/// operations and those of every cell, body, and glyph procedure it
+/// holds.
+fn ext_states_used(page: &Page) -> BTreeSet<ExtState> {
     let resources = &page.resources;
-    let mut used = Refs::of(&page.ops, resources).overprints;
+    let mut used = Refs::of(&page.ops, resources).ext_states;
     for spec in &resources.patterns {
-        used.extend(Refs::of(spec.ops(), resources).overprints);
+        used.extend(Refs::of(spec.ops(), resources).ext_states);
     }
     for spec in &resources.forms {
-        used.extend(Refs::of(&spec.ops, resources).overprints);
+        used.extend(Refs::of(&spec.ops, resources).ext_states);
     }
     for spec in &resources.fonts {
-        used.extend(crate::fonts::references(spec, resources, false).overprints);
+        used.extend(crate::fonts::references(spec, resources, false).ext_states);
     }
     used
 }
 
 fn write_ext_gstate<W: Write>(
     doc: &mut Document<W>,
-    on: bool,
+    state: ExtState,
 ) -> Result<Ref, efterscript_pdf::Error> {
     let object = doc.alloc();
     doc.write_obj(object, |v| {
         v.dict(|d| {
             d.key("Type").name("ExtGState");
-            d.key("OP").boolean(on);
-            d.key("op").boolean(on);
+            match state {
+                ExtState::Overprint(on) => {
+                    d.key("OP").boolean(on);
+                    d.key("op").boolean(on);
+                }
+                ExtState::StrokeAdjust(on) => {
+                    d.key("SA").boolean(on);
+                }
+            }
         })
     })?;
     Ok(object)
@@ -759,7 +783,7 @@ pub(crate) struct Objects {
     fonts: Vec<Ref>,
     patterns: Vec<Ref>,
     forms: Vec<Ref>,
-    ext_gstates: BTreeMap<bool, Ref>,
+    ext_gstates: BTreeMap<ExtState, Ref>,
     recode: Recode,
 }
 
@@ -814,8 +838,8 @@ impl Objects {
             shadings.push(write_shading(doc, spec, filter)?);
         }
         let mut ext_gstates = BTreeMap::new();
-        for on in overprints_used(page) {
-            ext_gstates.insert(on, write_ext_gstate(doc, on)?);
+        for state in ext_states_used(page) {
+            ext_gstates.insert(state, write_ext_gstate(doc, state)?);
         }
         // Allocated before the fonts are written and written after them:
         // a glyph procedure may name a pattern, a cell may show text.
@@ -956,11 +980,11 @@ impl Objects {
     fn listed_ext_gstates<'a>(
         &'a self,
         only: Option<&'a Refs>,
-    ) -> impl Iterator<Item = (bool, Ref)> + 'a {
+    ) -> impl Iterator<Item = (ExtState, Ref)> + 'a {
         self.ext_gstates
             .iter()
-            .filter(move |(on, _)| only.is_none_or(|refs| refs.overprints.contains(on)))
-            .map(|(&on, &r)| (on, r))
+            .filter(move |(state, _)| only.is_none_or(|refs| refs.ext_states.contains(state)))
+            .map(|(&state, &r)| (state, r))
     }
 
     /// Whether a resources dictionary restricted to `only` would list
@@ -1029,8 +1053,8 @@ impl Objects {
         }
         if self.listed_ext_gstates(only).next().is_some() {
             d.key("ExtGState").dict(|e| {
-                for (on, r) in self.listed_ext_gstates(only) {
-                    e.key(&ext_gstate_name(on)).reference(r);
+                for (state, r) in self.listed_ext_gstates(only) {
+                    e.key(&ext_gstate_name(state)).reference(r);
                 }
             });
         }
@@ -1088,8 +1112,10 @@ mod tests {
         assert_eq!(pattern_name(PatternIndex(2)), "P2");
         assert_eq!(form_name(FormIndex(1)), "Fm1");
         assert_eq!(shading_name(ShadingIndex(4)), "Sh4");
-        assert_eq!(ext_gstate_name(false), "GS0");
-        assert_eq!(ext_gstate_name(true), "GS1");
+        assert_eq!(ext_gstate_name(ExtState::Overprint(false)), "GS0");
+        assert_eq!(ext_gstate_name(ExtState::Overprint(true)), "GS1");
+        assert_eq!(ext_gstate_name(ExtState::StrokeAdjust(false)), "SA0");
+        assert_eq!(ext_gstate_name(ExtState::StrokeAdjust(true)), "SA1");
     }
 
     #[test]

@@ -26,6 +26,7 @@ page 612 792
 resources:
 ops:
 w 24
+sa false
 m 120 200
 l 420 200
 l 120 260
@@ -58,6 +59,7 @@ resources:
 ops:
 w 24
 M 20
+sa false
 m 120 200
 l 420 200
 l 120 260

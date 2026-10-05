@@ -5,6 +5,7 @@ ir/1
 page 612 792
 resources:
 ops:
+sa false
 m 72 72
 l 300 72
 S

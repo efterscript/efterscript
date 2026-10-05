@@ -6,6 +6,7 @@ page 612 792
 resources:
 ops:
 w 2
+sa false
 m 10 10
 l 100 10
 S

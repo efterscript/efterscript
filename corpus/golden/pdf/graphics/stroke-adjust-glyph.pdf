@@ -1,0 +1,97 @@
+%PDF-1.7
+%åæôò
+% SPDX-FileCopyrightText: 2026 EfterScript contributors
+% SPDX-License-Identifier: MIT
+% GENERATED-BY: difftest --update-pdf
+2 0 obj
+<< /Type /ExtGState /SA false >>
+endobj
+3 0 obj
+<< /Type /ExtGState /SA true >>
+endobj
+5 0 obj
+<< /Length 89 >>
+stream
+1000 0 0 0 1000 1000 d1
+40 w
+/SA0 gs
+100 99.9998 m
+900 99.9998 l
+900 900 l
+100 900 l
+h
+S
+
+endstream
+endobj
+6 0 obj
+<< /Length 332 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<42> <0042>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+
+endstream
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [ 0 0 1000 1000 ] /FontMatrix [ 0.001 0 0 0.001 0 0 ] /CharProcs << /B 5 0 R >> /Encoding << /Type /Encoding /Differences [ 66 /B ] >> /FirstChar 66 /LastChar 66 /Widths [ 1000 ] /Resources << /ExtGState << /SA0 2 0 R >> >> /ToUnicode 6 0 R >>
+endobj
+7 0 obj
+<< /Length 82 >>
+stream
+0.3 w
+/SA1 gs
+72 500.4 m
+400 500.4 l
+S
+BT
+/F0 1 Tf
+48 0 0 48 72 400 Tm
+(BB) Tj
+ET
+
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /Font << /F0 4 0 R >> /ExtGState << /SA0 2 0 R /SA1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 8 0 R ] /Count 1 >>
+endobj
+9 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+10 0 obj
+<< /Producer (EfterScript) >>
+endobj
+xref
+0 11
+0000000000 65535 f
+0000001356 00000 n
+0000000140 00000 n
+0000000188 00000 n
+0000000757 00000 n
+0000000235 00000 n
+0000000374 00000 n
+0000001057 00000 n
+0000001189 00000 n
+0000001415 00000 n
+0000001464 00000 n
+trailer
+<< /Size 11 /Root 9 0 R /Info 10 0 R >>
+startxref
+1510
+%%EOF

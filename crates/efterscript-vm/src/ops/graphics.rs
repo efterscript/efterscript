@@ -245,12 +245,12 @@ fn grestoreall(i: &mut Interp) -> Result<(), VmError> {
 //
 // Both are VM-side graphics-state parameters: saved and restored with
 // the state, left alone by `initgraphics` (its entry lists what it
-// resets, and neither is there). Only overprint reaches the backend.
+// resets, and neither is there). Both reach the backend.
 
 fn setstrokeadjust(i: &mut Interp) -> Result<(), VmError> {
-    let on = i.pop_bool()?;
-    i.set_stroke_adjust(on);
-    Ok(())
+    let on = i.peek(0)?.as_bool().ok_or(VmError::TypeCheck)?;
+    i.set_stroke_adjust(on)?;
+    drop(i, 1)
 }
 
 fn currentstrokeadjust(i: &mut Interp) -> Result<(), VmError> {

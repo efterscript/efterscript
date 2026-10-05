@@ -27,7 +27,8 @@
 //! An overprint setting selects the extended graphics state resource
 //! for its value (§8.4.5), `/GSn gs`, at the point the IR sets it; the
 //! resource carries `OP` and `op` alike, and a `Q` brings the earlier
-//! setting back with the rest of the state.
+//! setting back with the rest of the state. A stroke adjustment setting
+//! selects `/SAn` the same way, a resource carrying `SA` alone.
 //!
 //! Paths arrive in default user space and go out unchanged, except under
 //! a stroke recorded with a CTM: PDF measures line width and dash lengths
@@ -63,7 +64,8 @@ use efterscript_pdf::fmt_real;
 use efterscript_vm::{Glyph, Matrix, Point, Seg, SpaceSpec};
 
 use crate::resources::{
-    ext_gstate_name, font_name, form_name, image_name, pattern_name, shading_name, space_name,
+    ExtState, ext_gstate_name, font_name, form_name, image_name, pattern_name, shading_name,
+    space_name,
 };
 
 /// The one-byte code each CID takes in a composite font written as a
@@ -435,7 +437,14 @@ impl Writer<'_> {
                 self.line(&format!("[{}] {} d", reals(lengths), fmt_real(*phase)));
             }
             IrOp::Flatness(f) => self.line(&format!("{} i", fmt_real(*f))),
-            IrOp::Overprint(on) => self.line(&format!("/{} gs", ext_gstate_name(*on))),
+            IrOp::Overprint(on) => self.line(&format!(
+                "/{} gs",
+                ext_gstate_name(ExtState::Overprint(*on))
+            )),
+            IrOp::StrokeAdjust(on) => self.line(&format!(
+                "/{} gs",
+                ext_gstate_name(ExtState::StrokeAdjust(*on))
+            )),
             IrOp::SetColorSpace(space) => self.set_color_space(*space),
             IrOp::SetColor(components) => self.color(components),
             IrOp::SetPattern {
@@ -561,10 +570,12 @@ mod tests {
             IrOp::Flatness(0.5),
             IrOp::Overprint(true),
             IrOp::Overprint(false),
+            IrOp::StrokeAdjust(false),
+            IrOp::StrokeAdjust(true),
         ]);
         assert_eq!(
             text(&page),
-            "2 w\n1 J\n2 j\n4 M\n[3 1] 0.5 d\n[] 0 d\n0.5 i\n/GS1 gs\n/GS0 gs\n"
+            "2 w\n1 J\n2 j\n4 M\n[3 1] 0.5 d\n[] 0 d\n0.5 i\n/GS1 gs\n/GS0 gs\n/SA0 gs\n/SA1 gs\n"
         );
     }
 

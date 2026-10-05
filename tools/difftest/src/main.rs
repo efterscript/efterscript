@@ -736,7 +736,7 @@ mod tests {
         assert!(
             drawn
                 .ir()
-                .starts_with("ir/1\npage 612 792\nresources:\nops:\nm 0 0\n")
+                .starts_with("ir/1\npage 612 792\nresources:\nops:\nsa false\nm 0 0\n")
         );
         assert!(drawn.ir().contains("\n\nir/1\n"));
         let bare = execute_with(b"0 0 moveto", false);
@@ -756,7 +756,7 @@ mod tests {
              % SPDX-License-Identifier: MIT\n\
              % GENERATED-BY: difftest --update-pdf\n"
         ));
-        assert!(text.contains("stream\n2 w\n10 10 m\n100 10 l\nS\n\nendstream"));
+        assert!(text.contains("stream\n2 w\n/SA0 gs\n10 10 m\n100 10 l\nS\n\nendstream"));
         assert!(!text.contains("FlateDecode"));
         assert_eq!(distil(&drawn.collected).unwrap(), pdf);
     }

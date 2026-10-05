@@ -322,6 +322,9 @@ pub struct GState {
     /// The overprint parameter (PLRM3 §4.8.5), as the VM last told it;
     /// carried to the IR where a paint occurs.
     pub overprint: bool,
+    /// The stroke adjustment parameter (PLRM3 §6.5.2), as the VM last
+    /// told it; carried to the IR where a stroke occurs.
+    pub stroke_adjust: bool,
 }
 
 impl Default for GState {
@@ -348,6 +351,7 @@ impl Default for GState {
             transfers: [ProcRef::IDENTITY; 4],
             color_rendering: None,
             overprint: false,
+            stroke_adjust: false,
         }
     }
 }
@@ -355,7 +359,8 @@ impl Default for GState {
 impl GState {
     /// What `initgraphics` leaves: the defaults with the device untouched
     /// (media box and null device kept) and the font, screens, transfer
-    /// functions, colour rendering, and overprint kept, since
+    /// functions, colour rendering, overprint, and stroke adjustment kept,
+    /// since
     /// `initgraphics` and `showpage` do not reset them (PLRM3 §8.2).
     pub fn reinitialized(&self) -> GState {
         GState {
@@ -366,6 +371,7 @@ impl GState {
             transfers: self.transfers,
             color_rendering: self.color_rendering,
             overprint: self.overprint,
+            stroke_adjust: self.stroke_adjust,
             ..GState::default()
         }
     }

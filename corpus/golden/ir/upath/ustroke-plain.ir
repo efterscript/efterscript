@@ -6,6 +6,7 @@ page 612 792
 resources:
 ops:
 w 3
+sa false
 m 10 10
 l 90 50
 l 50 90
@@ -16,6 +17,7 @@ page 612 792
 resources:
 ops:
 w 3
+sa false
 m 10 10
 l 90 50
 l 50 90

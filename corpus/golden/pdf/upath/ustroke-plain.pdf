@@ -4,23 +4,13 @@
 % SPDX-License-Identifier: MIT
 % GENERATED-BY: difftest --update-pdf
 2 0 obj
-<< /Length 30 >>
-stream
-3 w
-10 10 m
-90 50 l
-50 90 l
-S
-
-endstream
+<< /Type /ExtGState /SA false >>
 endobj
 3 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 2 0 R >>
-endobj
-4 0 obj
-<< /Length 30 >>
+<< /Length 38 >>
 stream
 3 w
+/SA0 gs
 10 10 m
 90 50 l
 50 90 l
@@ -28,30 +18,50 @@ S
 
 endstream
 endobj
-5 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << >> /Contents 4 0 R >>
+4 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 2 0 R >> >> /Contents 3 0 R >>
 endobj
-1 0 obj
-<< /Type /Pages /Kids [ 3 0 R 5 0 R ] /Count 2 >>
+5 0 obj
+<< /Type /ExtGState /SA false >>
 endobj
 6 0 obj
-<< /Type /Catalog /Pages 1 0 R >>
+<< /Length 38 >>
+stream
+3 w
+/SA0 gs
+10 10 m
+90 50 l
+50 90 l
+S
+
+endstream
 endobj
 7 0 obj
+<< /Type /Page /Parent 1 0 R /MediaBox [ 0 0 612 792 ] /Resources << /ExtGState << /SA0 5 0 R >> >> /Contents 6 0 R >>
+endobj
+1 0 obj
+<< /Type /Pages /Kids [ 4 0 R 7 0 R ] /Count 2 >>
+endobj
+8 0 obj
+<< /Type /Catalog /Pages 1 0 R >>
+endobj
+9 0 obj
 << /Producer (EfterScript) >>
 endobj
 xref
-0 8
+0 10
 0000000000 65535 f
-0000000512 00000 n
+0000000680 00000 n
 0000000140 00000 n
-0000000220 00000 n
-0000000326 00000 n
-0000000406 00000 n
-0000000577 00000 n
-0000000626 00000 n
+0000000188 00000 n
+0000000276 00000 n
+0000000410 00000 n
+0000000458 00000 n
+0000000546 00000 n
+0000000745 00000 n
+0000000794 00000 n
 trailer
-<< /Size 8 /Root 6 0 R /Info 7 0 R >>
+<< /Size 10 /Root 8 0 R /Info 9 0 R >>
 startxref
-671
+839
 %%EOF
