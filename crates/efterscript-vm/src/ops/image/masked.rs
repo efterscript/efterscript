@@ -386,9 +386,10 @@ pub(super) fn key_ranges(
     if values.len() == components {
         Ok(values.iter().map(|&v| (clamp(v), clamp(v))).collect())
     } else if values.len() == 2 * components {
-        Ok(values
-            .chunks_exact(2)
-            .map(|pair| (clamp(pair[0]), clamp(pair[1])))
+        let (pairs, _) = values.as_chunks::<2>();
+        Ok(pairs
+            .iter()
+            .map(|&[lo, hi]| (clamp(lo), clamp(hi)))
             .collect())
     } else {
         Err(VmError::RangeCheck)
