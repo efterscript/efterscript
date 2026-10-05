@@ -382,3 +382,21 @@ ignored; clippy 0 warnings; `cargo fmt --check` clean; `difftest run`
 files, 0 failed; `fuzz-round` 1300 + 1300 programs, 0 failed;
 `lint-strings` clean; `openspec validate` valid. `check-wasm` could
 not run here (no WebAssembly target installed).
+
+### Acceptance on the real job
+
+The job was captured again from the emulator pairing with its hosting
+build linked against this branch's library and vaulted (see the vault's
+provenance for it). It distils with the hosting application's prelude to
+outcome `ok`, one page, every icon drawn through a type 3 image with its
+mask. `check-wasm` passes once the WebAssembly target is installed.
+
+The oracle reports 1.37% of pixels differing on the page (limit 0.5%).
+None of the difference is in the images: a difference map puts all of it
+on the two hairline double rules the job strokes from a very wide clipped
+rectangle, and an independent rasteriser finds the two PDFs identical at
+the harness's resolution. The reference's PDF states stroke adjustment
+(`SA`) in an extended graphics state and ours states nothing; writing it
+by hand removes part of the difference. Stroke adjustment in the PDF is
+outside this change and is taken up by a follow-up change, which re-runs
+the oracle on this job as its acceptance.
